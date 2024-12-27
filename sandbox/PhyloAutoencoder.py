@@ -188,7 +188,6 @@ if __name__ == "__main__":
 
 
     # split and standardize data by train data moments
-    # split data
     prop_train = 0.8
     prop_test = 1-prop_train
     x_train, x_val, y_train, y_val = train_test_split(x, y, 

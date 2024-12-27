@@ -47,15 +47,18 @@ class PhyloAEModelCNN(nn.Module):
 
         # Calculate final structured output width after encoder
         structured_output_width = num_structured_input_width // (2**3)  # 3 Conv layers with stride=2
-        structured_size = structured_output_width * num_structured_latent_channels
-        self.combined_latent_size = structured_size + unstructured_latent_width
+        flat_structured_width = structured_output_width * num_structured_latent_channels
+        self.combined_latent_width = flat_structured_width + unstructured_latent_width
 
         # Shared Latent Layer
-        self.shared_layer = nn.Linear(self.combined_latent_size, self.combined_latent_size)
+        self.shared_layer = nn.Sequential(
+            nn.Linear(self.combined_latent_width, self.combined_latent_width),
+            nn.ReLU()
+        )
 
         # Unstructured Decoder
         self.unstructured_decoder = nn.Sequential(
-            nn.Linear(self.combined_latent_size, 128),
+            nn.Linear(self.combined_latent_width, 128),
             nn.ReLU(),
             nn.Linear(128, unstructured_input_width)
         )
@@ -73,40 +76,27 @@ class PhyloAEModelCNN(nn.Module):
             nn.Sigmoid()
         )
 
+
     def forward(self, unstructured_x, structured_x):
         # Encode
         unstructured_encoded_x = self.unstructured_encoder(unstructured_x) # (nbatch, out_width)
-        structured_encoded_x = self.structured_encoder(structured_x) # (nbatch, nchannels, out_width)
+        structured_encoded_x   = self.structured_encoder(structured_x) # (nbatch, nchannels, out_width)
 
         # Combine Latents
         flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)
-        combined_latent = torch.cat((flat_structured_encoded_x, unstructured_encoded_x), dim=1)
-        shared_latent = self.shared_layer(combined_latent)
+        combined_latent           = torch.cat((flat_structured_encoded_x, unstructured_encoded_x), dim=1)
+        shared_latent             = self.shared_layer(combined_latent)
 
-        # Reshape for structured decoder
-        reshaped_latent_width = self.combined_latent_size // self.num_structured_latent_channels
-        reshaped_latent = shared_latent.view(-1, self.num_structured_latent_channels, reshaped_latent_width)
+        # Reshape for structured decoder (must have self.num_structured_latent_channels channels)
+        reshaped_latent_width = self.combined_latent_width // self.num_structured_latent_channels
+        reshaped_latent       = shared_latent.view(-1, self.num_structured_latent_channels, reshaped_latent_width)
 
         # Decode
         unstructured_decoded_x = self.unstructured_decoder(shared_latent)
-        structured_decoded_x = self.structured_decoder(reshaped_latent)
+        structured_decoded_x   = self.structured_decoder(reshaped_latent)
 
         return unstructured_decoded_x, structured_decoded_x
 
     
-
-    def conv_output_shape(self, input_size, kernel_size, stride, padding):
-        return (input_size - kernel_size + 2 * padding) // stride + 1
-    
-    def get_sequential_output_shape(self, model, input_shape):
-        """
-        Function to get the output shape of an nn.Sequential model.
-        """
-        # Create a dummy input tensor with the specified shape
-        dummy_input = torch.randn(1, *input_shape)  # Add batch dimension (batch size = 1)
-        with torch.no_grad():  
-            output = model(dummy_input)        
-        return tuple(output.shape[1:])  # Exclude batch size (dim 0)
-
 
 
