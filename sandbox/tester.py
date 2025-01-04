@@ -29,9 +29,7 @@ num_train = int(0.8 * phy_data.shape[0])
 data = np.hstack((phy_data, aux_data))
 
 # split data 
-train_data, val_data = train_test_split(data, 
-                                                                  train_size = num_train, 
-                                                                  shuffle=True)
+train_data, val_data = train_test_split(data, train_size = num_train, shuffle=True)
 train_phy_data = train_data[:,:phy_width]
 train_aux_data = train_data[:,phy_width:]
 val_phy_data   = val_data[:,:phy_width]
@@ -63,12 +61,13 @@ norm_val_phy_data   = norm_val_phy_data.reshape((norm_val_phy_data.shape[0],
 phy_width = norm_train_phy_data.shape[2]
 aux_width = norm_train_aux_data.shape[1]
 
+
 # create Datasets. __getitem__() returns a tuple (phy, aux)
 train_dataset = dataproc.TreeDataSet(norm_train_phy_data, norm_train_aux_data)
 val_dataset   = dataproc.TreeDataSet(norm_val_phy_data,   norm_val_aux_data)
 
 # create model
-ae_model  = aem.PhyloAEModelCNN(phy_width, nchannels, aux_width, 10, 10)
+ae_model  = aem.PhyloAEModelCNN(phy_width, nchannels, aux_width, 5, 5)
 loss_fx   = torch.nn.MSELoss()
 optimizer = torch.optim.Adam(ae_model.parameters())
 
@@ -79,7 +78,7 @@ val_dataloader   = td.DataLoader(val_dataset)
 # Train
 tree_autoencoder = pa.PhyloAutoencoder(model=ae_model, optimizer=optimizer, loss_func=loss_fx)
 tree_autoencoder.set_data_loaders(train_loader=train_dataloader, val_loader=val_dataloader)
-tree_autoencoder.train(num_epochs=20, seed = 1)
+tree_autoencoder.train(num_epochs=10, seed = 1)
 # tree_autoencoder.plot_losses()
 
 print("Finished")

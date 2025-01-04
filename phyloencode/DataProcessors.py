@@ -3,6 +3,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader, TensorDataset
 import h5py
 import numpy as np
+from typing import List, Dict, Tuple, Optional, Union
 
 # these classes work with datasets output from the Format step in Phyddle
 class TreeDataSet(Dataset):
@@ -12,7 +13,7 @@ class TreeDataSet(Dataset):
         self.aux_features = aux_features
         self.length = self.phy_features.shape[0]
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
         return((self.phy_features[index], self.aux_features[index]))
     
     def __len__(self):
