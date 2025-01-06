@@ -15,6 +15,7 @@ import phyloencode as ph
 from phyloencode import DataProcessors as dataproc
 from phyloencode import PhyloAEModel as aem
 from phyloencode import PhyloAutoencoder as pa
+from phyloencode import utils
 
 with h5py.File("test_data/peak_time.train.hdf5", "r") as f:
     phy_data = torch.tensor(f['phy_data'][0:10000,...], dtype=torch.float32)
@@ -67,7 +68,8 @@ train_dataset = dataproc.TreeDataSet(norm_train_phy_data, norm_train_aux_data)
 val_dataset   = dataproc.TreeDataSet(norm_val_phy_data,   norm_val_aux_data)
 
 # create model
-ae_model  = aem.PhyloAEModelCNN(phy_width, nchannels, aux_width, 5, 5)
+ae_model  = aem.PhyloAEModelCNN(phy_width, nchannels, aux_width, 10, 10)
+
 loss_fx   = torch.nn.MSELoss()
 optimizer = torch.optim.Adam(ae_model.parameters())
 

@@ -100,14 +100,6 @@ class PhyloAutoencoder(object):
             self.optimizer.step()
             self.optimizer.zero_grad()
             return loss.item()
-        # def train_step(x):
-        #     self.model.train()
-        #     xhat = self.model(x)
-        #     loss = self.loss_func(xhat, x)
-        #     loss.backward()
-        #     self.optimizer.step()
-        #     self.optimizer.zero_grad()
-        #     return loss.item()
         
         return train_step
 
@@ -120,13 +112,6 @@ class PhyloAutoencoder(object):
             aux_loss = self.loss_func(aux_hat, aux)
             loss = 0.8 * phy_loss + 0.2 * aux_loss
             return loss.item()
-
-        # def evaluate(x, y):
-        #     self.model.eval()
-        #     yhat = self.model(x)
-        #     loss = self.loss_func(yhat, y)
-        #     return loss.item()
-
 
         return evaluate
 

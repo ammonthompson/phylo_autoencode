@@ -6,6 +6,7 @@ import torch.nn.functional as fun
 from torch.utils.data import Dataset, DataLoader, TensorDataset
 from typing import List, Dict, Tuple, Optional, Union
 
+from phyloencode import utils
 
 class PhyloAEModelCNN(nn.Module):
     def __init__(self, 
@@ -49,16 +50,21 @@ class PhyloAEModelCNN(nn.Module):
         )
 
         # Calculate final structured output width after encoder
-        structured_output_width = structured_input_width // (2**3)  # 3 Conv layers with stride=2
+        struct_outshape = utils.conv1d_sequential_outshape(self.structured_encoder, 
+                                                           num_structured_input_channel, 
+                                                           structured_input_width)
+        structured_output_width = struct_outshape[2]
         flat_structured_width = structured_output_width * num_structured_latent_channels
         self.combined_latent_width = flat_structured_width + unstructured_latent_width
+        self.reshaped_shared_latent_width = self.combined_latent_width // self.num_structured_latent_channels
+
 
         # Shared Latent Layer
         self.shared_layer = nn.Sequential(
             nn.Linear(self.combined_latent_width, self.combined_latent_width),
             nn.ReLU()
         )
-
+        
         # Unstructured Decoder
         self.unstructured_decoder = nn.Sequential(
             nn.Linear(self.combined_latent_width, 128),
@@ -69,14 +75,37 @@ class PhyloAEModelCNN(nn.Module):
         # Structured Decoder
         self.structured_decoder = nn.Sequential(
             nn.ConvTranspose1d(in_channels=num_structured_latent_channels, out_channels=32, 
-                               kernel_size=3, stride=2, padding=2, output_padding=1),
+                               kernel_size=3, stride=2, padding=1, output_padding=0),
             nn.ReLU(),
             nn.ConvTranspose1d(in_channels=32, out_channels=16, 
-                               kernel_size=3, stride=2, padding=1, output_padding=1),
+                               kernel_size=3, stride=2, padding=1, output_padding=0),
             nn.ReLU(),
-            nn.ConvTranspose1d(in_channels=16, out_channels=num_structured_input_channel, 
-                               kernel_size=3, stride=2, padding=1, output_padding=1),
+            # nn.ConvTranspose1d(in_channels=16, out_channels=num_structured_input_channel, 
+            #                    kernel_size=3, stride=2, padding=1, output_padding=1),
         )
+        
+        # get correct padding and output_padding for final decoder layer
+        struct_decode_out_shape = utils.tconv1d_sequential_outshape(self.structured_decoder, 
+                                                     num_structured_latent_channels, 
+                                                     self.reshaped_shared_latent_width)
+        width = struct_decode_out_shape[2]
+        pad = int(((width - 1)*2 + 1*(3-1) +1 -structured_input_width)/2) + 1
+        outpad = structured_input_width - (width - 1)*2 - 1*(3-1) -1 + 2*pad
+        print("pad: " + str(pad))
+        print("outpad: " + str(outpad))
+        print(struct_decode_out_shape)
+
+        self.structured_decoder.add_module("struct_decoder_out", 
+                                           nn.ConvTranspose1d(in_channels=16, 
+                                                              out_channels=num_structured_input_channel, 
+                                                              kernel_size=3, stride=2, padding=pad, 
+                                                              output_padding=outpad))
+        
+        # struct_decode_out_shape = utils.tconv1d_sequential_outshape(self.structured_decoder, 
+        #                                                 num_structured_latent_channels, 
+        #                                                 self.reshaped_shared_latent_width)
+        # print(struct_decode_out_shape)
+    
 
 
     def forward(self, data: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -89,25 +118,26 @@ class PhyloAEModelCNN(nn.Module):
         flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)
         combined_latent           = torch.cat((flat_structured_encoded_x, unstructured_encoded_x), dim=1)
 
-        print("self.combined_latent_width")
-        print(self.combined_latent_width)
-        print("self.num_structured_latent_channels")
-        print(self.num_structured_latent_channels)
-        print("structured_encoded_x.shape")
-        print(structured_encoded_x.shape)
-        print("unstructured_encoded_x.shape")
-        print(unstructured_encoded_x.shape)
-        print("flat_structured_encoded_x.shape")
-        print(flat_structured_encoded_x.shape)
-        print("combined_latent.shape")
-        print(combined_latent.shape)
+        # print("self.combined_latent_width")
+        # print(self.combined_latent_width)
+        # print("self.num_structured_latent_channels")
+        # print(self.num_structured_latent_channels)
+        # print("structured_encoded_x.shape")
+        # print(structured_encoded_x.shape)
+        # print("unstructured_encoded_x.shape")
+        # print(unstructured_encoded_x.shape)
+        # print("flat_structured_encoded_x.shape")
+        # print(flat_structured_encoded_x.shape)
+        # print("combined_latent.shape")
+        # print(combined_latent.shape)
 
 
-        shared_latent             = self.shared_layer(combined_latent)
+        shared_latent = self.shared_layer(combined_latent)
 
         # Reshape for structured decoder (must have self.num_structured_latent_channels channels)
-        reshaped_shared_latent_width = self.combined_latent_width // self.num_structured_latent_channels
-        reshaped_shared_latent       = shared_latent.view(-1, self.num_structured_latent_channels, reshaped_shared_latent_width)
+        # reshaped_shared_latent_width = self.combined_latent_width // self.num_structured_latent_channels
+        reshaped_shared_latent = shared_latent.view(-1, self.num_structured_latent_channels, 
+                                                          self.reshaped_shared_latent_width)
 
         # Decode
         unstructured_decoded_x = self.unstructured_decoder(shared_latent)
@@ -124,73 +154,3 @@ class PhyloAEModelCNN(nn.Module):
 
         return structured_decoded_x, unstructured_decoded_x
     
-
-
-# utilities
-
-def conv1d_sequential_outshape(sequential: nn.Sequential, input_width: int, input_channels: int) -> Tuple[int, int, int]:
-    """
-    Compute the output shape of a PyTorch Sequential model consisting of Conv1d layers.
-
-    Args:
-        sequential (nn.Sequential): Sequential model with Conv1d layers.
-        input_width (int): Width of the input data (e.g., number of time steps).
-        input_channels (int): Number of input channels.
-
-    Returns:
-        tuple: Output shape as (batch_size, channels, width).
-    """
-    # Initialize with input shape
-    batch_size = 1  # Assume batch size of 1
-    channels = input_channels
-    width = input_width
-
-    # Iterate through the layers in the Sequential model
-    for layer in sequential:
-        if isinstance(layer, nn.Conv1d):
-            # Extract Conv1d parameters
-            kernel_size = layer.kernel_size[0]
-            stride = layer.stride[0]
-            padding = layer.padding[0]
-            dilation = layer.dilation[0]
-            
-            # Compute output width using the Conv1d formula
-            width = (width + 2 * padding - dilation * (kernel_size - 1) - 1) // stride + 1
-            channels = layer.out_channels
-
-    return (batch_size, channels, width)
-
-
-
-def tconv1d_sequential_outshape(sequential: nn.Sequential, input_width: int, input_channels: int) -> Tuple[int, int, int]:
-    """
-    Compute the output shape of a PyTorch Sequential model consisting of ConvTranspose1d layers.
-
-    Args:
-        sequential (nn.Sequential): Sequential model with ConvTranspose1d layers.
-        input_width (int): Width of the input data (e.g., number of time steps).
-        input_channels (int): Number of input channels.
-
-    Returns:
-        tuple: Output shape as (batch_size, channels, width).
-    """
-    # Initialize with input shape
-    batch_size = 1  # Assume batch size of 1
-    channels = input_channels
-    width = input_width
-
-    # Iterate through the layers in the Sequential model
-    for layer in sequential:
-        if isinstance(layer, nn.ConvTranspose1d):
-            # Extract ConvTranspose1d parameters
-            kernel_size = layer.kernel_size[0]
-            stride = layer.stride[0]
-            padding = layer.padding[0]
-            output_padding = layer.output_padding[0]
-            dilation = layer.dilation[0]
-
-            # Compute output width using the ConvTranspose1d formula
-            width = (width - 1) * stride - 2 * padding + dilation * (kernel_size - 1) + output_padding + 1
-            channels = layer.out_channels
-
-    return (batch_size, channels, width)
