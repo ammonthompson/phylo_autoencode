@@ -20,12 +20,6 @@ class TreeDataSet(Dataset):
         return(self.length)
     
 
-# class TreeDataLoader(DataLoader):
-#     def __init__(self, phy_data_set, aux_dataset):
-#         self.phy_dataset = phy_data_set[0]
-#         self.aux_dataset = aux_dataset[1]
-#         super().__init__()
-
 
 # testing
 

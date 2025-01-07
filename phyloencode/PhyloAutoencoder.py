@@ -12,7 +12,7 @@ from sklearn.model_selection import train_test_split
 
 
 class PhyloAutoencoder(object):
-    def __init__(self, model, optimizer, loss_func):
+    def __init__(self, model, optimizer, loss_func, phy_loss_weight = 0.8):
         '''
             model is an object from torch.model
             optimizer is an object from torch.optim
@@ -24,6 +24,7 @@ class PhyloAutoencoder(object):
         self.model.to(self.device)
         self.optimizer = optimizer
         self.loss_func = loss_func
+        self.phy_loss_weight = phy_loss_weight
 
         self.train_loader = None
         self.val_loader   = None
@@ -54,7 +55,7 @@ class PhyloAutoencoder(object):
 
             if self.writer:
                 scalars = {'training':epoch_train_loss}
-                if epoch_validation_loss is not None:
+                if epoch_validation_loss != None:
                     scalars.update({'validation':epoch_validation_loss})
 
                 self.writer.add_scalars(main_tag='loss', tag_scaler_dict = scalars, 
@@ -66,9 +67,9 @@ class PhyloAutoencoder(object):
             self.writer.flush()
         
 
-
     def _mini_batch(self, validation = False):
 
+        # set data loader and step function
         if validation:
             data_loader   = self.val_loader
             step_function = self.val_step
@@ -79,6 +80,7 @@ class PhyloAutoencoder(object):
         if data_loader == None:
             return None
 
+        # perform step and return loss
         mini_batch_losses = []
         for phy_batch, aux_batch in data_loader:
             phy_batch = phy_batch.to(self.device)
@@ -95,7 +97,8 @@ class PhyloAutoencoder(object):
             phy_hat, aux_hat = self.model((phy, aux))
             phy_loss = self.loss_func(phy_hat, phy)
             aux_loss = self.loss_func(aux_hat, aux)
-            loss = 0.8 * phy_loss + 0.2 * aux_loss
+            loss = self.phy_loss_weight * phy_loss + \
+                (1 - self.phy_loss_weight) * aux_loss
             loss.backward()
             self.optimizer.step()
             self.optimizer.zero_grad()
@@ -110,17 +113,20 @@ class PhyloAutoencoder(object):
             phy_hat, aux_hat = self.model((phy, aux))
             phy_loss = self.loss_func(phy_hat, phy)
             aux_loss = self.loss_func(aux_hat, aux)
-            loss = 0.8 * phy_loss + 0.2 * aux_loss
+            loss = self.phy_loss_weight * phy_loss + \
+                (1 - self.phy_loss_weight) * aux_loss
             return loss.item()
 
         return evaluate
 
-    def predict(self, x):
+    def predict(self, phy: torch.Tensor, aux: torch.Tensor):
         self.model.eval() 
-        x_tensor = torch.as_tensor(x).float().to(self.device)
-        y_hat_tensor = self.model(x_tensor)
+        phy = phy.to(self.device)
+        aux = aux.to(self.device)
+        # x_tensor = torch.as_tensor(x).float().to(self.device)
+        phy_hat, aux_hat = self.model((phy, aux))
         self.model.train()
-        return y_hat_tensor.detach().cpu().numpy()
+        return phy_hat.detach().cpu().numpy(), aux_hat.detach().cpu().numpy()
 
     def to_device(self, device):
         try:

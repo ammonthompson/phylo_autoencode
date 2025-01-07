@@ -18,8 +18,10 @@ from phyloencode import PhyloAutoencoder as pa
 from phyloencode import utils
 
 with h5py.File("test_data/peak_time.train.hdf5", "r") as f:
-    phy_data = torch.tensor(f['phy_data'][0:10000,...], dtype=torch.float32)
-    aux_data = torch.tensor(f['aux_data'][0:10000,...], dtype=torch.float32)
+    phy_data = torch.tensor(f['phy_data'][0:45000,...], dtype = torch.float32)
+    aux_data = torch.tensor(f['aux_data'][0:45000,...], dtype = torch.float32)
+    test_phy_data = torch.tensor(f['phy_data'][45000:45100,...], dtype = torch.float32)
+    test_aux_data = torch.tensor(f['aux_data'][45000:45100,...], dtype = torch.float32)
 
 
 phy_width = phy_data.shape[1]
@@ -35,7 +37,6 @@ train_phy_data = train_data[:,:phy_width]
 train_aux_data = train_data[:,phy_width:]
 val_phy_data   = val_data[:,:phy_width]
 val_aux_data   = val_data[:,phy_width:]
-
 
 
 # standardize train data
@@ -54,7 +55,7 @@ assert(train_phy_data.shape[1] % nchannels == 0)
 norm_train_phy_data = norm_train_phy_data.reshape((norm_train_phy_data.shape[0], 
                                                    nchannels, 
                                                    int(norm_train_phy_data.shape[1]/nchannels)),
-                                                 order = "F")
+                                                   order = "F")
 norm_val_phy_data   = norm_val_phy_data.reshape((norm_val_phy_data.shape[0], 
                                                  nchannels, 
                                                  int(norm_val_phy_data.shape[1]/nchannels)),
@@ -67,20 +68,40 @@ aux_width = norm_train_aux_data.shape[1]
 train_dataset = dataproc.TreeDataSet(norm_train_phy_data, norm_train_aux_data)
 val_dataset   = dataproc.TreeDataSet(norm_val_phy_data,   norm_val_aux_data)
 
-# create model
-ae_model  = aem.PhyloAEModelCNN(phy_width, nchannels, aux_width, 10, 10)
-
-loss_fx   = torch.nn.MSELoss()
-optimizer = torch.optim.Adam(ae_model.parameters())
-
 # data loaders
 train_dataloader = td.DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=0)
 val_dataloader   = td.DataLoader(val_dataset)
 
+# create model
+ae_model  = aem.PhyloAEModelCNN(nchannels, phy_width, aux_width, 
+                                stride = [2,4,4,8],
+                                kernel = [3,5,5,9],
+                                out_channels=[8,12,14,16])
+loss_fx   = torch.nn.MSELoss()
+optimizer = torch.optim.Adam(ae_model.parameters())
+
 # Train
-tree_autoencoder = pa.PhyloAutoencoder(model=ae_model, optimizer=optimizer, loss_func=loss_fx)
+tree_autoencoder = pa.PhyloAutoencoder(model=ae_model, optimizer=optimizer, loss_func=loss_fx, phy_loss_weight=1.0)
 tree_autoencoder.set_data_loaders(train_loader=train_dataloader, val_loader=val_dataloader)
-tree_autoencoder.train(num_epochs=10, seed = 1)
+tree_autoencoder.train(num_epochs = 20, seed = 1)
 # tree_autoencoder.plot_losses()
 
-print("Finished")
+print("Training Finished")
+
+
+
+# Test data
+phydat   = phy_normalizer.transform(test_phy_data)
+auxdat   = aux_normalizer.transform(test_aux_data)
+phydat = phydat.reshape((phydat.shape[0], nchannels, int(phydat.shape[1]/nchannels)), order = "F")
+phydat = torch.Tensor(phydat)
+auxdat = torch.Tensor(auxdat)
+phy_pred, auxpred = tree_autoencoder.predict(phydat, auxdat)
+phy_pred = phy_normalizer.inverse_transform(phy_pred.reshape((phy_pred.shape[0], -1), order = "F"))
+
+# print out comparison of a part of an input tree and it passed through the filter
+for i in range(0,10):
+    print(test_phy_data.numpy()[i,20:26])
+    print(np.array(phy_pred[i,20:26]))
+    print("    ")
+
