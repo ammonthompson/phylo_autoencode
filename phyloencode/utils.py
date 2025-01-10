@@ -82,7 +82,6 @@ def tconv1d_layer_outwidth(layer, input_width):
     padding        = layer.padding[0]
     output_padding = layer.output_padding[0]
     dilation       = layer.dilation[0]
-
     # Compute output width using the ConvTranspose1d formula
     width = (input_width - 1) * stride - 2 * padding + dilation * (kernel_size - 1) + output_padding + 1
     return width

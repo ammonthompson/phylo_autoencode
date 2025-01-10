@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import matplotlib as plt
+import matplotlib.pyplot as plt
 import numpy as np
 # import pandas as pd
 import torch
@@ -12,7 +12,7 @@ from sklearn.model_selection import train_test_split
 
 
 class PhyloAutoencoder(object):
-    def __init__(self, model, optimizer, loss_func, phy_loss_weight = 0.8):
+    def __init__(self, model, optimizer, loss_func, phy_loss_weight = 0.5):
         '''
             model is an object from torch.model
             optimizer is an object from torch.optim
@@ -39,7 +39,7 @@ class PhyloAutoencoder(object):
         self.train_step = self._make_train_step_func()
         self.val_step   = self._make_val_func()
 
-        self.writer = None
+        # self.writer = None
 
     def train(self, num_epochs, seed = 1):
         self.set_seed(seed)
@@ -52,21 +52,23 @@ class PhyloAutoencoder(object):
 
             self.losses.append(epoch_train_loss)
             self.val_losses.append(epoch_validation_loss)
-
-            if self.writer:
-                scalars = {'training':epoch_train_loss}
-                if epoch_validation_loss != None:
-                    scalars.update({'validation':epoch_validation_loss})
-
-                self.writer.add_scalars(main_tag='loss', tag_scaler_dict = scalars, 
-                                        global_step = epoch)
-                
+               
             print(f"epoch {str(epoch)}, loss: {epoch_validation_loss:.4f}")
-        
-        if self.writer:
-            self.writer.flush()
-        
 
+
+            # TODO
+        #     if self.writer:
+        #         scalars = {'training':epoch_train_loss}
+        #         if epoch_validation_loss != None:
+        #             scalars.update({'validation':epoch_validation_loss})
+
+        #         self.writer.add_scalars(main_tag='loss', tag_scaler_dict = scalars, 
+        #                                 global_step = epoch)                
+         
+        # if self.writer:
+        #     self.writer.flush()
+
+        
     def _mini_batch(self, validation = False):
 
         # set data loader and step function
@@ -82,6 +84,7 @@ class PhyloAutoencoder(object):
 
         # perform step and return loss
         mini_batch_losses = []
+        # loop through all batches of train or val data
         for phy_batch, aux_batch in data_loader:
             phy_batch = phy_batch.to(self.device)
             aux_batch = aux_batch.to(self.device)
@@ -124,9 +127,9 @@ class PhyloAutoencoder(object):
         phy = phy.to(self.device)
         aux = aux.to(self.device)
         # x_tensor = torch.as_tensor(x).float().to(self.device)
-        phy_hat, aux_hat = self.model((phy, aux))
+        phy_pred, aux_pred = self.model((phy, aux))
         self.model.train()
-        return phy_hat.detach().cpu().numpy(), aux_hat.detach().cpu().numpy()
+        return phy_pred.detach().cpu().numpy(), aux_pred.detach().cpu().numpy()
 
     def to_device(self, device):
         try:
