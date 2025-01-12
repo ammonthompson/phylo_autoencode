@@ -19,20 +19,25 @@ class AECNN(nn.Module):
                  structured_input_width,  # Input width for structured data
                  unstructured_input_width,
                  unstructured_latent_width = None, # must be integer multiple of num_structured_latent_channels
-                 stride = [2,2,4,4],
-                 kernel = [3,3,5,5],
-                 out_channels = [8, 16, 32, 64]
+                 stride = [2,2],
+                 kernel = [3,3],
+                 out_channels = [16, 32]
                  ):
         
-        # inputs are assumed to be standardized
+        # assumptions:
+        # inputs are standardized
+        # all strides > 1
+        # kernal[i] > stride[i]
 
         nl = len(out_channels)
         assert(len(stride) == nl)
         assert(len(kernel) == nl)
+        assert(np.min(stride) > 1)
+        assert(np.min(np.array(kernel) - np.array(stride)) > 0)
         
         self.unstructured_latent_width = unstructured_latent_width
         self.num_structured_latent_channels = out_channels[-1]
-        target_width = structured_input_width
+        # target_width = structured_input_width
         
         # if not set, then set to structured latent channels
         if unstructured_latent_width is None:
@@ -55,6 +60,9 @@ class AECNN(nn.Module):
         )
 
         # Structured Encoder
+        print("cumulative conv layers output shapes: ")
+        print((1, num_structured_input_channel, structured_input_width))
+
         self.structured_encoder = nn.Sequential()
         self.structured_encoder.add_module("conv1d_0", nn.Conv1d(in_channels  = num_structured_input_channel, 
                                                                 out_channels = out_channels[0], 
@@ -62,10 +70,11 @@ class AECNN(nn.Module):
                                                                 stride       = stride[0], 
                                                                 padding      = 1))
         
-        print("cumulative conv layers output shapes: ")
-        print(utils.conv1d_sequential_outshape(self.structured_encoder, 
+        conv_out_shape = utils.conv1d_sequential_outshape(self.structured_encoder, 
                                                 num_structured_input_channel, 
-                                                structured_input_width))
+                                                structured_input_width)
+        conv_out_width = [conv_out_shape[2]]
+        print(conv_out_shape)
 
         # add more layers if depth greater than 1.
         if nl > 1:
@@ -78,13 +87,17 @@ class AECNN(nn.Module):
                                                             stride       = stride[i], 
                                                             padding      = 1))
                 
-                print(utils.conv1d_sequential_outshape(self.structured_encoder, 
-                                        num_structured_input_channel, 
-                                        structured_input_width))
+                conv_out_shape = utils.conv1d_sequential_outshape(self.structured_encoder, 
+                                                        num_structured_input_channel, 
+                                                        structured_input_width)
+                conv_out_width.append(conv_out_shape[2])                
+                
+                print(conv_out_shape)
 
                 if i < (nl-1):
                     self.structured_encoder.add_module("conv_ReLU_" + str(i), nn.ReLU())
 
+        print(conv_out_width)
         # Calculate final structured output width after encoder
         struct_outshape = utils.conv1d_sequential_outshape(self.structured_encoder, 
                                                            num_structured_input_channel, 
@@ -118,27 +131,34 @@ class AECNN(nn.Module):
         else:
             pass
 
-        w_in = self.combined_latent_width // self.num_structured_latent_channels
-        new_target_width = structured_input_width // np.prod(stride[0:-1])
-        npad, noutpad = self.get_decode_paddings(new_target_width, w_in, stride[-1], kernel[-1])
-        print(new_target_width)
-        print(npad)
-        print(noutpad)
-        print("dddddddddd")
+        # w_in = self.combined_latent_width // self.num_structured_latent_channels
+        # new_target_width = structured_input_width // np.prod(stride[0:-1])
+        # new_target_width = conv_out_width[-1]
+        # npad, noutpad = self.get_decode_paddings(new_target_width, w_in, stride[-1], kernel[-1])
+        # print(stride[0:-1])
+        # print(np.prod(stride[0:-1]))
+        # print(structured_input_width)
+        # print("w_in " + str(w_in))
+        # print(new_target_width)
+
+        # print("dddddddddd")
         self.structured_decoder.add_module("trans_conv1d_0", 
                                                 nn.ConvTranspose1d(in_channels  = out_channels[nl-1], 
                                                           out_channels = out_channels[nl-2], 
                                                           kernel_size  = kernel[nl-1], 
                                                           stride       = stride[nl-1], 
-                                                          padding      = npad,
-                                                          output_padding=noutpad))
+                                                          padding      = 0,
+                                                          output_padding = 0))
  
         self.structured_decoder.add_module("tconv_ReLU_0", nn.ReLU())
 
         print("cumulative t_conv layers output shapes: ")
+        print(struct_outshape)
         outshape = utils.tconv1d_sequential_outshape(self.structured_decoder, 
                                                      self.num_structured_latent_channels, 
                                                      self.reshaped_shared_latent_width)
+        print(0)
+        print(0)
         print(outshape)
 
         for i in range(nl-2, 0, -1):
@@ -146,12 +166,12 @@ class AECNN(nn.Module):
                                                      self.num_structured_latent_channels, 
                                                      self.reshaped_shared_latent_width)
             w_in = outshape[2]
-            new_target_width = target_width // np.prod(stride[0:i])
+            # new_target_width = target_width // np.prod(stride[0:i])
+            new_target_width = conv_out_width[i-1]
             npad, noutpad = self.get_decode_paddings(new_target_width, w_in, stride[i], kernel[i])
-            print(new_target_width)
+            # print(new_target_width)
             print(npad)
             print(noutpad)
-            print("eeeeeeee")
 
             self.structured_decoder.add_module("conv1d_" + str(i), 
                                                nn.ConvTranspose1d(in_channels  = out_channels[i], 
@@ -174,21 +194,21 @@ class AECNN(nn.Module):
         
 
         width = outshape[2]
-        pad = int(((width - 1)*stride[0] + 1*(kernel[0]-1) +1 - target_width)/2) + 1
-        outpad = target_width - (width - 1)*stride[0] - 1*(kernel[0]-1) -1 + 2*pad
+        new_target_width = structured_input_width
+        pad, outpad = self.get_decode_paddings(new_target_width, width, stride[0], kernel[0])
+        print("pad: " + str(pad))
+        print("outpad: " + str(outpad))
 
+        # print('width ' + str(target_width))
+        # print("width " + str(width))
+        # pad = int(((width - 1)*stride[0] + 1*(kernel[0]-1) +1 - target_width)/2) + 1
+        # outpad = target_width - (width - 1)*stride[0] - 1*(kernel[0]-1) -1 + 2*pad
         
         # print("phy latent shape: " + str(struct_outshape))
-        print("pad: " + str(pad))
-        print("outpad: " + str(outpad))
+        # print("pad: " + str(pad))
+        # print("outpad: " + str(outpad))
         # print("struct_decode_out_shape: " + str(struct_decode_out_shape))
 
-        pad, outpad = self.get_decode_paddings(target_width, width, stride[0], kernel[0])
-        print("pad: " + str(pad))
-        print("outpad: " + str(outpad))
-
-        print('width ' + str(target_width))
-        print("width " + str(width))
 
         self.structured_decoder.add_module("struct_decoder_out", 
                                            nn.ConvTranspose1d(in_channels=out_channels[0], 
@@ -253,12 +273,53 @@ class AECNN(nn.Module):
     def make_decoders(self):
         pass
 
+    # def get_decode_paddings(self, w_out_target, w_in, s, k, d=1):
+    #     # returns the paddings necessary for target output width 
+    #     # (+1 at the end of pad formula guarentees outpad is >= 0)
+    #     pad    = int(((w_in - 1)*s + d*(k-1) + 1 - w_out_target)/2) + 1
+    #     outpad = w_out_target - (w_in - 1)*s - d*(k-1) -1 + 2*pad
+
     def get_decode_paddings(self, w_out_target, w_in, s, k, d=1):
-        # returns the paddings necessary for target output width (+1 at the end guarentees outpad is >= 0)
-        pad    = int(((w_in - 1)*s + d*(k-1) + 1 - w_out_target)/2)+1
-        outpad = w_out_target - (w_in - 1)*s - d*(k-1) -1 + 2*pad
+        # convtranspose1d formulat: 
+        # w_out_target = (w_in - 1)s + d(k-1) + 1 + outpad - 2pad
+        # returns the paddings necessary for target output width 
+        E = s*(w_in - 1) + d*(k-1) + 1
+
+        if (w_out_target - E) < 0:
+            pad = (E - w_out_target)/2
+            pad = int(pad + pad % 1)
+            outpad = w_out_target - E + 2 * pad    #if (w_out_target - E + 2 * pad) <= (s-1) else 0
+            print("fucking hell: " + str(E - w_out_target) + ",shiiiit,  " + str(s-1))
+        elif (w_out_target - E) >=0 and (w_out_target - E) <= (s - 1):
+            outpad = w_out_target - E
+            pad = 0
+            print("second")
+        else:
+            pad = (E - w_out_target + s - 1)/2
+            pad = int(pad + pad % 1)
+            outpad = s-1
+            print("third")
+        return pad, outpad
+    
+    def xxxxget_decode_paddings(self, w_out_target, w_in, s, k, d=1):
+        # convtranspose1d formulat: 
+        # w_out_target = (w_in - 1)s - 2pad + d(k-1) + outpad + 1
+        # returns the paddings necessary for target output width 
+        outpad = 0
+        A = (s*w_in + d*k + 1)/2
+        B = (s + d + w_out_target)/2
+        pad = A - B + outpad/2
+
+        if ((w_in - 1)*s + d*(k-1) + 1 - w_out_target)/2 % 1 != 0 and s > 1:
+            outpad = 1
+        else:
+            outpad = 0
+
+        pad    = int(((w_in - 1)*s + d*(k-1) + outpad + 1 - w_out_target)/2)
 
         return pad, outpad
+    
+
     
 
     def tree_encode(self, phy, aux):
