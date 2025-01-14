@@ -67,7 +67,6 @@ class PhyloAutoencoder(object):
          
         # if self.writer:
         #     self.writer.flush()
-
         
     def _mini_batch(self, validation = False):
 
@@ -182,6 +181,23 @@ class PhyloAutoencoder(object):
         self.val_losses = checkpoint['val_loss']
         self.model.train()
 
+    def tree_encode(self, phy: torch.Tensor, aux: torch.Tensor):
+        self.model.eval() 
+        phy = phy.to(self.device)
+        aux = aux.to(self.device)
+
+        # get latent unstrcutured and structured embeddings
+        structured_encoded_x   = self.model.structured_encoder(phy)    # (1, nchannels, out_width)
+        # unstructured_encoded_x = self.model.unstructured_encoder(aux)  # (1, out_width)
+
+        # Latent
+        flat_structured_encoded_x = structured_encoded_x.flatten(dim=1)
+        # combined_latent           = torch.cat((flat_structured_encoded_x, unstructured_encoded_x))
+
+        self.model.train()
+
+        return(flat_structured_encoded_x)
+        
 
 
 '''
@@ -231,12 +247,6 @@ if __name__ == "__main__":
     # data set objects
     train_dataset = TensorDataset(x_train_tensor, y_train_tensor)
     val_dataset   = TensorDataset(x_val_tensor, y_val_tensor)
-    # prop_train = 0.8
-    # n_total = data_shape[0]
-    # n_train = int(prop_train * n_total)
-    # n_val = n_total - n_train
-    # train_data, val_data = torch.utils.data.random_split(dataset, [n_train, n_val])
-
     
 
     # data loaders

@@ -234,7 +234,6 @@ class AECNN(nn.Module):
 
         return structured_decoded_x, unstructured_decoded_x
     
-
     def make_encoders(self):
         pass
     def make_decoders(self):
@@ -260,7 +259,3 @@ class AECNN(nn.Module):
 
         return pad, outpad
     
-
-    def tree_encode(self, phy, aux):
-        return(self.structured_encoder(phy))
-        

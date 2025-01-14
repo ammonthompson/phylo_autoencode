@@ -8,15 +8,13 @@ import sklearn as sk
 import phyloencode as ph
 import sys
 import h5py
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
+# from sklearn.preprocessing import StandardScaler
+# from sklearn.model_selection import train_test_split
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 import phyloencode as ph
-# from phyloencode.DataProcessors import AEData
-# from phyloencode.PhyloAEModel
 from phyloencode import PhyloAutoencoder as pa
 from phyloencode import utils
 
@@ -48,7 +46,7 @@ ae_model  = ph.PhyloAEModel.AECNN(ae_data.nchannels,
                                   ae_data.aux_width, 
                                   stride       = [2,4,5,5],
                                   kernel       = [3,5,6,6],
-                                  out_channels = [5,5,5,5])
+                                  out_channels = [10,15,20,25])
 
 # Trainer
 tree_autoencoder = pa.PhyloAutoencoder(model     = ae_model, 
@@ -59,7 +57,7 @@ tree_autoencoder = pa.PhyloAutoencoder(model     = ae_model,
 # Train
 rand_seed = np.random.randint(0,10000)
 tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
-tree_autoencoder.train(num_epochs = 20, seed = rand_seed)
+tree_autoencoder.train(num_epochs = 15, seed = rand_seed)
 
 # plot
 epoch_loss_figure = tree_autoencoder.plot_losses().savefig("AElossplot.pdf")
@@ -67,8 +65,8 @@ epoch_loss_figure = tree_autoencoder.plot_losses().savefig("AElossplot.pdf")
 
 # Test data
 phy_normalizer, aux_normalizer = ae_data.get_normalizers()
-phydat   = phy_normalizer.transform(test_phy_data)
-auxdat   = aux_normalizer.transform(test_aux_data)
+phydat = phy_normalizer.transform(test_phy_data)
+auxdat = aux_normalizer.transform(test_aux_data)
 phydat = phydat.reshape((phydat.shape[0], ae_data.nchannels, int(phydat.shape[1]/ae_data.nchannels)), order = "F")
 phydat = torch.Tensor(phydat)
 auxdat = torch.Tensor(auxdat)
@@ -76,8 +74,15 @@ phy_pred, auxpred = tree_autoencoder.predict(phydat, auxdat)
 phy_pred = phy_normalizer.inverse_transform(phy_pred.reshape((phy_pred.shape[0], -1), order = "F"))
 
 # print out comparison of a part of an input tree and it passed through the filter
-for i in range(50,55):
+for i in range(50,53):
     print(test_phy_data.numpy()[i,18:24])
     print(np.array(phy_pred[i,18:24]))
     print("    ")
 
+phy_true_df = pd.DataFrame(test_phy_data.numpy())
+phy_true_df.to_csv("phy_true.cblv", header = False)
+
+phy_pred_df = pd.DataFrame(phy_pred)
+phy_pred_df.to_csv("phy_pred.cblv", header = False)
+
+print(tree_autoencoder.tree_encode(phydat[0,:], auxdat[0,:]))
