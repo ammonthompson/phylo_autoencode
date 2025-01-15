@@ -30,6 +30,7 @@ class AEData(object):
         phy_width = self.phy_data.shape[1]
 
         # split data 
+        self.prop_train = prop_train
         num_train = int(prop_train * self.phy_data.shape[0])
         train_data, val_data = train_test_split(self.data, train_size = num_train, shuffle=True)
         train_phy_data = train_data[:,:phy_width]

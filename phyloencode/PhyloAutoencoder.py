@@ -191,7 +191,7 @@ class PhyloAutoencoder(object):
         # unstructured_encoded_x = self.model.unstructured_encoder(aux)  # (1, out_width)
 
         # Latent
-        flat_structured_encoded_x = structured_encoded_x.flatten(dim=1)
+        flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)
         # combined_latent           = torch.cat((flat_structured_encoded_x, unstructured_encoded_x))
 
         self.model.train()

@@ -14,16 +14,20 @@ class AECNN(nn.Module):
         in a latent layer which then gets decoded by a transpose CNN and dense layer 
         in parallel.
     '''
-    def __init__(self, 
-                 num_structured_input_channel, 
-                 structured_input_width,  # Input width for structured data
-                 unstructured_input_width,
+    def __init__(self, ae_data_container,
+                #  num_structured_input_channel, 
+                #  structured_input_width,  # Input width for structured data
+                #  unstructured_input_width,
                  unstructured_latent_width = None, # must be integer multiple of num_structured_latent_channels
                  stride = [2,2],
                  kernel = [3,3],
                  out_channels = [16, 32]
                  ):
         
+        num_structured_input_channel = ae_data_container.nchannels
+        structured_input_width       = ae_data_container.phy_width
+        unstructured_input_width     = ae_data_container.aux_width
+
         # assumptions:
         # inputs are standardized
         # all strides > 1
@@ -122,6 +126,8 @@ class AECNN(nn.Module):
 
         self.structured_decoder = nn.Sequential()
 
+        # right now there has to be at least 2 conv layers. 
+        # Implement this so one conv layer is possible
         if nl == 1:
             pass
         elif nl == 2:
