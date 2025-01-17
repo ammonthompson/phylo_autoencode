@@ -95,14 +95,22 @@ class PhyloAutoencoder(object):
     def _make_train_step_func(self):
 
         def train_step(phy: torch.Tensor, aux: torch.Tensor):
+            # set model to train mode
             self.model.train()
+            # get model predictions
             phy_hat, aux_hat = self.model((phy, aux))
+            # compute losses for phylogenetic and auxiliary data predictions
             phy_loss = self.loss_func(phy_hat, phy)
             aux_loss = self.loss_func(aux_hat, aux)
+            # get weighted average of losses
             loss = self.phy_loss_weight * phy_loss + \
                 (1 - self.phy_loss_weight) * aux_loss
+            # compute gradient
             loss.backward()
+            # update model paremeters with gradient
             self.optimizer.step()
+            # Clear the gradient for the next iteration, 
+            # preventing accumulation from previous steps.
             self.optimizer.zero_grad()
             return loss.item()
         

@@ -63,6 +63,7 @@ class AEData(object):
         self.aux_width = self.norm_train_aux_data.shape[1]
 
         # create Datasets. __getitem__() returns a tuple (phy, aux)
+        # used to create a DataLoader object. See get_dataloaders()
         self.train_dataset = TreeDataSet(self.norm_train_phy_data, self.norm_train_aux_data)
         self.val_dataset   = TreeDataSet(self.norm_val_phy_data,   self.norm_val_aux_data)
 

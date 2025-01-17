@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling>=1.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "phyloencode"
+version = "0.1"
+description = "A Python package for phylogenetic data encoding"
+readme = "README.md"
+authors = [{name = "Ammon Thompson", email = "ammonthompson@gmail.com"}]
+license = {text = "MIT"}  # Replace with your license
+keywords = ["bioinformatics", "phylogenetics", "machine learning", "deep learning"]
+dependencies = [
+    "torch",
+    "h5py",
+    "numpy",
+    "scikit-learn",
+    "matplotlib",
+]
+requires-python = ">=3.7"
+
+[tool.hatch.build]
+exclude = ["sandbox/**", "tests/**", "phyloencode.egg-info/**", "__pycache__/**", "*.pyc", "*.pyo", "*.log", ".git/**"]
+

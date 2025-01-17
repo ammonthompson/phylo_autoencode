@@ -18,9 +18,16 @@ from matplotlib.backends.backend_pdf import PdfPages
 import phyloencode as ph
 from phyloencode.PhyloAutoencoder import PhyloAutoencoder
 
+# not used. dataset too small
+# num_cpus = multiprocessing.cpu_count()
+# num_workers = 0 if (num_cpus - 4) < 0 else num_cpus - 4
+nworkers = 0
+rand_seed = np.random.randint(0,10000)
+
+# get formated tree data
 with h5py.File("test_data/peak_time.train.hdf5", "r") as f:
-    phy_data = torch.tensor(f['phy_data'][0:4500,...], dtype = torch.float32)
-    aux_data = torch.tensor(f['aux_data'][0:4500,...], dtype = torch.float32)
+    phy_data = torch.tensor(f['phy_data'][0:15000,...], dtype = torch.float32)
+    aux_data = torch.tensor(f['aux_data'][0:15000,...], dtype = torch.float32)
     test_phy_data = torch.tensor(f['phy_data'][45000:45100,...], dtype = torch.float32)
     test_aux_data = torch.tensor(f['aux_data'][45000:45100,...], dtype = torch.float32)
 
@@ -29,7 +36,6 @@ with h5py.File("test_data/peak_time.train.hdf5", "r") as f:
 # rand_idx = torch.randperm(aux_data.shape[0])
 # aux_data = aux_data[rand_idx]
 
-num_cpus = multiprocessing.cpu_count()
 
 # create Data container
 ae_data = ph.DataProcessors.AEData(data = (phy_data, aux_data), 
@@ -39,13 +45,13 @@ ae_data = ph.DataProcessors.AEData(data = (phy_data, aux_data),
 # create data loaders
 trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = 32, 
                                                  shuffle     = True, 
-                                                 num_workers = 0)
+                                                 num_workers = nworkers)
 
 # create model
-ae_model  = ph.PhyloAEModel.AECNN(ae_data,
-                                  stride       = [2,10,10],
-                                  kernel       = [3,11,11],
-                                  out_channels = [16,18,20])
+ae_model  = ph.PhyloAEModel.AECNN(ae_data_container = ae_data,
+                                  stride            = [2,3,5],
+                                  kernel            = [3,4,6],
+                                  out_channels      = [16,16,16])
 
 # create Trainer
 tree_autoencoder = PhyloAutoencoder(model     = ae_model, 
@@ -54,12 +60,14 @@ tree_autoencoder = PhyloAutoencoder(model     = ae_model,
                                     phy_loss_weight = 1.0)
 
 # Train model
-rand_seed = np.random.randint(0,10000)
 tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
 tree_autoencoder.train(num_epochs = 4, seed = rand_seed)
 
 # plot
 epoch_loss_figure = tree_autoencoder.plot_losses().savefig("AElossplot.pdf")
+
+# save trained model
+tree_autoencoder.save_checkpoint("ae_trained.pt")
 
 
 # Test data
@@ -86,10 +94,11 @@ phy_pred_df.to_csv("phy_pred.cblv", header = False)
 
 
 # tree latent space check on test trees
-encoded_trees = tree_autoencoder.tree_encode(phydat, auxdat)
+encoded_test_trees = tree_autoencoder.tree_encode(phydat, auxdat)
 
 # for PCA analysis of a sample of training trees
-rand_idx = np.random.randint(0, ae_data.prop_train * 4500, size = 500)
+# make encoded tree file
+rand_idx = np.random.randint(0, ae_data.prop_train * 15000, size = 5000)
 
 latent_dat = tree_autoencoder.tree_encode(torch.Tensor(ae_data.norm_train_phy_data[rand_idx,...]), 
                                           torch.Tensor(ae_data.norm_train_aux_data[rand_idx,...]))

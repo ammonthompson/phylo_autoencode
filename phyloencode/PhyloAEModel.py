@@ -24,10 +24,6 @@ class AECNN(nn.Module):
                  out_channels = [16, 32]
                  ):
         
-        num_structured_input_channel = ae_data_container.nchannels
-        structured_input_width       = ae_data_container.phy_width
-        unstructured_input_width     = ae_data_container.aux_width
-
         # assumptions:
         # inputs are standardized
         # all strides > 1
@@ -38,7 +34,13 @@ class AECNN(nn.Module):
         assert(len(kernel) == nl)
         assert(np.min(stride) > 1)
         assert(np.min(np.array(kernel) - np.array(stride)) > 0)
-        
+                
+        # input dimensions
+        num_structured_input_channel = ae_data_container.nchannels
+        structured_input_width       = ae_data_container.phy_width
+        unstructured_input_width     = ae_data_container.aux_width
+
+        # some latent layer dimensions
         self.unstructured_latent_width = unstructured_latent_width
         self.num_structured_latent_channels = out_channels[-1]
         
@@ -126,7 +128,7 @@ class AECNN(nn.Module):
 
         self.structured_decoder = nn.Sequential()
 
-        # right now there has to be at least 2 conv layers. 
+        # TODO: right now there has to be at least 2 conv layers. 
         # Implement this so one conv layer is possible
         if nl == 1:
             pass
@@ -205,20 +207,6 @@ class AECNN(nn.Module):
         flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)
         combined_latent           = torch.cat((flat_structured_encoded_x, unstructured_encoded_x), dim=1)
 
-        # print("self.combined_latent_width")
-        # print(self.combined_latent_width)
-        # print("self.num_structured_latent_channels")
-        # print(self.num_structured_latent_channels)
-        # print("structured_encoded_x.shape")
-        # print(structured_encoded_x.shape)
-        # print("unstructured_encoded_x.shape")
-        # print(unstructured_encoded_x.shape)
-        # print("flat_structured_encoded_x.shape")
-        # print(flat_structured_encoded_x.shape)
-        # print("combined_latent.shape")
-        # print(combined_latent.shape)
-
-
         shared_latent = self.shared_layer(combined_latent)
 
         # Reshape for structured decoder (must have self.num_structured_latent_channels channels)
@@ -228,15 +216,6 @@ class AECNN(nn.Module):
         # Decode
         unstructured_decoded_x = self.unstructured_decoder(shared_latent)
         structured_decoded_x   = self.structured_decoder(reshaped_shared_latent)
-
-        # print("shared_latent.shape")
-        # print(shared_latent.shape)
-        # print("reshaped_shared_latent.shape")
-        # print(reshaped_shared_latent.shape)
-        # print("unstructured_decoded_x.shape")
-        # print(unstructured_decoded_x.shape)
-        # print("structured_decoded_x.shape")
-        # print(structured_decoded_x.shape)
 
         return structured_decoded_x, unstructured_decoded_x
     
