@@ -14,10 +14,10 @@ class AECNN(nn.Module):
         in a latent layer which then gets decoded by a transpose CNN and dense layer 
         in parallel.
     '''
-    def __init__(self, ae_data_container,
-                #  num_structured_input_channel, 
-                #  structured_input_width,  # Input width for structured data
-                #  unstructured_input_width,
+    def __init__(self, #ae_data_container,
+                 num_structured_input_channel, 
+                 structured_input_width,  # Input width for structured data
+                 unstructured_input_width,
                  unstructured_latent_width = None, # must be integer multiple of num_structured_latent_channels
                  stride = [2,2],
                  kernel = [3,3],
@@ -36,9 +36,12 @@ class AECNN(nn.Module):
         assert(np.min(np.array(kernel) - np.array(stride)) > 0)
                 
         # input dimensions
-        num_structured_input_channel = ae_data_container.nchannels
-        structured_input_width       = ae_data_container.phy_width
-        unstructured_input_width     = ae_data_container.aux_width
+        # num_structured_input_channel = ae_data_container.nchannels
+        # structured_input_width       = ae_data_container.phy_width
+        # unstructured_input_width     = ae_data_container.aux_width
+        self.num_structured_input_channel = num_structured_input_channel
+        self.structured_input_width       = structured_input_width
+        self.unstructured_input_width     = unstructured_input_width
 
         # some latent layer dimensions
         self.unstructured_latent_width = unstructured_latent_width
@@ -66,18 +69,18 @@ class AECNN(nn.Module):
 
         # Structured Encoder
         print("cumulative conv layers output shapes: ")
-        print((1, num_structured_input_channel, structured_input_width))
+        print((1, self.num_structured_input_channel, self.structured_input_width))
 
         self.structured_encoder = nn.Sequential()
-        self.structured_encoder.add_module("conv1d_0", nn.Conv1d(in_channels  = num_structured_input_channel, 
+        self.structured_encoder.add_module("conv1d_0", nn.Conv1d(in_channels  = self.num_structured_input_channel, 
                                                                 out_channels = out_channels[0], 
                                                                 kernel_size  = kernel[0], 
                                                                 stride       = stride[0], 
                                                                 padding      = 1))
         
         conv_out_shape = utils.conv1d_sequential_outshape(self.structured_encoder, 
-                                                num_structured_input_channel, 
-                                                structured_input_width)
+                                                self.num_structured_input_channel, 
+                                                self.structured_input_width)
         conv_out_width = [conv_out_shape[2]]
         print(conv_out_shape)
 
@@ -93,8 +96,8 @@ class AECNN(nn.Module):
                                                             padding      = 1))
                 
                 conv_out_shape = utils.conv1d_sequential_outshape(self.structured_encoder, 
-                                                        num_structured_input_channel, 
-                                                        structured_input_width)
+                                                        self.num_structured_input_channel, 
+                                                        self.structured_input_width)
                 conv_out_width.append(conv_out_shape[2])                
                 
                 print(conv_out_shape)
@@ -104,8 +107,8 @@ class AECNN(nn.Module):
 
         # Calculate final structured output width after encoder
         struct_outshape = utils.conv1d_sequential_outshape(self.structured_encoder, 
-                                                           num_structured_input_channel, 
-                                                           structured_input_width)
+                                                           self.num_structured_input_channel, 
+                                                           self.structured_input_width)
         
         structured_output_width = struct_outshape[2]
         flat_structured_width = structured_output_width * self.num_structured_latent_channels
@@ -123,7 +126,7 @@ class AECNN(nn.Module):
         self.unstructured_decoder = nn.Sequential(
             nn.Linear(self.combined_latent_width, 64),
             nn.ReLU(),
-            nn.Linear(64, unstructured_input_width)
+            nn.Linear(64, self.unstructured_input_width)
         )
 
         self.structured_decoder = nn.Sequential()
@@ -187,7 +190,7 @@ class AECNN(nn.Module):
 
         self.structured_decoder.add_module("struct_decoder_out", 
                                            nn.ConvTranspose1d(in_channels=out_channels[0], 
-                                                              out_channels=num_structured_input_channel, 
+                                                              out_channels=self.num_structured_input_channel, 
                                                               kernel_size=kernel[0], stride=stride[0], padding=pad, 
                                                               output_padding=outpad))
         

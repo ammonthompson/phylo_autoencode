@@ -4,6 +4,7 @@ from torch.utils.data import Dataset, DataLoader, TensorDataset
 import h5py
 import numpy as np
 import sklearn
+import joblib
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from typing import List, Dict, Tuple, Optional, Union
@@ -72,6 +73,10 @@ class AEData(object):
 
     def get_normalizers(self) -> Tuple[sklearn.preprocessing.StandardScaler, sklearn.preprocessing.StandardScaler]:
         return self.phy_normalizer, self.aux_normalizer
+    
+    def save_normalizers(self, file_prefix):
+        joblib.dump(self.phy_normalizer, file_prefix + ".phy_normalizer.pkl")
+        joblib.dump(self.aux_normalizer, file_prefix + ".aux_normalizer.pkl")
     
     def get_dataloaders(self, 
                         batch_size = 32, 

@@ -26,8 +26,8 @@ rand_seed = np.random.randint(0,10000)
 
 # get formated tree data
 with h5py.File("test_data/peak_time.train.hdf5", "r") as f:
-    phy_data = torch.tensor(f['phy_data'][0:15000,...], dtype = torch.float32)
-    aux_data = torch.tensor(f['aux_data'][0:15000,...], dtype = torch.float32)
+    phy_data = torch.tensor(f['phy_data'][0:45000,...], dtype = torch.float32)
+    aux_data = torch.tensor(f['aux_data'][0:45000,...], dtype = torch.float32)
     test_phy_data = torch.tensor(f['phy_data'][45000:45100,...], dtype = torch.float32)
     test_aux_data = torch.tensor(f['aux_data'][45000:45100,...], dtype = torch.float32)
 
@@ -48,10 +48,12 @@ trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = 32,
                                                  num_workers = nworkers)
 
 # create model
-ae_model  = ph.PhyloAEModel.AECNN(ae_data_container = ae_data,
-                                  stride            = [2,3,5],
-                                  kernel            = [3,4,6],
-                                  out_channels      = [16,16,16])
+ae_model  = ph.PhyloAEModel.AECNN(num_structured_input_channel = ae_data.nchannels, 
+                                  structured_input_width   = ae_data.phy_width,  # Input width for structured data
+                                  unstructured_input_width = ae_data.aux_width,
+                                  stride        = [2,2,5,5],
+                                  kernel        = [3,3,6,6],
+                                  out_channels  = [32,32,32,32])
 
 # create Trainer
 tree_autoencoder = PhyloAutoencoder(model     = ae_model, 
@@ -61,13 +63,14 @@ tree_autoencoder = PhyloAutoencoder(model     = ae_model,
 
 # Train model
 tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
-tree_autoencoder.train(num_epochs = 4, seed = rand_seed)
+tree_autoencoder.train(num_epochs = 25, seed = rand_seed)
 
 # plot
 epoch_loss_figure = tree_autoencoder.plot_losses().savefig("AElossplot.pdf")
 
 # save trained model
-tree_autoencoder.save_checkpoint("ae_trained.pt")
+tree_autoencoder.save_model("ae_trained.pt")
+ae_data.save_normalizers("ae_test")
 
 
 # Test data
@@ -104,4 +107,4 @@ latent_dat = tree_autoencoder.tree_encode(torch.Tensor(ae_data.norm_train_phy_da
                                           torch.Tensor(ae_data.norm_train_aux_data[rand_idx,...]))
 
 latent_dat_df = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), columns = None, index = None)
-latent_dat_df.to_csv("train_latent_for_pca.csv")
+latent_dat_df.to_csv("traindat_latent_for_pca.csv", header = False, index = False)

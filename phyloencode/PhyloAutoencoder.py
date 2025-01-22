@@ -189,6 +189,9 @@ class PhyloAutoencoder(object):
         self.val_losses = checkpoint['val_loss']
         self.model.train()
 
+    def save_model(self, filename):
+        torch.save(self.model, filename)
+
     def tree_encode(self, phy: torch.Tensor, aux: torch.Tensor):
         self.model.eval() 
         phy = phy.to(self.device)
