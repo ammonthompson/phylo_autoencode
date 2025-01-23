@@ -8,12 +8,6 @@ import sklearn as sk
 import phyloencode as ph
 import sys
 import h5py
-import multiprocessing
-# from sklearn.preprocessing import StandardScaler
-# from sklearn.model_selection import train_test_split
-
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
 
 import phyloencode as ph
 from phyloencode.PhyloAutoencoder import PhyloAutoencoder
@@ -79,17 +73,12 @@ ae_data.save_normalizers("ae_test")
 phy_normalizer, aux_normalizer = ae_data.get_normalizers()
 phydat = phy_normalizer.transform(test_phy_data)
 auxdat = aux_normalizer.transform(test_aux_data)
-phydat = phydat.reshape((phydat.shape[0], ae_data.nchannels, int(phydat.shape[1]/ae_data.nchannels)), order = "F")
+phydat = phydat.reshape((phydat.shape[0], ae_data.nchannels, 
+                         int(phydat.shape[1]/ae_data.nchannels)), order = "F")
 phydat = torch.Tensor(phydat)
 auxdat = torch.Tensor(auxdat)
 phy_pred, auxpred = tree_autoencoder.predict(phydat, auxdat)
 phy_pred = phy_normalizer.inverse_transform(phy_pred.reshape((phy_pred.shape[0], -1), order = "F"))
-
-# print out comparison of a part of an input tree and it passed through the filter
-for i in range(50,53):
-    print(test_phy_data.numpy()[i,18:24])
-    print(np.array(phy_pred[i,18:24]))
-    print("    ")
 
 phy_true_df = pd.DataFrame(test_phy_data.numpy())
 phy_true_df.to_csv("phy_true.cblv", header = False)

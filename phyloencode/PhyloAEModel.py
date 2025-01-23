@@ -36,9 +36,6 @@ class AECNN(nn.Module):
         assert(np.min(np.array(kernel) - np.array(stride)) > 0)
                 
         # input dimensions
-        # num_structured_input_channel = ae_data_container.nchannels
-        # structured_input_width       = ae_data_container.phy_width
-        # unstructured_input_width     = ae_data_container.aux_width
         self.num_structured_input_channel = num_structured_input_channel
         self.structured_input_width       = structured_input_width
         self.unstructured_input_width     = unstructured_input_width
