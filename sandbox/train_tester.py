@@ -18,6 +18,8 @@ from matplotlib.backends.backend_pdf import PdfPages
 import phyloencode as ph
 from phyloencode.PhyloAutoencoder import PhyloAutoencoder
 
+data_fn = sys.argv[1]
+
 # not used. dataset too small
 # num_cpus = multiprocessing.cpu_count()
 # num_workers = 0 if (num_cpus - 4) < 0 else num_cpus - 4
@@ -25,7 +27,7 @@ nworkers = 0
 rand_seed = np.random.randint(0,10000)
 
 # get formated tree data
-with h5py.File("test_data/peak_time.train.hdf5", "r") as f:
+with h5py.File(data_fn, "r") as f:
     phy_data = torch.tensor(f['phy_data'][0:45000,...], dtype = torch.float32)
     aux_data = torch.tensor(f['aux_data'][0:45000,...], dtype = torch.float32)
     test_phy_data = torch.tensor(f['phy_data'][45000:45100,...], dtype = torch.float32)
