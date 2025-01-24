@@ -47,9 +47,9 @@ trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = 32,
 ae_model  = ph.PhyloAEModel.AECNN(num_structured_input_channel = ae_data.nchannels, 
                                   structured_input_width   = ae_data.phy_width,  # Input width for structured data
                                   unstructured_input_width = ae_data.aux_width,
-                                  stride        = [2,2,5,5],
-                                  kernel        = [3,3,6,6],
-                                  out_channels  = [32,32,32,32])
+                                  stride        = [2,5,9,9],
+                                  kernel        = [3,6,10,10],
+                                  out_channels  = [64,128,128,256])
 
 # create Trainer
 tree_autoencoder = PhyloAutoencoder(model     = ae_model, 
@@ -59,7 +59,7 @@ tree_autoencoder = PhyloAutoencoder(model     = ae_model,
 
 # Train model
 tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
-tree_autoencoder.train(num_epochs = 25, seed = rand_seed)
+tree_autoencoder.train(num_epochs = 30, seed = rand_seed)
 
 # plot
 epoch_loss_figure = tree_autoencoder.plot_losses().savefig("AElossplot.pdf")
@@ -87,9 +87,6 @@ phy_pred_df = pd.DataFrame(phy_pred)
 phy_pred_df.to_csv("phy_pred.cblv", header = False)
 
 
-# tree latent space check on test trees
-encoded_test_trees = tree_autoencoder.tree_encode(phydat, auxdat)
-
 # for PCA analysis of a sample of training trees
 # make encoded tree file
 rand_idx = np.random.randint(0, ae_data.prop_train * 15000, size = 5000)
@@ -98,4 +95,5 @@ latent_dat = tree_autoencoder.tree_encode(torch.Tensor(ae_data.norm_train_phy_da
                                           torch.Tensor(ae_data.norm_train_aux_data[rand_idx,...]))
 
 latent_dat_df = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), columns = None, index = None)
-latent_dat_df.to_csv("traindat_latent_for_pca.csv", header = False, index = False)
+latent_dat_df.to_csv("traindat_latent.csv", header = False, index = False)
+

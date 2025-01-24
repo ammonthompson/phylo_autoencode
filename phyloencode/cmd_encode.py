@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
 # test a pretrained model
-import phyloencode as ph
 from phyloencode.PhyloAutoencoder import PhyloAutoencoder
 import torch
 import joblib
 import h5py
-from sklearn.preprocessing import StandardScaler
-import numpy as np
 import pandas as pd
 import os
 import argparse
-import re
 
 def file_exists(fname):
     "Return error if no file"
