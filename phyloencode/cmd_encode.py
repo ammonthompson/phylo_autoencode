@@ -63,7 +63,7 @@ def main ():
     # make encoded tree file
     latent_dat = tree_autoencoder.tree_encode(phydat, auxdat)
     latent_dat_df = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), columns = None, index = None)
-    latent_dat_df.to_csv(out_file_prefix + ".ae_encoded.csv", header = False, index = False)
+    latent_dat_df.to_csv(out_file_prefix + ".ae_encoded.csv", header = None, index = None)
 
     print("Wrote to: " + out_file_prefix + ".ae_encoded.csv")
 

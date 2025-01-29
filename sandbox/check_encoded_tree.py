@@ -26,7 +26,6 @@ def plot_contour(df_1, df_2, percent_variance = None):
     plt.ylabel(f"{df_1.columns[1]}", fontsize=12)
     plt.legend()
 
-
 def plot_distributions(df_1, df_2, percent_variance = None, output_pdf = "pca_distributions.pdf"):
     """
     Creates a PDF with plots of PCA distributions for df_1 and points for df_2 values.
@@ -43,6 +42,17 @@ def plot_distributions(df_1, df_2, percent_variance = None, output_pdf = "pca_di
 
     # Open a PDF for saving plots
     with PdfPages(output_pdf) as pdf:
+
+        # bar plot of percent variance explained
+        if np.sum(percent_variance is not None) > 0:
+            plt.figure()
+            plt.bar([x for x in range(1, len(percent_variance) + 1)], percent_variance)
+            plt.title("PCA Percent variance explained")
+            plt.xlabel("Component")
+            plt.ylabel("% variance")
+            pdf.savefig()
+            plt.close()
+
         # First plot: Contour plot for PC1 and PC2 with points from df_2
         plt.figure(figsize=(10, 8))
         plot_contour(df_1, df_2, percent_variance)
@@ -74,7 +84,6 @@ def plot_distributions(df_1, df_2, percent_variance = None, output_pdf = "pca_di
         plt.close()
 
     print(f"Plots saved to {output_pdf}")
-
 
 def save_pca_parameters(mean, scale, eigenvalues, eigenvectors, output_file):
     """
@@ -123,11 +132,15 @@ def transform_new_data(new_data, mean, scale, eigenvectors):
     # Apply PCA transformation
     return np.dot(standardized_data, eigenvectors.T)
 
-def print_variance_explained(explained_variance_ratio):
+def print_plot_variance_explained(explained_variance_ratio):
     print("Percentage of Total Variance Explained (tree_file_1):")
+    vars = []
     for i, variance in enumerate(explained_variance_ratio, start=1):
         if variance > 0.1:
             print(f"PC{i}: {variance:.2f}%")
+            vars.append(variance)
+
+    return(np.array(vars))
 
 
 if __name__ == "__main__":
@@ -135,7 +148,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("-trn", "--train_trees", required=True, help = "Encoded file of training trees, assume no header or row names")
     ap.add_argument("-test", "--test_trees", required=False, help = "Encoded file, assume no header or row names")
-    ap.add_argument("-o", "--out_prefix", required=True, help = "Encoded file, assume no header or row names")
+    ap.add_argument("-o", "--out_prefix", required=True, help = "Prefix for output files, assume no header or row names")
 
     args = ap.parse_args()
 
@@ -158,14 +171,14 @@ if __name__ == "__main__":
     explained_variance_ratio = pca.explained_variance_ratio_ * 100
 
     # Print Variance Explained
-    print_variance_explained(explained_variance_ratio)
+    var_explained = print_plot_variance_explained(explained_variance_ratio)
 
     # Save tree stats and PCA-transformed data for the first file
     pc_df_1 = pd.DataFrame(
         data=principal_components_1,
         columns=[f"PC{i+1}" for i in range(pca.n_components_)]
     )
-    df_1.to_csv(out_prefix + ".sumstats.csv", header = True, index=False)
+    df_1.to_csv(out_prefix + ".encoded.csv", header = True, index=False)
     pc_df_1.to_csv(out_prefix + ".pca.csv", index=False)
 
     # Standardize the test tree file using the same scaler and transform with the fitted PCA
@@ -183,5 +196,5 @@ if __name__ == "__main__":
 
     # create plot
     plot_distributions(pc_df_1, pc_df_2, explained_variance_ratio, out_prefix + "_pca_plots.pdf")
-    plot_distributions(df_1, df_2, None, out_prefix + "_sumstats_plots.pdf")
+    plot_distributions(df_1, df_2, None, out_prefix + "_encoded_plots.pdf")
                                                                                                                          

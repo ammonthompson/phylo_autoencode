@@ -26,6 +26,7 @@ class AECNN(nn.Module):
         
         # assumptions:
         # inputs are standardized
+        # at least 2 convolution layers
         # all strides > 1
         # kernal[i] > stride[i]
 
@@ -34,6 +35,10 @@ class AECNN(nn.Module):
         assert(len(kernel) == nl)
         assert(np.min(stride) > 1)
         assert(np.min(np.array(kernel) - np.array(stride)) > 0)
+
+        self.layer_params = {"out_channels": out_channels,
+                            "kernel"      : kernel,
+                            "stride"      : stride}
                 
         # input dimensions
         self.num_structured_input_channel = num_structured_input_channel
@@ -57,53 +62,59 @@ class AECNN(nn.Module):
 
 
         # Unstructured Encoder
-        self.unstructured_encoder = nn.Sequential(
-            nn.Linear(unstructured_input_width, 64),
-            nn.ReLU(),
-            nn.Linear(64, self.unstructured_latent_width),
-            nn.ReLU()
-        )
+        # self.unstructured_encoder = nn.Sequential(
+        #     nn.Linear(unstructured_input_width, 64),
+        #     nn.ReLU(),
+        #     nn.Linear(64, self.unstructured_latent_width),
+        #     nn.ReLU()
+        # )
+        self.unstructured_encoder = DenseEncoder(self.unstructured_input_width, 
+                                                 self.unstructured_latent_width)
 
         # Structured Encoder
-        print("cumulative conv layers output shapes: ")
+        # print("cumulative conv layers output shapes: ")
         print((1, self.num_structured_input_channel, self.structured_input_width))
 
-        self.structured_encoder = nn.Sequential()
-        self.structured_encoder.add_module("conv1d_0", nn.Conv1d(in_channels  = self.num_structured_input_channel, 
-                                                                out_channels = out_channels[0], 
-                                                                kernel_size  = kernel[0], 
-                                                                stride       = stride[0], 
-                                                                padding      = 1))
+        # self.structured_encoder = nn.Sequential()
+        # self.structured_encoder.add_module("conv1d_0", nn.Conv1d(in_channels  = self.num_structured_input_channel, 
+        #                                                         out_channels = out_channels[0], 
+        #                                                         kernel_size  = kernel[0], 
+        #                                                         stride       = stride[0], 
+        #                                                         padding      = 1))
         
-        conv_out_shape = utils.conv1d_sequential_outshape(self.structured_encoder, 
-                                                self.num_structured_input_channel, 
-                                                self.structured_input_width)
-        conv_out_width = [conv_out_shape[2]]
-        print(conv_out_shape)
+        # conv_out_shape = utils.conv1d_sequential_outshape(self.structured_encoder, 
+        #                                         self.num_structured_input_channel, 
+        #                                         self.structured_input_width)
+        # conv_out_width = [conv_out_shape[2]]
+        # print(conv_out_shape)
 
-        # add more layers if depth greater than 1.
-        if nl > 1:
-            self.structured_encoder.add_module("conv_ReLU_0", nn.ReLU())
-            for i in range(1, nl):
-                self.structured_encoder.add_module("conv1d_" + str(i), 
-                                                nn.Conv1d(in_channels  = out_channels[i-1], 
-                                                            out_channels = out_channels[i], 
-                                                            kernel_size  = kernel[i], 
-                                                            stride       = stride[i], 
-                                                            padding      = 1))
+        # # add more layers if depth greater than 1.
+        # if nl > 1:
+        #     self.structured_encoder.add_module("conv_ReLU_0", nn.ReLU())
+        #     for i in range(1, nl):
+        #         self.structured_encoder.add_module("conv1d_" + str(i), 
+        #                                         nn.Conv1d(in_channels  = out_channels[i-1], 
+        #                                                     out_channels = out_channels[i], 
+        #                                                     kernel_size  = kernel[i], 
+        #                                                     stride       = stride[i], 
+        #                                                     padding      = 1))
                 
-                conv_out_shape = utils.conv1d_sequential_outshape(self.structured_encoder, 
-                                                        self.num_structured_input_channel, 
-                                                        self.structured_input_width)
-                conv_out_width.append(conv_out_shape[2])                
+        #         conv_out_shape = utils.conv1d_sequential_outshape(self.structured_encoder, 
+        #                                                 self.num_structured_input_channel, 
+        #                                                 self.structured_input_width)
+        #         conv_out_width.append(conv_out_shape[2])                
                 
-                print(conv_out_shape)
+        #         print(conv_out_shape)
 
-                if i < (nl-1):
-                    self.structured_encoder.add_module("conv_ReLU_" + str(i), nn.ReLU())
+        #         if i < (nl-1):
+        #             self.structured_encoder.add_module("conv_ReLU_" + str(i), nn.ReLU())
+
+        self.structured_encoder = CnnEncoder(self.num_structured_input_channel, 
+                                             self.structured_input_width,
+                                             self.layer_params)
 
         # Calculate final structured output width after encoder
-        struct_outshape = utils.conv1d_sequential_outshape(self.structured_encoder, 
+        struct_outshape = utils.conv1d_sequential_outshape(self.structured_encoder.cnn_layers, 
                                                            self.num_structured_input_channel, 
                                                            self.structured_input_width)
         
@@ -120,81 +131,84 @@ class AECNN(nn.Module):
         )
         
         # Unstructured Decoder
-        self.unstructured_decoder = nn.Sequential(
-            nn.Linear(self.combined_latent_width, 64),
-            nn.ReLU(),
-            nn.Linear(64, self.unstructured_input_width)
-        )
+        # self.unstructured_decoder = nn.Sequential(
+        #     nn.Linear(self.combined_latent_width, 64),
+        #     nn.ReLU(),
+        #     nn.Linear(64, self.unstructured_input_width)
+        # )
+        self.unstructured_decoder = DenseDecoder(self.combined_latent_width,
+                                                 self.unstructured_input_width)
 
-        self.structured_decoder = nn.Sequential()
+        # self.structured_decoder = nn.Sequential()
 
-        # TODO: right now there has to be at least 2 conv layers. 
-        # Implement this so one conv layer is possible
-        if nl == 1:
-            pass
-        elif nl == 2:
-            pass
-        else:
-            pass
+        # # TODO: right now there has to be at least 2 conv layers. 
+        # # Implement this so one conv layer is possible
+        # if nl == 1:
+        #     pass
+        # elif nl == 2:
+        #     pass
+        # else:
+        #     pass
 
-        self.structured_decoder.add_module("trans_conv1d_0", 
-                                                nn.ConvTranspose1d(in_channels  = out_channels[nl-1], 
-                                                          out_channels = out_channels[nl-2], 
-                                                          kernel_size  = kernel[nl-1], 
-                                                          stride       = stride[nl-1], 
-                                                          padding      = 0,
-                                                          output_padding = 0))
+        # self.structured_decoder.add_module("trans_conv1d_0", 
+        #                                     nn.ConvTranspose1d(
+        #                                               in_channels  = out_channels[nl-1], 
+        #                                               out_channels = out_channels[nl-2], 
+        #                                               kernel_size  = kernel[nl-1], 
+        #                                               stride       = stride[nl-1], 
+        #                                               padding      = 0,
+        #                                               output_padding = 0))
  
-        self.structured_decoder.add_module("tconv_ReLU_0", nn.ReLU())
+        # self.structured_decoder.add_module("tconv_ReLU_0", nn.ReLU())
 
-        print(struct_outshape)
-        outshape = utils.tconv1d_sequential_outshape(self.structured_decoder, 
-                                                     self.num_structured_latent_channels, 
-                                                     self.reshaped_shared_latent_width)
-        print(outshape)
+        # print(struct_outshape)
+        # outshape = utils.tconv1d_sequential_outshape(self.structured_decoder, 
+        #                                              self.num_structured_latent_channels, 
+        #                                              self.reshaped_shared_latent_width)
+        # print(outshape)
 
-        for i in range(nl-2, 0, -1):
-            outshape = utils.tconv1d_sequential_outshape(self.structured_decoder, 
-                                                     self.num_structured_latent_channels, 
-                                                     self.reshaped_shared_latent_width)
-            w_in = outshape[2]
-            new_target_width = conv_out_width[i-1]
-            npad, noutpad = self.get_decode_paddings(new_target_width, w_in, stride[i], kernel[i])
+        # for i in range(nl-2, 0, -1):
+        #     outshape = utils.tconv1d_sequential_outshape(self.structured_decoder, 
+        #                                              self.num_structured_latent_channels, 
+        #                                              self.reshaped_shared_latent_width)
+        #     w_in = outshape[2]
+        #     new_target_width = self.structured_encoder.conv_out_width[i-1]
+        #     npad, noutpad = self.get_decode_paddings(new_target_width, w_in, stride[i], kernel[i])
 
-            self.structured_decoder.add_module("conv1d_" + str(i), 
-                                               nn.ConvTranspose1d(in_channels  = out_channels[i], 
-                                                        out_channels = out_channels[i-1], 
-                                                        kernel_size  = kernel[i], 
-                                                        stride       = stride[i], 
-                                                        padding      = npad,
-                                                        output_padding= noutpad))
+        #     self.structured_decoder.add_module("conv1d_" + str(i), 
+        #                                        nn.ConvTranspose1d(in_channels  = out_channels[i], 
+        #                                                 out_channels = out_channels[i-1], 
+        #                                                 kernel_size  = kernel[i], 
+        #                                                 stride       = stride[i], 
+        #                                                 padding      = npad,
+        #                                                 output_padding= noutpad))
             
-            print(utils.tconv1d_sequential_outshape(self.structured_decoder, 
-                                                self.num_structured_latent_channels, 
-                                                self.reshaped_shared_latent_width))
+        #     print(utils.tconv1d_sequential_outshape(self.structured_decoder, 
+        #                                         self.num_structured_latent_channels, 
+        #                                         self.reshaped_shared_latent_width))
 
-            self.structured_decoder.add_module("tconv_ReLU_" + str(i), nn.ReLU())
+        #     self.structured_decoder.add_module("tconv_ReLU_" + str(i), nn.ReLU())
 
-        # get correct padding and output_padding for final decoder layer
-        outshape = utils.tconv1d_sequential_outshape(self.structured_decoder, 
-                                                     self.num_structured_latent_channels, 
-                                                     self.reshaped_shared_latent_width)
+        # # get correct padding and output_padding for final decoder layer
+        # outshape = utils.tconv1d_sequential_outshape(self.structured_decoder, 
+        #                                              self.num_structured_latent_channels, 
+        #                                              self.reshaped_shared_latent_width)
         
 
-        width = outshape[2]
-        new_target_width = structured_input_width
-        pad, outpad = self.get_decode_paddings(new_target_width, width, stride[0], kernel[0])
+        # width = outshape[2]
+        # new_target_width = structured_input_width
+        # pad, outpad = self.get_decode_paddings(new_target_width, width, stride[0], kernel[0])
 
-        self.structured_decoder.add_module("struct_decoder_out", 
-                                           nn.ConvTranspose1d(in_channels=out_channels[0], 
-                                                              out_channels=self.num_structured_input_channel, 
-                                                              kernel_size=kernel[0], stride=stride[0], padding=pad, 
-                                                              output_padding=outpad))
-        
-        print(utils.tconv1d_sequential_outshape(self.structured_decoder, 
-                                                     self.num_structured_latent_channels, 
-                                                     self.reshaped_shared_latent_width))
-
+        # self.structured_decoder.add_module("struct_decoder_out", 
+        #                                    nn.ConvTranspose1d(in_channels=out_channels[0], 
+        #                                                       out_channels=self.num_structured_input_channel, 
+        #                                                       kernel_size=kernel[0], stride=stride[0], padding=pad, 
+        #                                                       output_padding=outpad))
+        self.structured_decoder = CnnDecoder(self.structured_encoder.conv_out_width,
+                                             self.reshaped_shared_latent_width,
+                                             self.num_structured_input_channel,
+                                             self.structured_input_width,
+                                             self.layer_params)
 
 
     def forward(self, data: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -224,6 +238,193 @@ class AECNN(nn.Module):
     def make_decoders(self):
         pass
 
+    # def get_decode_paddings(self, w_out_target, w_in, s, k, d=1):
+    #     # convtranspose1d formulat: 
+    #     # w_out_target = (w_in - 1)s + d(k-1) + 1 + outpad - 2pad
+    #     # returns the paddings necessary for target output width 
+    #     E = s*(w_in - 1) + d*(k-1) + 1
+
+    #     if (w_out_target - E) < 0:
+    #         pad = (E - w_out_target)/2
+    #         pad = int(pad + pad % 1)
+    #         outpad = w_out_target - E + 2 * pad    #if (w_out_target - E + 2 * pad) <= (s-1) else 0
+    #     elif (w_out_target - E) >=0 and (w_out_target - E) <= (s - 1):
+    #         outpad = w_out_target - E
+    #         pad = 0
+    #     else:
+    #         pad = (E - w_out_target + s - 1)/2
+    #         pad = int(pad + pad % 1)
+    #         outpad = s-1
+
+    #     return pad, outpad
+    
+
+
+# encoder and decoder classes
+class DenseEncoder(nn.Module):
+    def __init__(self, in_width, out_width):
+        super().__init__()
+        self.unstructured_encoder = nn.Sequential(
+            nn.Linear(in_width, 64),
+            nn.ReLU(),
+            nn.Linear(64, out_width),
+            nn.ReLU()
+        )
+    def forward(self, x):
+        return self.unstructured_encoder(x)
+
+
+class DenseDecoder(nn.Module):
+    def __init__(self, in_width, out_width):
+        super().__init__()
+        self.unstructured_decoder = nn.Sequential(
+            nn.Linear(in_width, 64),
+            nn.ReLU(),
+            nn.Linear(64, out_width)
+        )
+    def forward(self, x):
+        return self.unstructured_decoder(x)
+
+
+class CnnEncoder(nn.Module):
+    def __init__(self, data_channels, data_width, layer_params):
+        super().__init__()
+        out_channels = layer_params['out_channels']
+        kernel       = layer_params['kernel']
+        stride       = layer_params['stride']
+        nl = len(out_channels)
+        self.cnn_layers = nn.Sequential()
+        self.cnn_layers.add_module("conv1d_0", 
+                                   nn.Conv1d(in_channels  = data_channels, 
+                                             out_channels = out_channels[0], 
+                                             kernel_size  = kernel[0], 
+                                             stride       = stride[0], 
+                                             padding      = 1))
+        
+        conv_out_shape = utils.conv1d_sequential_outshape(self.cnn_layers, 
+                                                data_channels, 
+                                                data_width)
+        self.conv_out_width = [conv_out_shape[2]]
+        print(conv_out_shape)
+
+        # add more layers if depth greater than 1.
+        if len(out_channels) > 1:
+            self.cnn_layers.add_module("conv_ReLU_0", nn.ReLU())
+            for i in range(1, nl):
+                self.cnn_layers.add_module("conv1d_" + str(i), 
+                                            nn.Conv1d(in_channels  = out_channels[i-1], 
+                                                      out_channels = out_channels[i], 
+                                                      kernel_size  = kernel[i], 
+                                                      stride       = stride[i], 
+                                                      padding      = 1))
+                
+                conv_out_shape = utils.conv1d_sequential_outshape(self.cnn_layers, 
+                                                        data_channels, 
+                                                        data_width)
+                self.conv_out_width.append(conv_out_shape[2])                
+                
+                print(conv_out_shape)
+
+                if i < (nl-1):
+                    self.cnn_layers.add_module("conv_ReLU_" + str(i), nn.ReLU())
+
+    def forward(self, x):
+        return self.cnn_layers(x)
+
+
+class CnnDecoder(nn.Module):
+    def __init__(self, 
+                 encoder_layer_widths, 
+                 latent_width, 
+                 data_channels, 
+                 data_width, 
+                 layer_params):
+        
+        super().__init__()
+        out_channels = layer_params['out_channels']
+        kernel       = layer_params['kernel']
+        stride       = layer_params['stride']
+        nl = len(out_channels)
+
+        num_cnn_latent_channels = out_channels[-1]
+
+        self.tcnn_layers = nn.Sequential()
+
+        # TODO: right now there has to be at least 2 conv layers. 
+        # Implement this so one conv layer is possible
+        if nl == 1:
+            pass
+        elif nl == 2:
+            pass
+        else:
+            pass
+
+        self.tcnn_layers.add_module("trans_conv1d_0", 
+                                    nn.ConvTranspose1d(
+                                        in_channels  = out_channels[nl-1], 
+                                        out_channels = out_channels[nl-2], 
+                                        kernel_size  = kernel[nl-1], 
+                                        stride       = stride[nl-1], 
+                                        padding      = 0,
+                                        output_padding = 0))
+ 
+        self.tcnn_layers.add_module("tconv_ReLU_0", nn.ReLU())
+
+        outshape = utils.tconv1d_sequential_outshape(self.tcnn_layers, 
+                                                     num_cnn_latent_channels, 
+                                                     latent_width)
+        print(outshape)
+
+        for i in range(nl-2, 0, -1):
+            outshape = utils.tconv1d_sequential_outshape(self.tcnn_layers, 
+                                                     num_cnn_latent_channels, 
+                                                     latent_width)
+            w_in = outshape[2]
+            new_target_width = encoder_layer_widths[i-1]
+            npad, noutpad = self.get_decode_paddings(new_target_width, 
+                                                     w_in, stride[i], kernel[i])
+
+            self.tcnn_layers.add_module("conv1d_" + str(i), 
+                                        nn.ConvTranspose1d(
+                                            in_channels  = out_channels[i], 
+                                            out_channels = out_channels[i-1], 
+                                            kernel_size  = kernel[i], 
+                                            stride       = stride[i], 
+                                            padding      = npad,
+                                            output_padding= noutpad))
+            
+            print(utils.tconv1d_sequential_outshape(self.tcnn_layers, 
+                                                num_cnn_latent_channels, 
+                                                latent_width))
+
+            self.tcnn_layers.add_module("tconv_ReLU_" + str(i), nn.ReLU())
+
+        # get correct padding and output_padding for final decoder layer
+        outshape = utils.tconv1d_sequential_outshape(self.tcnn_layers, 
+                                                    num_cnn_latent_channels, 
+                                                    latent_width)
+        
+
+        width = outshape[2]
+        new_target_width = data_width
+        pad, outpad = self.get_decode_paddings(new_target_width, width, stride[0], kernel[0])
+
+        self.tcnn_layers.add_module("struct_decoder_out", 
+                                    nn.ConvTranspose1d(
+                                        in_channels    = out_channels[0], 
+                                        out_channels   = data_channels, 
+                                        kernel_size    = kernel[0], 
+                                        stride         = stride[0], 
+                                        padding        = pad, 
+                                        output_padding = outpad))
+        
+        print(utils.tconv1d_sequential_outshape(self.tcnn_layers, 
+                                        num_cnn_latent_channels, 
+                                        latent_width))
+        
+    def forward(self, x):
+        return self.tcnn_layers(x)
+
     def get_decode_paddings(self, w_out_target, w_in, s, k, d=1):
         # convtranspose1d formulat: 
         # w_out_target = (w_in - 1)s + d(k-1) + 1 + outpad - 2pad
@@ -243,4 +444,3 @@ class AECNN(nn.Module):
             outpad = s-1
 
         return pad, outpad
-    
