@@ -1,11 +1,8 @@
-import numpy as np
 import torch
 import torch
 import torch.nn as nn
-import torch.nn.functional as fun
-from torch.utils.data import Dataset, DataLoader, TensorDataset
+import numpy as np
 from typing import List, Dict, Tuple, Optional, Union
-
 from phyloencode import utils
 
 class AECNN(nn.Module):
@@ -30,12 +27,26 @@ class AECNN(nn.Module):
         # all strides > 1
         # kernal[i] > stride[i]
 
-        nl = len(out_channels)
-        assert(len(stride) == nl)
-        assert(len(kernel) == nl)
-        assert(np.min(stride) > 1)
-        assert(np.min(np.array(kernel) - np.array(stride)) > 0)
+        super().__init__()
 
+        nl = len(out_channels)
+        # ensure stride and kernel array lengths match the out_channel earray's length
+        if len(stride) != nl:
+            raise ValueError(f"Expected stride array length of {nl}, but got {len(stride)}.")
+
+        if len(kernel) != nl:
+            raise ValueError(f"Expected kernel array length of {nl}, but got {len(kernel)}.")
+
+        # Ensure stride values are greater than 1
+        if np.min(stride) <= 1:
+            raise ValueError("All stride values must be greater than 1.")
+
+        # Ensure kernel values are greater than stride values
+        stride_arr, kernel_arr = np.array(stride), np.array(kernel)
+        if np.min(kernel_arr - stride_arr) <= 0:
+            raise ValueError("Each kernel value must be greater than the corresponding stride value.")
+
+        # convolution layers parameters
         self.layer_params = {"out_channels": out_channels,
                             "kernel"      : kernel,
                             "stride"      : stride}
@@ -58,26 +69,24 @@ class AECNN(nn.Module):
             raise ValueError("""unstructured_latent_width must be an integer 
                              multiple of num_structured_latent_channels""")
         
-        super().__init__()
-
-
+        ''' 
+        create NN architecture 
+        '''
         # Unstructured Encoder
         self.unstructured_encoder = DenseEncoder(self.unstructured_input_width, 
                                                  self.unstructured_latent_width)
 
         # Structured Encoder
-        # print("cumulative conv layers output shapes: ")
         print((1, self.num_structured_input_channel, self.structured_input_width))
         self.structured_encoder = CnnEncoder(self.num_structured_input_channel, 
                                              self.structured_input_width,
                                              self.layer_params)
 
-        # TODO: make a shared_layer class
         # Calculate final structured output width after encoder
+        # get dims for latent shared concatenated layer
         struct_outshape = utils.conv1d_sequential_outshape(self.structured_encoder.cnn_layers, 
                                                            self.num_structured_input_channel, 
                                                            self.structured_input_width)
-        
         structured_output_width = struct_outshape[2]
         flat_structured_width = structured_output_width * self.num_structured_latent_channels
         self.combined_latent_width = flat_structured_width + self.unstructured_latent_width
@@ -88,21 +97,22 @@ class AECNN(nn.Module):
             nn.Linear(self.combined_latent_width, self.combined_latent_width),
             nn.ReLU()
         )
-        
+
         # Unstructured Decoder
         self.unstructured_decoder = DenseDecoder(self.combined_latent_width,
                                                  self.unstructured_input_width)
 
+        # Structured Decoder
         self.structured_decoder = CnnDecoder(self.structured_encoder.conv_out_width,
                                              self.reshaped_shared_latent_width,
                                              self.num_structured_input_channel,
                                              self.structured_input_width,
                                              self.layer_params)
 
-
     def forward(self, data: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
-        # Encode
         # data is a tuple (structured, unstructured)
+        
+        # Encode
         structured_encoded_x   = self.structured_encoder(data[0]) # (nbatch, nchannels, out_width)
         unstructured_encoded_x = self.unstructured_encoder(data[1]) # (nbatch, out_width)
 
@@ -117,16 +127,11 @@ class AECNN(nn.Module):
                                                           self.reshaped_shared_latent_width)
 
         # Decode
-        unstructured_decoded_x = self.unstructured_decoder(shared_latent)
         structured_decoded_x   = self.structured_decoder(reshaped_shared_latent)
+        unstructured_decoded_x = self.unstructured_decoder(shared_latent)
 
         return structured_decoded_x, unstructured_decoded_x
     
-    def make_encoders(self):
-        pass
-    def make_decoders(self):
-        pass
-
 
 # encoder and decoder classes
 class DenseEncoder(nn.Module):
@@ -141,7 +146,6 @@ class DenseEncoder(nn.Module):
     def forward(self, x):
         return self.unstructured_encoder(x)
 
-
 class DenseDecoder(nn.Module):
     def __init__(self, in_width, out_width):
         super().__init__()
@@ -152,7 +156,6 @@ class DenseDecoder(nn.Module):
         )
     def forward(self, x):
         return self.unstructured_decoder(x)
-
 
 class CnnEncoder(nn.Module):
     def __init__(self, data_channels, data_width, layer_params):
@@ -198,7 +201,6 @@ class CnnEncoder(nn.Module):
 
     def forward(self, x):
         return self.cnn_layers(x)
-
 
 class CnnDecoder(nn.Module):
     def __init__(self, 
@@ -249,7 +251,7 @@ class CnnDecoder(nn.Module):
                                                      latent_width)
             w_in = outshape[2]
             new_target_width = encoder_layer_widths[i-1]
-            npad, noutpad = self.get_decode_paddings(new_target_width, 
+            npad, noutpad = self._get_decode_paddings(new_target_width, 
                                                      w_in, stride[i], kernel[i])
 
             self.tcnn_layers.add_module("conv1d_" + str(i), 
@@ -275,7 +277,7 @@ class CnnDecoder(nn.Module):
 
         width = outshape[2]
         new_target_width = data_width
-        pad, outpad = self.get_decode_paddings(new_target_width, width, stride[0], kernel[0])
+        pad, outpad = self._get_decode_paddings(new_target_width, width, stride[0], kernel[0])
 
         self.tcnn_layers.add_module("struct_decoder_out", 
                                     nn.ConvTranspose1d(
@@ -293,7 +295,7 @@ class CnnDecoder(nn.Module):
     def forward(self, x):
         return self.tcnn_layers(x)
 
-    def get_decode_paddings(self, w_out_target, w_in, s, k, d=1):
+    def _get_decode_paddings(self, w_out_target, w_in, s, k, d=1):
         # convtranspose1d formulat: 
         # w_out_target = (w_in - 1)s + d(k-1) + 1 + outpad - 2pad
         # returns the paddings necessary for target output width 
@@ -312,3 +314,26 @@ class CnnDecoder(nn.Module):
             outpad = s-1
 
         return pad, outpad
+    
+# development
+class LatentEncoder(nn.Module):
+    # Doesn't work with AECNN. 
+    # Will need an entirely new network to use this
+    def __init__(self, in_cnn_shape: Tuple[int, int], in_dense_width: int):
+        # takes in flattend concatenated vectors of the CNN encoder output and aux encoder output
+        super().__init__()
+        flat_structured_width = in_cnn_shape[0] * in_cnn_shape[1]
+        self.combined_latent_width = flat_structured_width + in_dense_width
+        # self.reshaped_shared_latent_width = self.combined_latent_width // self.num_structured_latent_channels
+        self.reshaped_shared_latent_width = self.combined_latent_width
+        
+        # Shared Latent Layer
+        self.shared_layer = nn.Sequential(
+            nn.Linear(self.combined_latent_width, self.combined_latent_width),
+            nn.ReLU()
+        )
+
+
+    
+    def forward(self, x):
+        return self.shared_layer(x)

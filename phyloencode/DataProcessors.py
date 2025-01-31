@@ -18,15 +18,17 @@ from typing import List, Dict, Tuple, Optional, Union
 # nc: number of channels in the data for reshapeing phy data -> int
 # 
 class AEData(object):
-    def __init__(self, data: Tuple[torch.Tensor, torch.Tensor],
-                 prop_train: float, nchannels: int):
+    def __init__(self, 
+                 data       : Tuple[torch.Tensor, torch.Tensor],
+                 prop_train : float, 
+                 nchannels  : int):
         """
         each tree in data is assumed to be flattend in column-major order
         of a matrix of dimensions (nchannels, ntips)
         """
         self.nchannels = nchannels
-        self.phy_data = data[0]
-        self.aux_data = data[1]
+        self.phy_data  = data[0]
+        self.aux_data  = data[1]
         self.data = np.hstack((self.phy_data, self.aux_data))
         phy_width = self.phy_data.shape[1]
 
@@ -79,8 +81,8 @@ class AEData(object):
         joblib.dump(self.aux_normalizer, file_prefix + ".aux_normalizer.pkl")
     
     def get_dataloaders(self, 
-                        batch_size = 32, 
-                        shuffle = True, 
+                        batch_size  = 32, 
+                        shuffle     = True, 
                         num_workers = 0) -> Tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
         # data loaders
         self.train_dataloader = DataLoader(self.train_dataset, 
