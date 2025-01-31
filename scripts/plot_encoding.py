@@ -45,8 +45,9 @@ def plot_distributions(df_1, df_2, percent_variance = None, output_pdf = "pca_di
 
         # bar plot of percent variance explained
         if np.sum(percent_variance is not None) > 0:
+            hivar = percent_variance[0:sum([v > 1 for v in percent_variance ])]
             plt.figure()
-            plt.bar([x for x in range(1, len(percent_variance) + 1)], percent_variance)
+            plt.bar([x for x in range(1, len(hivar) + 1)], hivar)
             plt.title("PCA Percent variance explained")
             plt.xlabel("Component")
             plt.ylabel("% variance")
@@ -68,16 +69,30 @@ def plot_distributions(df_1, df_2, percent_variance = None, output_pdf = "pca_di
                 plt.figure(figsize=(10, 10))
 
             pc_percent_variance = f"({percent_variance[i]:.1f}% of variance)" if percent_variance is not None else ""
+            # Create a subplot for each Encoding
+            if np.sum(percent_variance == None) > 0:
+                plt.subplot(2, 2, (i % 4) + 1)
+                if np.std(df_1[pc]) > 0:
+                    sns.kdeplot(df_1[pc], fill=True, color="blue", alpha=0.5, label=f"{pc} Dist.")
+                # Plot vertical lines for df_2
+                for value in df_2[pc]:
+                    plt.axvline(x=value, color="red", linestyle="--", alpha=0.7)
+                plt.title("encoding " + str(pc), fontsize=10)
+                # plt.xlabel(pc, fontsize=10)
+                plt.ylabel("Density", fontsize=10)
             # Create a subplot for each PC
-            plt.subplot(2, 2, (i % 4) + 1)
-            sns.kdeplot(df_1[pc], fill=True, color="blue", alpha=0.5, label=f"{pc} Dist.")
-            # Plot vertical lines for df_2
-            for value in df_2[pc]:
-                plt.axvline(x=value, color="red", linestyle="--", alpha=0.7)
-            plt.title(f"{pc_percent_variance}", fontsize=10)
-            plt.xlabel(pc, fontsize=10)
-            plt.ylabel("Density", fontsize=10)
-            # plt.legend(fontsize=8)
+            elif percent_variance[i] > (1/len(df_1.columns) * 100):
+                plt.subplot(2, 2, (i % 4) + 1)
+                sns.kdeplot(df_1[pc], fill=True, color="blue", alpha=0.5, label=f"{pc} Dist.")
+                # Plot vertical lines for df_2
+                for value in df_2[pc]:
+                    plt.axvline(x=value, color="red", linestyle="--", alpha=0.7)
+                plt.title(f"{pc_percent_variance}", fontsize=10)
+                plt.xlabel(pc, fontsize=10)
+                plt.ylabel("Density", fontsize=10)
+                # plt.legend(fontsize=8)
+            else:
+                break
 
         # Save the last figure
         pdf.savefig()

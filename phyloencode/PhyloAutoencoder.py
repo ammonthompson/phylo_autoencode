@@ -38,7 +38,6 @@ class PhyloAutoencoder(object):
         # updates internal state. returns the loss for the batch
         self.train_step = self._make_train_step_func()
         self.val_step   = self._make_val_func()
-
         # self.writer = None
 
     def train(self, num_epochs, seed = 1):
@@ -99,16 +98,21 @@ class PhyloAutoencoder(object):
             self.model.train()
             # get model predictions
             phy_hat, aux_hat = self.model((phy, aux))
+
             # compute losses for phylogenetic and auxiliary data predictions
             phy_loss = self.loss_func(phy_hat, phy)
             aux_loss = self.loss_func(aux_hat, aux)
-            # get weighted average of losses
+
+            # get weighted average of losses (torch.Tensor object)
             loss = self.phy_loss_weight * phy_loss + \
                 (1 - self.phy_loss_weight) * aux_loss
+            
             # compute gradient
             loss.backward()
+
             # update model paremeters with gradient
             self.optimizer.step()
+
             # Clear the gradient for the next iteration, 
             # preventing accumulation from previous steps.
             self.optimizer.zero_grad()
@@ -199,13 +203,16 @@ class PhyloAutoencoder(object):
 
         # get latent unstrcutured and structured embeddings
         structured_encoded_x   = self.model.structured_encoder(phy)    # (1, nchannels, out_width)
-        # unstructured_encoded_x = self.model.unstructured_encoder(aux)  # (1, out_width)
+        unstructured_encoded_x = self.model.unstructured_encoder(aux)  # (1, out_width)
 
-        # Latent
+        # get combined latent output
         flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)
-        # combined_latent           = torch.cat((flat_structured_encoded_x, unstructured_encoded_x))
+        combined_latent           = torch.cat((flat_structured_encoded_x, unstructured_encoded_x), dim=1)
+        latent_out = self.model.shared_layer(combined_latent)
 
         self.model.train()
 
-        return(flat_structured_encoded_x)
+        return(latent_out)
+
+
         

@@ -21,7 +21,7 @@ requires-python = ">=3.7"
 
 [project.scripts]
 phyencode = "phyloencode.cli.cmd_encode:main"
-aetrain   = "phyloencode.cli.cmd_train:main"
+# aetrain   = "phyloencode.cli.cmd_train:main"
 
 [tool.hatch.build]
 exclude = ["sandbox/**", "phyloencode.egg-info/**", "__pycache__/**", "*.pyc", "*.pyo", "*.log", ".git/**"]

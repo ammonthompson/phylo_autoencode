@@ -26,16 +26,16 @@ def main():
     # not used. dataset too small
     # num_cpus = multiprocessing.cpu_count()
     # num_workers = 0 if (num_cpus - 4) < 0 else num_cpus - 4
-    num_train = 4500
+    num_subset = 45000
     nworkers = 0
     rand_seed = np.random.randint(0,10000)
 
     # get formated tree data
     with h5py.File(data_fn, "r") as f:
-        phy_data = torch.tensor(f['phy_data'][0:num_train,...], dtype = torch.float32)
-        aux_data = torch.tensor(f['aux_data'][0:num_train,...], dtype = torch.float32)
-        test_phy_data = torch.tensor(f['phy_data'][num_train:(num_train + 500),...], dtype = torch.float32)
-        test_aux_data = torch.tensor(f['aux_data'][num_train:(num_train + 500),...], dtype = torch.float32)
+        phy_data = torch.tensor(f['phy_data'][0:num_subset,...], dtype = torch.float32)
+        aux_data = torch.tensor(f['aux_data'][0:num_subset,...], dtype = torch.float32)
+        test_phy_data = torch.tensor(f['phy_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
+        test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
 
 
     # checking how much aux_data is helping encode tree patterns
@@ -49,30 +49,33 @@ def main():
                                     nchannels  = 7)
 
     # create data loaders
-    trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = 32, 
-                                                    shuffle     = True, 
-                                                    num_workers = nworkers)
+    trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = 128, 
+                                                     shuffle     = True, 
+                                                     num_workers = nworkers)
 
     # create model
     ae_model  = ph.PhyloAEModel.AECNN(num_structured_input_channel = ae_data.nchannels, 
-                                    structured_input_width   = ae_data.phy_width,  # Input width for structured data
-                                    unstructured_input_width = ae_data.aux_width,
-                                    stride        = [2,9,9],
-                                    kernel        = [3,10,10],
-                                    out_channels  = [64,128,256])
+                                      structured_input_width   = ae_data.phy_width,  # Input width for structured data
+                                      unstructured_input_width = ae_data.aux_width,
+                                      unstructured_latent_width= 10,
+                                      stride        = [4,6,8],
+                                      kernel        = [5,7,9],
+                                      out_channels  = [32,64,128])
 
     # create Trainer
     tree_autoencoder = PhyloAutoencoder(model     = ae_model, 
                                         optimizer = torch.optim.Adam(ae_model.parameters()), 
+                                        # optimizer = torch.optim.SGD(ae_model.parameters(), lr=0.01, momentum=0.9, nesterov=True), 
                                         loss_func = torch.nn.MSELoss(), 
                                         phy_loss_weight = 1.0)
 
     # Train model
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
-    tree_autoencoder.train(num_epochs = 30, seed = rand_seed)
+
+    tree_autoencoder.train(num_epochs = 20, seed = rand_seed)
 
     # plot
-    epoch_loss_figure = tree_autoencoder.plot_losses().savefig("AElossplot.pdf")
+    tree_autoencoder.plot_losses().savefig("AElossplot.pdf")
 
     # save trained model
     tree_autoencoder.save_model(out_prefix + ".ae_trained.pt")
@@ -99,7 +102,7 @@ def main():
 
     # for PCA analysis of a sample of training trees
     # make encoded tree file
-    rand_idx = np.random.randint(0, ae_data.prop_train * 15000, size = 5000)
+    rand_idx = np.random.randint(0, ae_data.prop_train * num_subset, size = min(5000, num_subset))
 
     latent_dat = tree_autoencoder.tree_encode(torch.Tensor(ae_data.norm_train_phy_data[rand_idx,...]), 
                                             torch.Tensor(ae_data.norm_train_aux_data[rand_idx,...]))
