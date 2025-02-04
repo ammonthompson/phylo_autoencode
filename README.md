@@ -39,13 +39,6 @@ phyencode -h
 
 ---
 
-## Dependencies & Requirements
-- **Python Version:** [Which versions are supported?]
-- **Required Libraries:** [Any specific dependencies?]
-- **GPU Support:** [Does it support CUDA?]
-
----
-
 ## Documentation & Support
 For detailed documentation of Phyddle tree formatting files, visit:  
 [**phyddle.org**](https://phyddle.org/pipeline.html#format) or check the provided example scripts.
