@@ -26,8 +26,8 @@ def main():
     # not used. dataset too small
     # num_cpus = multiprocessing.cpu_count()
     # num_workers = 0 if (num_cpus - 4) < 0 else num_cpus - 4
-    num_subset = 45000
-    nworkers = 0
+    num_subset = 48000
+    nworkers = 4
     rand_seed = np.random.randint(0,10000)
 
     # get formated tree data
@@ -57,10 +57,9 @@ def main():
     ae_model  = ph.PhyloAEModel.AECNN(num_structured_input_channel = ae_data.nchannels, 
                                       structured_input_width   = ae_data.phy_width,  # Input width for structured data
                                       unstructured_input_width = ae_data.aux_width,
-                                      unstructured_latent_width= 10,
-                                      stride        = [4,6,8],
-                                      kernel        = [5,7,9],
-                                      out_channels  = [32,64,128])
+                                      stride        = [2,9,9],
+                                      kernel        = [3,10,10],
+                                      out_channels  = [8,16,32])
 
     # create Trainer
     tree_autoencoder = PhyloAutoencoder(model     = ae_model, 
@@ -72,7 +71,7 @@ def main():
     # Train model
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
 
-    tree_autoencoder.train(num_epochs = 20, seed = rand_seed)
+    tree_autoencoder.train(num_epochs = 30, seed = rand_seed)
 
     # plot
     tree_autoencoder.plot_losses().savefig("AElossplot.pdf")
