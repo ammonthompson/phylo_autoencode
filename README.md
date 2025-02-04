@@ -1,4 +1,4 @@
-# PhyloAutoEncode 0.1
+# PhyloEncode 0.1
 ### This package is under development.
 
 **PhyloAutoEncode** is an **autoencoder** designed for **phylogenetic data, tip-associated data, and other unstructured datasets**. It is built to work with tree files formatted by **phyddle** ([phyddle.org](https://phyddle.org)).
