@@ -210,12 +210,10 @@ class PhyloAutoencoder(object):
         combined_latent           = torch.cat((flat_structured_encoded_x, 
                                                unstructured_encoded_x), dim=1)
         
-        # testing
         reshaped_shared_latent_width = combined_latent.shape[1] // structured_encoded_x.shape[1]
 
         reshaped_shared_latent = combined_latent.view(-1, structured_encoded_x.shape[1], 
                                                           reshaped_shared_latent_width)
-        # end testing
 
         # latent_out = self.model.shared_layer(combined_latent)
         latent_out = self.model.shared_layer(reshaped_shared_latent)

@@ -16,7 +16,7 @@ def file_exists(fname):
 
 def main ():
     cmd = argparse.ArgumentParser(description="Encode phylogenetic trees and auxiliary data with trained autodencoder.")
-    cmd.add_argument("-m", "--model", required=True, help="Path to the model file")
+    cmd.add_argument("-m", "--model", required=True, help="Path to the trained model.pt file")
     cmd.add_argument("-p", "--phy-normalizer", required=True, help="Path to the phy_normalizer.pkl file")
     cmd.add_argument("-a", "--aux-normalizer", required=True, help="Path to the aux_normalizer.pkl file")
     cmd.add_argument("-t", "--tree-data", required=True, help="Path to the phyddle formated tree h5py file")

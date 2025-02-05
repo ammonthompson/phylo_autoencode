@@ -1,7 +1,7 @@
 # PhyloEncode 0.1
 ### This package is under development.
 
-**PhyloAutoEncode** is an **autoencoder** designed for **phylogenetic data, tip-associated data, and other unstructured datasets**. It is built to work with tree files formatted by **phyddle** ([phyddle.org](https://phyddle.org)).
+**PhyloAutoEncode** is an **autoencoder** that uses **PyTorch** and is designed for **phylogenetic data, tip-associated data, and other unstructured datasets**. It is built to work with tree files formatted by **phyddle** ([phyddle.org](https://phyddle.org)).
 
 ---
 
@@ -22,9 +22,9 @@ pip install .
 ---
 
 ## Training
-To train the autoencoder, ensure your **phylogenetic and auxiliary data** are in **HDF5 format**.
+To train the autoencoder, ensure your **phylogenetic and auxiliary data** are in **HDF5 format**. In the scripts directory is an example script called train.py.
 
-- **Example script:** `scripts/train.py`  
+- **Example script:** `scripts/train.py --trn_data train_data.hdf5 --out_prefix my_prefix`  
 
 ---
 
