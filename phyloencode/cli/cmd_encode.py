@@ -19,7 +19,7 @@ def main ():
     cmd.add_argument("-m", "--model", required=True, help="Path to the trained model.pt file")
     cmd.add_argument("-p", "--phy-normalizer", required=True, help="Path to the phy_normalizer.pkl file")
     cmd.add_argument("-a", "--aux-normalizer", required=True, help="Path to the aux_normalizer.pkl file")
-    cmd.add_argument("-t", "--tree-data", required=True, help="Path to the phyddle formated tree h5py file")
+    cmd.add_argument("-t", "--tree-data", required=True, help="Path to the phyddle formated tree hdf5 file")
     cmd.add_argument("-o", "--out-prefix", required=False, help="Path to out file prefix")
 
     args = cmd.parse_args()
@@ -35,7 +35,7 @@ def main ():
         out_file_prefix = args.out_prefix
 
     # load trained model and normalizers and create PhyloAutoencoder object
-    ae_model       = torch.load(ae_model_fn)
+    ae_model       = torch.load(ae_model_fn, weights_only=False)
     phy_normalizer = joblib.load(phy_normalizer_fn)
     aux_normalizer = joblib.load(aux_normalizer_fn)
 
