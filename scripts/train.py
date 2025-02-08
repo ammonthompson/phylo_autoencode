@@ -11,6 +11,7 @@ import h5py
 import argparse
 
 import phyloencode as ph
+from phyloencode import utils
 from phyloencode.PhyloAutoencoder import PhyloAutoencoder
 
 def main():
@@ -26,7 +27,7 @@ def main():
     # not used. dataset too small
     # num_cpus = multiprocessing.cpu_count()
     # num_workers = 0 if (num_cpus - 4) < 0 else num_cpus - 4
-    num_subset = 48000
+    num_subset = 4800
     nworkers = 4
     rand_seed = np.random.randint(0,10000)
 
@@ -59,13 +60,15 @@ def main():
                                       unstructured_input_width = ae_data.aux_width,
                                       stride        = [2,9,9],
                                       kernel        = [3,10,10],
-                                      out_channels  = [8,16,32])
+                                      out_channels  = [8,16,32],
+                                      latent_layer_type = "GAUSS")
 
     # create Trainer
     tree_autoencoder = PhyloAutoencoder(model     = ae_model, 
                                         optimizer = torch.optim.Adam(ae_model.parameters()), 
                                         # optimizer = torch.optim.SGD(ae_model.parameters(), lr=0.01, momentum=0.9, nesterov=True), 
-                                        loss_func = torch.nn.MSELoss(), 
+                                        # loss_func = torch.nn.MSELoss(), 
+                                        loss_func = utils.get_vae_loss_function(), 
                                         phy_loss_weight = 1.0)
 
     # Train model

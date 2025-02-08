@@ -8,6 +8,7 @@ from torch import optim
 from torch.utils.data import Dataset, DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
+from phyloencode import utils
 # from sklearn.linear_model import LinearRegression
 
 
@@ -25,6 +26,13 @@ class PhyloAutoencoder(object):
         self.optimizer = optimizer
         self.loss_func = loss_func
         self.phy_loss_weight = phy_loss_weight
+
+        # TODO: do a proper error handing at some point 
+        # (should be passed as a parameter)
+        if model.latent_layer_type == "GAUSS":
+            self.loss_func = utils.get_vae_loss_function()
+            self.kl_weight = 0
+
 
         self.train_loader = None
         self.val_loader   = None
@@ -96,12 +104,19 @@ class PhyloAutoencoder(object):
         def train_step(phy: torch.Tensor, aux: torch.Tensor):
             # set model to train mode
             self.model.train()
-            # get model predictions
-            phy_hat, aux_hat = self.model((phy, aux))
-
-            # compute losses for phylogenetic and auxiliary data predictions
-            phy_loss = self.loss_func(phy_hat, phy)
-            aux_loss = self.loss_func(aux_hat, aux)
+            if self.model.latent_layer_type == "GAUSS":
+                # get model predictions
+                phy_hat, aux_hat, mu, logv = self.model((phy, aux))
+                # compute losses for phylogenetic and auxiliary data predictions
+                phy_loss = self.loss_func(phy_hat, phy, mu, logv, self.kl_weight)
+                aux_loss = self.loss_func(aux_hat, aux, mu, logv, self.kl_weight)
+                self.kl_weight = min(1.0, self.kl_weight + 0.001)
+            else:
+                # get model predictions
+                phy_hat, aux_hat = self.model((phy, aux))
+                # compute losses for phylogenetic and auxiliary data predictions
+                phy_loss = self.loss_func(phy_hat, phy)
+                aux_loss = self.loss_func(aux_hat, aux)
 
             # get weighted average of losses (torch.Tensor object)
             loss = self.phy_loss_weight * phy_loss + \
@@ -124,11 +139,19 @@ class PhyloAutoencoder(object):
 
         def evaluate(phy: torch.Tensor, aux: torch.Tensor):
             self.model.eval()
-            phy_hat, aux_hat = self.model((phy, aux))
-            phy_loss = self.loss_func(phy_hat, phy)
-            aux_loss = self.loss_func(aux_hat, aux)
-            loss = self.phy_loss_weight * phy_loss + \
-                (1 - self.phy_loss_weight) * aux_loss
+            if self.model.latent_layer_type == "GAUSS":
+                phy_hat, aux_hat, mu, logv = self.model((phy, aux))
+                phy_loss = self.loss_func(phy_hat, phy, mu, logv)
+                aux_loss = self.loss_func(aux_hat, aux, mu, logv)
+                loss = self.phy_loss_weight * phy_loss + \
+                    (1 - self.phy_loss_weight) * aux_loss
+            else:
+                phy_hat, aux_hat = self.model((phy, aux))
+                phy_loss = self.loss_func(phy_hat, phy)
+                aux_loss = self.loss_func(aux_hat, aux)
+                loss = self.phy_loss_weight * phy_loss + \
+                    (1 - self.phy_loss_weight) * aux_loss
+
             return loss.item()
 
         return evaluate
@@ -196,7 +219,7 @@ class PhyloAutoencoder(object):
     def save_model(self, filename):
         torch.save(self.model, filename)
 
-    def tree_encode(self, phy: torch.Tensor, aux: torch.Tensor):
+    def old_tree_encode(self, phy: torch.Tensor, aux: torch.Tensor):
         self.model.eval() 
         phy = phy.to(self.device)
         aux = aux.to(self.device)
@@ -221,6 +244,48 @@ class PhyloAutoencoder(object):
         self.model.train()
 
         return(latent_out.flatten(start_dim=1))
+        # return(structured_encoded_x.flatten(start_dim=1))
+
+    def tree_encode(self, phy: torch.Tensor, aux: torch.Tensor):
+        self.model.eval() 
+        phy = phy.to(self.device)
+        aux = aux.to(self.device)
+
+        # get latent unstrcutured and structured embeddings
+        structured_encoded_x   = self.model.structured_encoder(phy)    # (1, nchannels, out_width)
+        unstructured_encoded_x = self.model.unstructured_encoder(aux)  # (1, out_width)
+
+        # get combined latent output
+        flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)
+        combined_latent           = torch.cat((flat_structured_encoded_x, 
+                                               unstructured_encoded_x), dim=1)
+        
+        # reshaped_shared_latent_width = combined_latent.shape[1] // structured_encoded_x.shape[1]
+
+        # reshaped_shared_latent = combined_latent.view(-1, structured_encoded_x.shape[1], 
+        #                                                   reshaped_shared_latent_width)
+
+        # latent_out = self.model.shared_layer(combined_latent)
+        # latent_out = self.model.shared_layer(reshaped_shared_latent)
+
+        reshaped_shared_latent = combined_latent.view(-1, self.num_structured_latent_channels, 
+                                                    self.reshaped_shared_latent_width)
+        
+        # shared_latent_out = self.latent_layer(reshaped_shared_latent)
+
+        if self.model.latent_layer_type   == "CNN":
+            shared_latent_out = self.latent_layer(reshaped_shared_latent)
+
+        elif self.model.latent_layer_type == "GAUSS":
+            shared_latent_out, zmu, zlogv = self.latent_layer(combined_latent)
+
+        elif self.model.latent_layer_type == "DENSE":
+            shared_latent_out = self.latent_layer(combined_latent)
+
+
+        self.model.train()
+
+        return(shared_latent_out.flatten(start_dim=1))
         # return(structured_encoded_x.flatten(start_dim=1))
 
     def latent_decode(self, encoded_tree):

@@ -6,6 +6,35 @@ import torch.nn.functional as fun
 from torch.utils.data import Dataset, DataLoader, TensorDataset
 from typing import List, Dict, Tuple, Optional, Union
 
+def get_vae_loss_function():
+    """
+    Variational autoencoder loss
+
+    Returns:
+        the loss function. duh.
+    """
+
+    def vae_loss_fx(x_hat, x, mu, log_var, kl_weight = 0):
+        ''' 
+           Args:
+            x_hat: tree or auxiliary vector decoder output 
+            x: tree or auxiliary data
+            mu and log_var: MVN params of latent space
+        '''
+
+        # MSE loss
+        decoded_loss = torch.nn.MSELoss(reduction = "mean")(x_hat, x)
+
+        # KL Divergence: Encourages latent space to be standard normal
+        kl_loss = -0.5 * torch.mean(1 + log_var - mu.pow(2) - log_var.exp()) * kl_weight
+
+        # print(kl_loss)
+        
+        return decoded_loss + kl_loss
+        
+
+    return vae_loss_fx
+
 
 def conv1d_sequential_outshape(sequential: nn.Sequential, 
                                input_channels: int, 
