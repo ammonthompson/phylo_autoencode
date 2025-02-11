@@ -8,7 +8,7 @@ version = "0.1"
 description = "A Python package for phylogenetic data encoding. Designed to work with Phyddle -format output."
 readme = "README.md"
 authors = [{name = "Ammon Thompson", email = "ammonthompson@gmail.com"}]
-license = {text = "MIT"}  # Replace with your license
+license = {text = "MIT"}
 keywords = ["autoencoder", "bioinformatics", "phylogenetics", "machine learning", "deep learning"]
 dependencies = [
     "torch",

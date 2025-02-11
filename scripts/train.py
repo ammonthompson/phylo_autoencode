@@ -48,9 +48,10 @@ def main():
     ae_data = ph.DataProcessors.AEData(data = (phy_data, aux_data), 
                                     prop_train = 0.8,  
                                     nchannels  = 7)
+    ae_data.save_normalizers(out_prefix)
 
     # create data loaders
-    trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = 128, 
+    trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = 256, 
                                                      shuffle     = True, 
                                                      num_workers = nworkers)
 
@@ -71,17 +72,11 @@ def main():
                                         loss_func = utils.get_vae_loss_function(), 
                                         phy_loss_weight = 1.0)
 
-    # Train model
+    # Load data loaders and Train model and plot
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
-
-    tree_autoencoder.train(num_epochs = 30, seed = rand_seed)
-
-    # plot
+    tree_autoencoder.train(num_epochs = 120, seed = rand_seed)
     tree_autoencoder.plot_losses().savefig("AElossplot.pdf")
-
-    # save trained model
     tree_autoencoder.save_model(out_prefix + ".ae_trained.pt")
-    ae_data.save_normalizers(out_prefix)
 
 
     # Test data
@@ -107,7 +102,7 @@ def main():
     rand_idx = np.random.randint(0, ae_data.prop_train * num_subset, size = min(5000, num_subset))
 
     latent_dat = tree_autoencoder.tree_encode(torch.Tensor(ae_data.norm_train_phy_data[rand_idx,...]), 
-                                            torch.Tensor(ae_data.norm_train_aux_data[rand_idx,...]))
+                                              torch.Tensor(ae_data.norm_train_aux_data[rand_idx,...]))
 
     latent_dat_df = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), columns = None, index = None)
     latent_dat_df.to_csv(out_prefix + ".traindat_latent.csv", header = False, index = False)

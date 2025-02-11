@@ -26,11 +26,14 @@ def get_vae_loss_function():
         decoded_loss = torch.nn.MSELoss(reduction = "mean")(x_hat, x)
 
         # KL Divergence: Encourages latent space to be standard normal
-        kl_loss = -0.5 * torch.mean(1 + log_var - mu.pow(2) - log_var.exp()) * kl_weight
+        var = log_var.exp()
 
+        kl_loss = kl_weight * (-0.5 * torch.mean(1 + log_var - mu.pow(2) - var))
         # print(kl_loss)
+
+        # kl_loss = (0.5 * ((x - mu) ** 2 / var + log_var + torch.log(2 * torch.pi))).mean()
         
-        return decoded_loss + kl_loss
+        return 0*decoded_loss, kl_loss
         
 
     return vae_loss_fx

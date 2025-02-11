@@ -146,18 +146,21 @@ class AECNN(nn.Module):
             shared_latent_out = self.latent_layer(reshaped_shared_latent)
             structured_decoded_x   = self.structured_decoder(shared_latent_out)
             unstructured_decoded_x = self.unstructured_decoder(combined_latent)
-
+            return structured_decoded_x, unstructured_decoded_x
+        
         elif self.latent_layer_type == "GAUSS":
             shared_latent_out, zmu, zlogv = self.latent_layer(combined_latent)
             reshaped_z_latent_out = shared_latent_out.view(-1, self.num_structured_latent_channels, 
                                                                self.reshaped_shared_latent_width)
             structured_decoded_x   = self.structured_decoder(reshaped_z_latent_out)
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
-
+            return structured_decoded_x, unstructured_decoded_x, zmu, zlogv
+        
         elif self.latent_layer_type == "DENSE":
             shared_latent_out = self.latent_layer(combined_latent)
             structured_decoded_x   = self.structured_decoder(reshaped_shared_latent)
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
+            return structured_decoded_x, unstructured_decoded_x
 
         # Decode
         # structured_decoded_x   = self.structured_decoder(reshaped_shared_latent)
@@ -166,11 +169,8 @@ class AECNN(nn.Module):
         # unstructured_decoded_x = self.unstructured_decoder(shared_latent)
         # unstructured_decoded_x = self.unstructured_decoder(combined_latent)
 
-        if self.latent_layer_type == "GAUSS":
-            return structured_decoded_x, unstructured_decoded_x, zmu, zlogv
-        else:
-            return structured_decoded_x, unstructured_decoded_x
-    
+        # return structured_decoded_x, unstructured_decoded_x
+
 
 # encoder and decoder classes
 class DenseEncoder(nn.Module):
@@ -398,6 +398,6 @@ class LatentGauss(nn.Module):
 
     def reparameterize(self, mu, log_var):
         log_var = torch.clamp(log_var, min = -10, max = 10)
-        epsilon = torch.randn(self.z_combined_width, device=mu.device)
-        z = mu + torch.exp(0.5 * log_var) * epsilon
+        # epsilon = torch.randn(self.z_combined_width, device=mu.device)
+        z = mu #+ torch.exp(0.5 * log_var) * epsilon
         return z
