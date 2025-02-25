@@ -89,7 +89,8 @@ class AEData(object):
                                            batch_size=batch_size, 
                                            shuffle=shuffle, 
                                            num_workers=num_workers)
-        self.val_dataloader   = DataLoader(self.val_dataset)
+        self.val_dataloader   = DataLoader(self.val_dataset, 
+                                           batch_size=batch_size)
         return self.train_dataloader, self.val_dataloader
 
 

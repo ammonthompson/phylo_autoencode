@@ -103,7 +103,8 @@ class AECNN(nn.Module):
         if self.latent_layer_type == "CNN":
             self.latent_layer = LatentCNN(struct_outshape)
         elif self.latent_layer_type == "GAUSS":
-            self.latent_layer = LatentGauss(struct_outshape[1:], self.unstructured_latent_width)
+            # self.latent_layer = LatentGauss(struct_outshape[1:], self.unstructured_latent_width)
+            self.latent_layer = LatentDense(self.combined_latent_width)
         elif self.latent_layer_type == "DENSE":
             self.latent_layer = LatentDense(self.combined_latent_width)
         else:
@@ -149,12 +150,16 @@ class AECNN(nn.Module):
             return structured_decoded_x, unstructured_decoded_x
         
         elif self.latent_layer_type == "GAUSS":
-            shared_latent_out, zmu, zlogv = self.latent_layer(combined_latent)
-            reshaped_z_latent_out = shared_latent_out.view(-1, self.num_structured_latent_channels, 
-                                                               self.reshaped_shared_latent_width)
-            structured_decoded_x   = self.structured_decoder(reshaped_z_latent_out)
+            # shared_latent_out, zmu, zlogv = self.latent_layer(combined_latent)
+            # reshaped_z_latent_out = shared_latent_out.view(-1, self.num_structured_latent_channels, 
+            #                                                    self.reshaped_shared_latent_width)
+            # structured_decoded_x   = self.structured_decoder(reshaped_z_latent_out)
+            # unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
+            # return structured_decoded_x, unstructured_decoded_x, zmu, zlogv
+            shared_latent_out = self.latent_layer(combined_latent)
+            structured_decoded_x   = self.structured_decoder(reshaped_shared_latent)
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
-            return structured_decoded_x, unstructured_decoded_x, zmu, zlogv
+            return structured_decoded_x, unstructured_decoded_x, shared_latent_out
         
         elif self.latent_layer_type == "DENSE":
             shared_latent_out = self.latent_layer(combined_latent)
@@ -379,25 +384,25 @@ class LatentDense(nn.Module):
         return self.shared_layer(x)
     
 
-class LatentGauss(nn.Module):
-    def __init__(self, in_cnn_shape: Tuple[int, int], in_dense_width: int):
-        super().__init__()
-        self.z_combined_width = in_cnn_shape[0] * in_cnn_shape[1] + in_dense_width
-        self.mu_layer = nn.Sequential(
-            nn.Linear(self.z_combined_width, self.z_combined_width)
-        )
-        self.logvariance_layer = nn.Sequential(
-            nn.Linear(self.z_combined_width, self.z_combined_width)
-        )
+# class LatentGauss(nn.Module):
+#     def __init__(self, in_cnn_shape: Tuple[int, int], in_dense_width: int):
+#         super().__init__()
+#         self.z_combined_width = in_cnn_shape[0] * in_cnn_shape[1] + in_dense_width
+#         self.mu_layer = nn.Sequential(
+#             nn.Linear(self.z_combined_width, self.z_combined_width)
+#         )
+#         self.logvariance_layer = nn.Sequential(
+#             nn.Linear(self.z_combined_width, self.z_combined_width)
+#         )
 
-    def forward(self, x):
-        mu   = self.mu_layer(x)
-        logv = self.logvariance_layer(x)
-        zx   = self.reparameterize(mu, logv)
-        return zx, mu, logv
+#     def forward(self, x):
+#         mu   = self.mu_layer(x)
+#         logv = self.logvariance_layer(x)
+#         zx   = self.reparameterize(mu, logv)
+#         return zx, mu, logv
 
-    def reparameterize(self, mu, log_var):
-        log_var = torch.clamp(log_var, min = -10, max = 10)
-        # epsilon = torch.randn(self.z_combined_width, device=mu.device)
-        z = mu #+ torch.exp(0.5 * log_var) * epsilon
-        return z
+#     def reparameterize(self, mu, log_var):
+#         log_var = torch.clamp(log_var, min = -10, max = 10)
+#         # epsilon = torch.randn(self.z_combined_width, device=mu.device)
+#         z = mu #+ torch.exp(0.5 * log_var) * epsilon
+#         return z

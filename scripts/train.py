@@ -28,7 +28,7 @@ def main():
     # num_cpus = multiprocessing.cpu_count()
     # num_workers = 0 if (num_cpus - 4) < 0 else num_cpus - 4
     num_subset = 4800
-    nworkers = 4
+    nworkers = 0
     rand_seed = np.random.randint(0,10000)
 
     # get formated tree data
@@ -46,12 +46,12 @@ def main():
 
     # create Data container
     ae_data = ph.DataProcessors.AEData(data = (phy_data, aux_data), 
-                                    prop_train = 0.8,  
-                                    nchannels  = 7)
+                                        prop_train = 0.8,  
+                                        nchannels  = 7)
     ae_data.save_normalizers(out_prefix)
 
     # create data loaders
-    trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = 256, 
+    trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = 64, 
                                                      shuffle     = True, 
                                                      num_workers = nworkers)
 
@@ -68,13 +68,13 @@ def main():
     tree_autoencoder = PhyloAutoencoder(model     = ae_model, 
                                         optimizer = torch.optim.Adam(ae_model.parameters()), 
                                         # optimizer = torch.optim.SGD(ae_model.parameters(), lr=0.01, momentum=0.9, nesterov=True), 
-                                        # loss_func = torch.nn.MSELoss(), 
-                                        loss_func = utils.get_vae_loss_function(), 
+                                        loss_func = torch.nn.MSELoss(), 
+                                        # loss_func = utils.get_vae_loss_function(), 
                                         phy_loss_weight = 1.0)
 
     # Load data loaders and Train model and plot
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
-    tree_autoencoder.train(num_epochs = 120, seed = rand_seed)
+    tree_autoencoder.train(num_epochs = 20, seed = rand_seed)
     tree_autoencoder.plot_losses().savefig("AElossplot.pdf")
     tree_autoencoder.save_model(out_prefix + ".ae_trained.pt")
 

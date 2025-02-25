@@ -210,6 +210,6 @@ if __name__ == "__main__":
     pc_df_2.to_csv(out_prefix + ".test_trees.pca.csv", index=False)
 
     # create plot
-    plot_distributions(pc_df_1, pc_df_2, explained_variance_ratio, out_prefix + "_pca_plots.pdf")
     plot_distributions(df_1, df_2, None, out_prefix + "_encoded_plots.pdf")
+    plot_distributions(pc_df_1, pc_df_2, explained_variance_ratio, out_prefix + "_pca_plots.pdf")
                                                                                                                          
