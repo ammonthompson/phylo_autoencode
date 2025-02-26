@@ -90,22 +90,12 @@ class AECNN(nn.Module):
         struct_outshape = utils.conv1d_sequential_outshape(self.structured_encoder.cnn_layers, 
                                                            self.num_structured_input_channel, 
                                                            self.structured_input_width)
-        # flat_structured_width = struct_outshape[1] * struct_outshape[2]
-        # self.combined_latent_width = flat_structured_width + self.unstructured_latent_width
-        # self.reshaped_shared_latent_width = self.combined_latent_width // struct_outshape[1]
-        # self.shared_layer = nn.Sequential( # preserve input shape
-        #     nn.Conv1d(self.num_structured_latent_channels, 
-        #               self.num_structured_latent_channels, 
-        #               stride = 1, kernel_size = 1, padding=0),
-        #     nn.ReLU()
-        # )
+
         self.combined_latent_width = struct_outshape[1] * struct_outshape[2] + self.unstructured_latent_width
         if self.latent_layer_type == "CNN":
             self.latent_layer = LatentCNN(struct_outshape)
         elif self.latent_layer_type == "GAUSS":
-            # self.latent_layer = LatentGauss(struct_outshape[1:], self.unstructured_latent_width)
             self.latent_layer = LatentGauss(self.combined_latent_width)
-            # self.latent_layer = LatentDense(self.combined_latent_width)
         elif self.latent_layer_type == "DENSE":
             self.latent_layer = LatentDense(self.combined_latent_width)
         else:
@@ -134,16 +124,9 @@ class AECNN(nn.Module):
         flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)
         combined_latent           = torch.cat((flat_structured_encoded_x, unstructured_encoded_x), dim=1)
 
-        # shared_latent = self.shared_layer(combined_latent)
-
-        # Reshape for structured decoder (must have self.num_structured_latent_channels channels)
-        # reshaped_shared_latent = shared_latent.view(-1, self.num_structured_latent_channels, 
-        #                                                   self.reshaped_shared_latent_width)
         reshaped_shared_latent = combined_latent.view(-1, self.num_structured_latent_channels, 
                                                           self.reshaped_shared_latent_width)
         
-        # shared_latent_out = self.latent_layer(reshaped_shared_latent)
-
         if self.latent_layer_type   == "CNN":
             shared_latent_out = self.latent_layer(reshaped_shared_latent)
             structured_decoded_x   = self.structured_decoder(shared_latent_out)
@@ -151,12 +134,6 @@ class AECNN(nn.Module):
             return structured_decoded_x, unstructured_decoded_x
         
         elif self.latent_layer_type == "GAUSS":
-            # shared_latent_out, zmu, zlogv = self.latent_layer(combined_latent)
-            # reshaped_z_latent_out = shared_latent_out.view(-1, self.num_structured_latent_channels, 
-            #                                                    self.reshaped_shared_latent_width)
-            # structured_decoded_x   = self.structured_decoder(reshaped_z_latent_out)
-            # unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
-            # return structured_decoded_x, unstructured_decoded_x, zmu, zlogv
             shared_latent_out = self.latent_layer(combined_latent)
             reshaped_z_latent_out = shared_latent_out.view(-1, self.num_structured_latent_channels, 
                                                                self.reshaped_shared_latent_width)
@@ -170,17 +147,7 @@ class AECNN(nn.Module):
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
             return structured_decoded_x, unstructured_decoded_x
 
-        # Decode
-        # structured_decoded_x   = self.structured_decoder(reshaped_shared_latent)
-        # structured_decoded_x   = self.structured_decoder(shared_latent_out)
-        
-        # unstructured_decoded_x = self.unstructured_decoder(shared_latent)
-        # unstructured_decoded_x = self.unstructured_decoder(combined_latent)
-
-        # return structured_decoded_x, unstructured_decoded_x
-
-
-# encoder and decoder classes
+# encoder classes
 class DenseEncoder(nn.Module):
     def __init__(self, in_width, out_width):
         super().__init__()
@@ -190,15 +157,6 @@ class DenseEncoder(nn.Module):
         )
     def forward(self, x):
         return self.unstructured_encoder(x)
-
-class DenseDecoder(nn.Module):
-    def __init__(self, in_width, out_width):
-        super().__init__()
-        self.unstructured_decoder = nn.Sequential(
-            nn.Linear(in_width, out_width)
-        )
-    def forward(self, x):
-        return self.unstructured_decoder(x)
 
 class CnnEncoder(nn.Module):
     def __init__(self, data_channels, data_width, layer_params):
@@ -245,6 +203,16 @@ class CnnEncoder(nn.Module):
     def forward(self, x):
         return self.cnn_layers(x)
 
+# decoder classes
+class DenseDecoder(nn.Module):
+    def __init__(self, in_width, out_width):
+        super().__init__()
+        self.unstructured_decoder = nn.Sequential(
+            nn.Linear(in_width, out_width)
+        )
+    def forward(self, x):
+        return self.unstructured_decoder(x)
+    
 class CnnDecoder(nn.Module):
     def __init__(self, 
                  encoder_layer_widths, 
@@ -373,7 +341,6 @@ class LatentCNN(nn.Module):
     def forward(self, x):
         return self.shared_layer(x)
     
-
 class LatentDense(nn.Module):
     def __init__(self, in_width: int):
         super().__init__()
@@ -397,26 +364,3 @@ class LatentGauss(nn.Module):
     def forward(self, x):
         return self.shared_layer(x)
 
-
-# class LatentGauss(nn.Module):
-#     def __init__(self, in_cnn_shape: Tuple[int, int], in_dense_width: int):
-#         super().__init__()
-#         self.z_combined_width = in_cnn_shape[0] * in_cnn_shape[1] + in_dense_width
-#         self.mu_layer = nn.Sequential(
-#             nn.Linear(self.z_combined_width, self.z_combined_width)
-#         )
-#         self.logvariance_layer = nn.Sequential(
-#             nn.Linear(self.z_combined_width, self.z_combined_width)
-#         )
-
-#     def forward(self, x):
-#         mu   = self.mu_layer(x)
-#         logv = self.logvariance_layer(x)
-#         zx   = self.reparameterize(mu, logv)
-#         return zx, mu, logv
-
-#     def reparameterize(self, mu, log_var):
-#         log_var = torch.clamp(log_var, min = -10, max = 10)
-#         # epsilon = torch.randn(self.z_combined_width, device=mu.device)
-#         z = mu #+ torch.exp(0.5 * log_var) * epsilon
-#         return z

@@ -27,7 +27,7 @@ def main():
     # not used. dataset too small
     # num_cpus = multiprocessing.cpu_count()
     # num_workers = 0 if (num_cpus - 4) < 0 else num_cpus - 4
-    num_subset = 4800
+    num_subset = 48000
     nworkers = 0
     rand_seed = np.random.randint(0,10000)
 
@@ -59,9 +59,9 @@ def main():
     ae_model  = ph.PhyloAEModel.AECNN(num_structured_input_channel = ae_data.nchannels, 
                                       structured_input_width   = ae_data.phy_width,  # Input width for structured data
                                       unstructured_input_width = ae_data.aux_width,
-                                      stride        = [2,9,9],
-                                      kernel        = [3,10,10],
-                                      out_channels  = [8,16,32],
+                                      stride        = [2,2,7,9],
+                                      kernel        = [3,3,8,10],
+                                      out_channels  = [8,16,32,32],
                                       latent_layer_type = "GAUSS")
 
     # create Trainer
@@ -71,12 +71,12 @@ def main():
                                         loss_func = torch.nn.MSELoss(), 
                                         # loss_func = utils.get_vae_loss_function(), 
                                         phy_loss_weight = 1.0,
-                                        mmd_weight=2,
+                                        mmd_weight = 1,
                                         )
 
     # Load data loaders and Train model and plot
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
-    tree_autoencoder.train(num_epochs = 50, seed = rand_seed)
+    tree_autoencoder.train(num_epochs = 150, seed = rand_seed)
     tree_autoencoder.plot_losses().savefig("AElossplot.pdf")
     tree_autoencoder.save_model(out_prefix + ".ae_trained.pt")
 

@@ -30,7 +30,6 @@ class PhyloAutoencoder(object):
         # TODO: do a proper error handing at some point 
         # (should be passed as a parameter)
         if model.latent_layer_type == "GAUSS":
-            # self.loss_func = utils.get_vae_loss_function()
             self.loss_func = utils.get_mmd_loss_function()
             self.mmd_weight = mmd_weight
             self.mmd_weight_max = mmd_weight
@@ -60,7 +59,7 @@ class PhyloAutoencoder(object):
                 if self.model.latent_layer_type == "GAUSS":
                     epoch_validation_loss, decode_loss, mmd_loss = self._mini_batch(validation=True)
                     self.mmd_weight = min(self.mmd_weight_max, 1.5 * self.mmd_weight + 0.1)
-                    print(self.mmd_weight)
+
                     print(f"epoch {str(epoch)}, loss: {epoch_validation_loss:.4f}, \
                                          decode loss: {decode_loss:.4f}, \
                                              MMD2 loss: {mmd_loss:.4f}")
@@ -132,9 +131,6 @@ class PhyloAutoencoder(object):
 
             # get model predictions and losses
             if self.model.latent_layer_type == "GAUSS":
-                # phy_hat, aux_hat, mu, logv = self.model((phy, aux))
-                # phy_decode_loss, phy_mmd_loss = self.loss_func(phy_hat, phy, mu, logv, self.kl_weight)
-                # aux_decode_loss, aux_mmd_loss = self.loss_func(aux_hat, aux, mu, logv, self.kl_weight)
                 phy_hat, aux_hat, latent = self.model((phy, aux))
                 phy_decode_loss, phy_mmd_loss = self.loss_func(phy_hat, phy, latent, self.mmd_weight)
                 aux_decode_loss, aux_mmd_loss = self.loss_func(aux_hat, aux, latent, self.mmd_weight)
@@ -166,9 +162,6 @@ class PhyloAutoencoder(object):
         def evaluate(phy: torch.Tensor, aux: torch.Tensor):
             self.model.eval()
             if self.model.latent_layer_type == "GAUSS":
-                # phy_hat, aux_hat, mu, logv = self.model((phy, aux))
-                # phy_decode_loss, phy_mmd_loss = self.loss_func(phy_hat, phy, mu, logv, self.mmd_weight)
-                # aux_decode_loss, aux_mmd_loss = self.loss_func(aux_hat, aux, mu, logv, self.mmd_weight)
                 phy_hat, aux_hat, latent = self.model((phy, aux))
                 phy_decode_loss, phy_mmd_loss = self.loss_func(phy_hat, phy, latent, self.mmd_weight)
                 aux_decode_loss, aux_mmd_loss = self.loss_func(aux_hat, aux, latent, self.mmd_weight)
@@ -297,22 +290,13 @@ class PhyloAutoencoder(object):
         
         reshaped_shared_latent_width = combined_latent.shape[1] // structured_encoded_x.shape[1]
 
-        # reshaped_shared_latent = combined_latent.view(-1, structured_encoded_x.shape[1], 
-        #                                                   reshaped_shared_latent_width)
-
-        # latent_out = self.model.shared_layer(combined_latent)
-        # latent_out = self.model.shared_layer(reshaped_shared_latent)
-
         reshaped_shared_latent = combined_latent.view(-1, structured_encoded_x.shape[1], 
                                                     reshaped_shared_latent_width)
         
-        # shared_latent_out = self.latent_layer(reshaped_shared_latent)
-
         if self.model.latent_layer_type   == "CNN":
             shared_latent_out = self.model.latent_layer(reshaped_shared_latent)
 
         elif self.model.latent_layer_type == "GAUSS":
-            # shared_latent_out, zmu, zlogv = self.model.latent_layer(combined_latent)
             shared_latent_out = self.model.latent_layer(combined_latent)
 
         elif self.model.latent_layer_type == "DENSE":
@@ -322,7 +306,6 @@ class PhyloAutoencoder(object):
         self.model.train()
 
         return(shared_latent_out.flatten(start_dim=1))
-        # return(structured_encoded_x.flatten(start_dim=1))
 
     def latent_decode(self, encoded_tree):
         return self.model.structured_decoder(encoded_tree)
