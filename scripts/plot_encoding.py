@@ -60,37 +60,37 @@ def plot_distributions(df_1, df_2, percent_variance = None, output_pdf = "pca_di
         pdf.savefig()
         plt.close()
 
-        # Subsequent plots: 4 per page
+        # Subsequent plots: 9 per page
         for i, pc in enumerate(df_1.columns):
-            if i % 4 == 0:  # Start a new page every 4 plots
+            if i % 15 == 0:  # Start a new page every 9 plots
                 if i > 0:  # Save previous figure
                     pdf.savefig()
                     plt.close()
                 plt.figure(figsize=(10, 10))
+                plt.subplots_adjust(wspace=0.4, hspace=0.4)  # Adjust margins
 
             pc_percent_variance = f"({percent_variance[i]:.1f}% of variance)" if percent_variance is not None else ""
             # Create a subplot for each Encoding
             if np.sum(percent_variance == None) > 0:
-                plt.subplot(2, 2, (i % 4) + 1)
+                plt.subplot(5, 3, (i % 15) + 1)
                 if np.std(df_1[pc]) > 0:
                     sns.kdeplot(df_1[pc], fill=True, color="blue", alpha=0.5, label=f"{pc} Dist.")
                 # Plot vertical lines for df_2
                 for value in df_2[pc]:
                     plt.axvline(x=value, color="red", linestyle="--", alpha=0.7)
                 plt.title("encoding " + str(pc), fontsize=10)
-                # plt.xlabel(pc, fontsize=10)
                 plt.ylabel("Density", fontsize=10)
+                plt.xlabel("")
             # Create a subplot for each PC
             elif percent_variance[i] > (1/len(df_1.columns) * 100):
-                plt.subplot(2, 2, (i % 4) + 1)
+                plt.subplot(5, 3, (i % 15) + 1)
                 sns.kdeplot(df_1[pc], fill=True, color="blue", alpha=0.5, label=f"{pc} Dist.")
                 # Plot vertical lines for df_2
                 for value in df_2[pc]:
                     plt.axvline(x=value, color="red", linestyle="--", alpha=0.7)
                 plt.title(f"{pc_percent_variance}", fontsize=10)
-                plt.xlabel(pc, fontsize=10)
                 plt.ylabel("Density", fontsize=10)
-                # plt.legend(fontsize=8)
+                plt.xlabel("")
             else:
                 break
 
@@ -212,4 +212,3 @@ if __name__ == "__main__":
     # create plot
     plot_distributions(df_1, df_2, None, out_prefix + "_encoded_plots.pdf")
     plot_distributions(pc_df_1, pc_df_2, explained_variance_ratio, out_prefix + "_pca_plots.pdf")
-                                                                                                                         
