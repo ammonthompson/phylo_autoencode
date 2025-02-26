@@ -13,7 +13,7 @@ from phyloencode import utils
 
 
 class PhyloAutoencoder(object):
-    def __init__(self, model, optimizer, loss_func, phy_loss_weight = 0.5):
+    def __init__(self, model, optimizer, loss_func, phy_loss_weight=0.5, mmd_weight=None):
         '''
             model is an object from torch.model
             optimizer is an object from torch.optim
@@ -32,8 +32,8 @@ class PhyloAutoencoder(object):
         if model.latent_layer_type == "GAUSS":
             # self.loss_func = utils.get_vae_loss_function()
             self.loss_func = utils.get_mmd_loss_function()
-            self.mmd_weight = 1.
-            self.mmd_weight_max = 1.
+            self.mmd_weight = mmd_weight
+            self.mmd_weight_max = mmd_weight
 
 
         self.train_loader = None

@@ -104,7 +104,8 @@ class AECNN(nn.Module):
             self.latent_layer = LatentCNN(struct_outshape)
         elif self.latent_layer_type == "GAUSS":
             # self.latent_layer = LatentGauss(struct_outshape[1:], self.unstructured_latent_width)
-            self.latent_layer = LatentDense(self.combined_latent_width)
+            self.latent_layer = LatentGauss(self.combined_latent_width)
+            # self.latent_layer = LatentDense(self.combined_latent_width)
         elif self.latent_layer_type == "DENSE":
             self.latent_layer = LatentDense(self.combined_latent_width)
         else:
@@ -157,7 +158,9 @@ class AECNN(nn.Module):
             # unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
             # return structured_decoded_x, unstructured_decoded_x, zmu, zlogv
             shared_latent_out = self.latent_layer(combined_latent)
-            structured_decoded_x   = self.structured_decoder(reshaped_shared_latent)
+            reshaped_z_latent_out = shared_latent_out.view(-1, self.num_structured_latent_channels, 
+                                                               self.reshaped_shared_latent_width)
+            structured_decoded_x   = self.structured_decoder(reshaped_z_latent_out)
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
             return structured_decoded_x, unstructured_decoded_x, shared_latent_out
         
@@ -383,6 +386,17 @@ class LatentDense(nn.Module):
     def forward(self, x):
         return self.shared_layer(x)
     
+class LatentGauss(nn.Module):
+    def __init__(self, in_width: int):
+        super().__init__()
+        # Shared Latent Layer
+        self.shared_layer = nn.Sequential(
+            nn.Linear(in_width, in_width),
+        )
+    
+    def forward(self, x):
+        return self.shared_layer(x)
+
 
 # class LatentGauss(nn.Module):
 #     def __init__(self, in_cnn_shape: Tuple[int, int], in_dense_width: int):

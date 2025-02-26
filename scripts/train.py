@@ -65,16 +65,18 @@ def main():
                                       latent_layer_type = "GAUSS")
 
     # create Trainer
-    tree_autoencoder = PhyloAutoencoder(model     = ae_model, 
+    tree_autoencoder = PhyloAutoencoder(
+                                        model     = ae_model, 
                                         optimizer = torch.optim.Adam(ae_model.parameters()), 
-                                        # optimizer = torch.optim.SGD(ae_model.parameters(), lr=0.01, momentum=0.9, nesterov=True), 
                                         loss_func = torch.nn.MSELoss(), 
                                         # loss_func = utils.get_vae_loss_function(), 
-                                        phy_loss_weight = 1.0)
+                                        phy_loss_weight = 1.0,
+                                        mmd_weight=2,
+                                        )
 
     # Load data loaders and Train model and plot
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
-    tree_autoencoder.train(num_epochs = 20, seed = rand_seed)
+    tree_autoencoder.train(num_epochs = 50, seed = rand_seed)
     tree_autoencoder.plot_losses().savefig("AElossplot.pdf")
     tree_autoencoder.save_model(out_prefix + ".ae_trained.pt")
 
@@ -100,7 +102,6 @@ def main():
     # for PCA analysis of a sample of training trees
     # make encoded tree file
     rand_idx = np.random.randint(0, ae_data.prop_train * num_subset, size = min(5000, num_subset))
-
     latent_dat = tree_autoencoder.tree_encode(torch.Tensor(ae_data.norm_train_phy_data[rand_idx,...]), 
                                               torch.Tensor(ae_data.norm_train_aux_data[rand_idx,...]))
 
