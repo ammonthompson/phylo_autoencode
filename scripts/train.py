@@ -51,7 +51,7 @@ def main():
     ae_data.save_normalizers(out_prefix)
 
     # create data loaders
-    trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = 64, 
+    trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = 128, 
                                                      shuffle     = True, 
                                                      num_workers = nworkers)
 
@@ -62,21 +62,20 @@ def main():
                                       stride        = [2,2,7,9],
                                       kernel        = [3,3,8,10],
                                       out_channels  = [8,16,32,32],
-                                      latent_layer_type = "GAUSS")
+                                      latent_layer_type = "GAUSS",
+                                      )
 
     # create Trainer
-    tree_autoencoder = PhyloAutoencoder(
-                                        model     = ae_model, 
+    tree_autoencoder = PhyloAutoencoder(model     = ae_model, 
                                         optimizer = torch.optim.Adam(ae_model.parameters()), 
                                         loss_func = torch.nn.MSELoss(), 
-                                        # loss_func = utils.get_vae_loss_function(), 
                                         phy_loss_weight = 1.0,
-                                        mmd_weight = 1,
+                                        mmd_weight = 2.0,
                                         )
 
     # Load data loaders and Train model and plot
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
-    tree_autoencoder.train(num_epochs = 150, seed = rand_seed)
+    tree_autoencoder.train(num_epochs = 100, seed = rand_seed)
     tree_autoencoder.plot_losses().savefig("AElossplot.pdf")
     tree_autoencoder.save_model(out_prefix + ".ae_trained.pt")
 

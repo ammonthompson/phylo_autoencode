@@ -30,7 +30,7 @@ class PhyloAutoencoder(object):
         # TODO: do a proper error handing at some point 
         # (should be passed as a parameter)
         if model.latent_layer_type == "GAUSS":
-            self.loss_func = utils.get_mmd_loss_function()
+            self.loss_func = utils.get_mmd_loss_function(decode_loss_func=loss_func)
             self.mmd_weight = mmd_weight
             self.mmd_weight_max = mmd_weight
 

@@ -7,7 +7,7 @@ from torch.utils.data import Dataset, DataLoader, TensorDataset
 from typing import List, Dict, Tuple, Optional, Union
 
 
-def get_mmd_loss_function():
+def get_mmd_loss_function(decode_loss_func = torch.nn.MSELoss(reduction = "mean")):
     ''' Returns a maximum mean discrepncy loss function
         This uses the implementation of yiftachbeer on github.
         See classes RBF and MMDLoss below
@@ -19,7 +19,7 @@ def get_mmd_loss_function():
         device = latent_pred.device
         x = latent_pred
         y = torch.randn(x.shape).to(device)
-        recon_loss = torch.nn.MSELoss(reduction = "mean")(pred, true)
+        recon_loss = decode_loss_func(pred, true)
         MMD2 = mmd_weight * MMDLoss(device)(x, y)
                 
         return recon_loss, MMD2
