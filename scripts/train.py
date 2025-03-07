@@ -51,7 +51,7 @@ def main():
     ae_data.save_normalizers(out_prefix)
 
     # create data loaders
-    trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = 128, 
+    trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = 256, 
                                                      shuffle     = True, 
                                                      num_workers = nworkers)
 
@@ -75,7 +75,7 @@ def main():
 
     # Load data loaders and Train model and plot
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
-    tree_autoencoder.train(num_epochs = 100, seed = rand_seed)
+    tree_autoencoder.train(num_epochs = 150, seed = rand_seed)
     tree_autoencoder.plot_losses().savefig("AElossplot.pdf")
     tree_autoencoder.save_model(out_prefix + ".ae_trained.pt")
 

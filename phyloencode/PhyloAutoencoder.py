@@ -247,33 +247,6 @@ class PhyloAutoencoder(object):
     def save_model(self, filename):
         torch.save(self.model, filename)
 
-    def old_tree_encode(self, phy: torch.Tensor, aux: torch.Tensor):
-        self.model.eval() 
-        phy = phy.to(self.device)
-        aux = aux.to(self.device)
-
-        # get latent unstrcutured and structured embeddings
-        structured_encoded_x   = self.model.structured_encoder(phy)    # (1, nchannels, out_width)
-        unstructured_encoded_x = self.model.unstructured_encoder(aux)  # (1, out_width)
-
-        # get combined latent output
-        flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)
-        combined_latent           = torch.cat((flat_structured_encoded_x, 
-                                               unstructured_encoded_x), dim=1)
-        
-        reshaped_shared_latent_width = combined_latent.shape[1] // structured_encoded_x.shape[1]
-
-        reshaped_shared_latent = combined_latent.view(-1, structured_encoded_x.shape[1], 
-                                                          reshaped_shared_latent_width)
-
-        # latent_out = self.model.shared_layer(combined_latent)
-        latent_out = self.model.shared_layer(reshaped_shared_latent)
-
-        self.model.train()
-
-        return(latent_out.flatten(start_dim=1))
-        # return(structured_encoded_x.flatten(start_dim=1))
-
     def tree_encode(self, phy: torch.Tensor, aux: torch.Tensor):
         self.model.eval() 
         phy = phy.to(self.device)
@@ -306,6 +279,7 @@ class PhyloAutoencoder(object):
         self.model.train()
 
         return(shared_latent_out.flatten(start_dim=1))
+
 
     def latent_decode(self, encoded_tree):
         return self.model.structured_decoder(encoded_tree)
