@@ -72,7 +72,7 @@ def main():
                                         phy_loss_weight = 1.0,
                                         mmd_weight = 2.0,
                                         )
-
+    
     # Load data loaders and Train model and plot
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
     tree_autoencoder.train(num_epochs = 150, seed = rand_seed)

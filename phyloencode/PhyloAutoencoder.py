@@ -280,8 +280,14 @@ class PhyloAutoencoder(object):
 
         return(shared_latent_out.flatten(start_dim=1))
 
+    def get_latent_shape(self):
+        return self.model.num_structured_latent_channels, self.model.reshaped_shared_latent_width
 
     def latent_decode(self, encoded_tree):
-        return self.model.structured_decoder(encoded_tree)
+        self.model.eval()
+        encoded_tree = encoded_tree.to(self.device)
+        decoded_tree = self.model.structured_decoder(encoded_tree)
+        self.model.train()
+        return decoded_tree
 
         

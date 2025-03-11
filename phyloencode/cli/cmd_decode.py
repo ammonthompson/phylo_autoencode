@@ -51,13 +51,18 @@ def main ():
 
     # import test data
     encoded_data = pd.read_csv(encoded_data_fn, header = None, index_col = None).to_numpy(dtype=np.float32)
-    encoded_data = encoded_data.reshape((encoded_data.shape[0], int(args.num_channels), int(encoded_data.shape[1]/int(args.num_channels))),  order = "F")
-    print(encoded_data.shape)
+    encoded_data = encoded_data.reshape((encoded_data.shape[0], int(args.num_channels), 
+                                         int(encoded_data.shape[1]/int(args.num_channels))),  order = "F")
+    print(tree_autoencoder.get_latent_shape())
     encoded_data = torch.tensor(encoded_data, dtype = torch.float32)
     test_phy_data = tree_autoencoder.latent_decode(encoded_data)
     # test_phy_data = test_phy_data.reshape((test_phy_data.shape[0], -1), order = "F")
-    test_phy_data = phy_normalizer.inverse_transform(test_phy_data) 
-    test_phy_data = test_phy_data.flatten()
+    test_phy_data = test_phy_data.detach().to('cpu').numpy()
+    print(test_phy_data.reshape((test_phy_data.shape[0], -1), order = "F")[0,0:14])
+    test_phy_data = phy_normalizer.inverse_transform(test_phy_data.reshape((test_phy_data.shape[0], -1), order = "F"))
+    print(test_phy_data.shape)
+    print(test_phy_data[0,0:14])
+    # test_phy_data = test_phy_data.flatten()
 
     cblv_df = pd.DataFrame(test_phy_data)
     cblv_df.to_csv(out_file_prefix + ".ae_decoded.cblv", header = None, index = None)

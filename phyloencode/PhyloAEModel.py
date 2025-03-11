@@ -127,22 +127,24 @@ class AECNN(nn.Module):
         reshaped_shared_latent = combined_latent.view(-1, self.num_structured_latent_channels, 
                                                           self.reshaped_shared_latent_width)
         
-        if self.latent_layer_type   == "CNN":
-            shared_latent_out = self.latent_layer(reshaped_shared_latent)
+        if self.latent_layer_type == "CNN":
+            shared_latent_out      = self.latent_layer(reshaped_shared_latent)
             structured_decoded_x   = self.structured_decoder(shared_latent_out)
             unstructured_decoded_x = self.unstructured_decoder(combined_latent)
             return structured_decoded_x, unstructured_decoded_x
         
         elif self.latent_layer_type == "GAUSS":
-            shared_latent_out = self.latent_layer(combined_latent)
-            reshaped_z_latent_out = shared_latent_out.view(-1, self.num_structured_latent_channels, 
+            shared_latent_out   = self.latent_layer(combined_latent)
+            reshaped_latent_out = shared_latent_out.view(-1, self.num_structured_latent_channels, 
                                                                self.reshaped_shared_latent_width)
-            structured_decoded_x   = self.structured_decoder(reshaped_z_latent_out)
+            structured_decoded_x   = self.structured_decoder(reshaped_latent_out)
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
             return structured_decoded_x, unstructured_decoded_x, shared_latent_out
         
         elif self.latent_layer_type == "DENSE":
-            shared_latent_out = self.latent_layer(combined_latent)
+            shared_latent_out   = self.latent_layer(combined_latent)
+            reshaped_latent_out = shared_latent_out.view(-1, self.num_structured_latent_channels, 
+                                                                self.reshaped_shared_latent_width)
             structured_decoded_x   = self.structured_decoder(reshaped_shared_latent)
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
             return structured_decoded_x, unstructured_decoded_x
@@ -202,6 +204,7 @@ class CnnEncoder(nn.Module):
 
     def forward(self, x):
         return self.cnn_layers(x)
+        
 
 # decoder classes
 class DenseDecoder(nn.Module):
