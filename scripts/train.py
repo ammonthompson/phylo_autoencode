@@ -27,7 +27,7 @@ def main():
     # not used. dataset too small
     # num_cpus = multiprocessing.cpu_count()
     # num_workers = 0 if (num_cpus - 4) < 0 else num_cpus - 4
-    num_subset = 48000
+    num_subset = 50000
     nworkers = 0
     rand_seed = np.random.randint(0,10000)
 
@@ -43,11 +43,10 @@ def main():
     # rand_idx = torch.randperm(aux_data.shape[0])
     # aux_data = aux_data[rand_idx]
 
-
     # create Data container
     ae_data = ph.DataProcessors.AEData(data = (phy_data, aux_data), 
                                         prop_train = 0.8,  
-                                        nchannels  = 7)
+                                        nchannels  = 9)
     ae_data.save_normalizers(out_prefix)
 
     # create data loaders
@@ -69,13 +68,13 @@ def main():
     tree_autoencoder = PhyloAutoencoder(model     = ae_model, 
                                         optimizer = torch.optim.Adam(ae_model.parameters()), 
                                         loss_func = torch.nn.MSELoss(), 
-                                        phy_loss_weight = 1.0,
-                                        mmd_weight = 2.0,
+                                        phy_loss_weight = 0.5,
+                                        mmd_weight = 1.0,
                                         )
     
     # Load data loaders and Train model and plot
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
-    tree_autoencoder.train(num_epochs = 150, seed = rand_seed)
+    tree_autoencoder.train(num_epochs = 250, seed = rand_seed)
     tree_autoencoder.plot_losses().savefig("AElossplot.pdf")
     tree_autoencoder.save_model(out_prefix + ".ae_trained.pt")
 

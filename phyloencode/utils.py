@@ -6,26 +6,14 @@ import torch.nn.functional as fun
 from torch.utils.data import Dataset, DataLoader, TensorDataset
 from typing import List, Dict, Tuple, Optional, Union
 
+def mmd_loss(latent_pred):
 
-def get_mmd_loss_function(decode_loss_func = torch.nn.MSELoss(reduction = "mean")):
-    ''' Returns a maximum mean discrepncy loss function
-        This uses the implementation of yiftachbeer on github.
-        See classes RBF and MMDLoss below
-    '''
-
-    def get_mmd(pred, true, latent_pred, mmd_weight = 1):
-        '''Returns the reconstruction loss and MMD2 loss for tensor x with y ~ N(0,1)'''
-
-        device = latent_pred.device
-        x = latent_pred
-        y = torch.randn(x.shape).to(device)
-        recon_loss = decode_loss_func(pred, true)
-        MMD2 = mmd_weight * MMDLoss(device)(x, y)
-                
-        return recon_loss, MMD2
-
-    return get_mmd
-
+    device = latent_pred.device
+    x = latent_pred
+    y = torch.randn(x.shape).to(device)
+    MMD2 = MMDLoss(device)(x, y)
+            
+    return MMD2
 
 def conv1d_sequential_outshape(sequential: nn.Sequential, 
                                input_channels: int, 
