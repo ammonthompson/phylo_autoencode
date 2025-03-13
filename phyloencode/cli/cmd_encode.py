@@ -19,7 +19,7 @@ def main ():
     cmd.add_argument("-m", "--model", required=True, help="Path to the trained model.pt file")
     cmd.add_argument("-p", "--phy-normalizer", required=True, help="Path to the phy_normalizer.pkl file")
     cmd.add_argument("-a", "--aux-normalizer", required=True, help="Path to the aux_normalizer.pkl file")
-    cmd.add_argument("-t", "--tree-data", required=True, help="Path to the phyddle formated tree hdf5 file")
+    cmd.add_argument("-t", "--tree-data", required=True, help="Path to the phyddle formated tree CBLV(S) and aux data (hdf5 format)")
     cmd.add_argument("-o", "--out-prefix", required=False, help="Path to out file prefix")
 
     args = cmd.parse_args()
@@ -57,8 +57,6 @@ def main ():
                             int(phydat.shape[1]/ae_model.num_structured_input_channel)), order = "F")
     phydat = torch.Tensor(phydat)
     auxdat = torch.Tensor(auxdat)
-    phy_pred, auxpred = tree_autoencoder.predict(phydat, auxdat)
-    phy_pred = phy_normalizer.inverse_transform(phy_pred.reshape((phy_pred.shape[0], -1), order = "F"))
 
     # make encoded tree file
     latent_dat = tree_autoencoder.tree_encode(phydat, auxdat)

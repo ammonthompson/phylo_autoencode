@@ -87,6 +87,7 @@ def recurse(nodes, nd):
     
     return nd
 
+# shift node heights by specified shift_value
 def shift_node_heights(dp_tree, shift_value):
     for node in dp_tree:
         if node.height is not None:
@@ -95,39 +96,72 @@ def shift_node_heights(dp_tree, shift_value):
 def main():
     # parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("-f", "--infile", required=True, help = "File of cblv formatted data sample.")
-    parser.add_argument("--ntips", required=True, help = "Max num tips in trees.")
-    parser.add_argument("--nchar", required=False, help = "Num characters.")
+    parser.add_argument("-t", "--tree", required=True, help = "File of ntips + cblv(s) formatted phylo data.")
+    # parser.add_argument("-a", "--aux", required=True, help = "File of auxilliary data.")
+    parser.add_argument("-m", "--max-tips", required=True, help = "Maximum number of tips. Last dimension of cblv tensor.")
+    parser.add_argument("-n", "--num-tips", required=False, help = "Num tips in trees. Single column file. Same order as cblv file.")
+    parser.add_argument("-c", "--num-chars", required=True, help = "Number of characters.")
+    parser.add_argument("-x", "--num-trees", required=False, help = "Number of trees to translate.")
     args = parser.parse_args()
-    num_tips = int(args.ntips)
-    num_char = int(args.nchar) if args.nchar else 0
+    max_tips = int(args.max_tips)
+    num_chars = int(args.num_chars)
 
     # read in data from file. Format format for input file see: phyddle -s F
-    if re.search(r"\.csv$", args.infile) or re.search(r"\.cblv$", args.infile) or re.search(r"\.cblvs$", args.infile):
-        phy_data = pd.read_csv(args.infile, header = None, index_col = None).to_numpy()
-    elif re.search(r"\.hdf5$", args.infile) or re.search(r"\.h5$", args.infile):
-        with h5py.File(args.infile, "r") as f:
+    if re.search(r"\.csv$", args.tree) or re.search(r"\.cblv$", args.tree) or re.search(r"\.cblvs$", args.tree):
+        phy_data = pd.read_csv(args.tree, header = None, index_col = None).to_numpy()
+    elif re.search(r"\.hdf5$", args.tree) or re.search(r"\.h5$", args.tree):
+        with h5py.File(args.tree, "r") as f:
             phy_data = pd.DataFrame(f['phy_data']).to_numpy()
     else:
-        print("Input file must be in csv or hdf5 format.")
+        print("Input cblv file must be a .csv or .hdf5 file.")
         sys.exit(1)
 
+    # read in num tips file (single column)
+    # if num tips is negative, set to 1
+    if args.num_tips is not None:
+        num_tips = pd.read_csv(args.num_tips, header = None, index_col = None).to_numpy()
+        num_tips[num_tips < 2] = 2
+        num_tips[num_tips > max_tips] = max_tips
+        num_tips = num_tips[:,0]
+    # if no file provided, set all num tips to max_tips
+    else:
+        num_tips = [int(args.max_tips) for i in range(phy_data.shape[0])]
+
+
     # convert to cblv format
-    cblvs = phy_data.reshape((phy_data.shape[0], phy_data.shape[1]//num_tips, num_tips), order = "F")
-    cblv = cblvs[:, 0:(phy_data.shape[1]//num_tips - num_char), :]
+    cblvs = phy_data.reshape((phy_data.shape[0], phy_data.shape[1]//max_tips, max_tips), order = "F")
 
-    # testing
-    # cblv[cblv < 0] = 0
-    # loop through each tree encoded in cblv format and convert to newick string then print to stdout
-    for i in range(cblv.shape[0]):
+    num_trees = cblvs.shape[0]
+    if args.num_trees is not None:
+        num_trees = int(args.num_trees)
+    if num_trees > cblvs.shape[0]:
+        num_trees = cblvs.shape[0]
+
+     # loop through each tree encoded in cblv format and convert to newick string then print to stdout
+    for i in range(num_trees):
+        num_tips_i = int(num_tips[i])
+        # print(i)
+        # print("num_tips_i: " + str(num_tips_i))
+
+        cblv = cblvs[i, 0:(cblvs.shape[1] - num_chars), 0:num_tips_i]
+
         # encodings sometimes produce negative values, shift to make all positive (shift back below)
-        shift = np.min(cblv[i,...])
-        cblv[i,...] -= shift
-        nodes = get_node_heights(pd.DataFrame(cblv[i,...]), num_tips=num_tips)
-        heights = [ nd.height for nd in nodes ]
-        idx_root = heights.index(min(heights))
+        shift = np.min(cblv)
+        cblv -= shift
+        # print(cblvs[i, 0:(cblvs.shape[1] - num_chars), (num_tips_i - 10):(num_tips_i + 10)])
 
+        nodes = get_node_heights(pd.DataFrame(cblv), num_tips = num_tips_i)
+        heights = [ nd.height for nd in nodes ]        
+        # idx_root = heights.index(min(heights))
+
+        # find root node with smallest height and is an internal node (label starts with 'n')
+        min_int_node = min([ nd.height for nd in nodes if nd.label.startswith('n') ])
+        idx_root = heights.index(min_int_node)
+
+        # print("len nodes: ", len(nodes))
         nd_root = nodes[idx_root] 
+        # quit()
+        # print("nd_root: ", nd_root)
         nd_root = recurse(nodes, nd_root)
         phy_decode = dp.Tree(seed_node=nd_root)
         shift_node_heights(phy_decode, shift)

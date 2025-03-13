@@ -32,7 +32,7 @@ def main ():
     ae_model_fn       = file_exists(args.model)
     phy_normalizer_fn = file_exists(args.phy_normalizer)
     aux_normalizer_fn = file_exists(args.aux_normalizer)
-    encoded_data_fn      = file_exists(args.encoded_data)
+    encoded_data_fn   = file_exists(args.encoded_data)
     
     if args.out_prefix is None:
         out_file_prefix = encoded_data_fn.split('/')[-1].split('.')[0]
@@ -46,8 +46,7 @@ def main ():
 
     tree_autoencoder = PhyloAutoencoder(model     = ae_model, 
                                         optimizer = torch.optim.Adam(ae_model.parameters()), 
-                                        loss_func = torch.nn.MSELoss(), 
-                                        phy_loss_weight = 1.0)
+                                        loss_func = torch.nn.MSELoss())
 
     # import test data
     encoded_data = pd.read_csv(encoded_data_fn, header = None, index_col = None).to_numpy(dtype=np.float32)
@@ -57,9 +56,11 @@ def main ():
 
     # decode the encoded data
     test_phy_data, test_aux_data = tree_autoencoder.latent_decode(encoded_data)
+
     test_phy_data = test_phy_data.detach().to('cpu').numpy()
-    test_aux_data = test_aux_data.detach().to('cpu').numpy()
     test_phy_data = phy_normalizer.inverse_transform(test_phy_data.reshape((test_phy_data.shape[0], -1), order = "F"))
+    
+    test_aux_data = test_aux_data.detach().to('cpu').numpy()
     test_aux_data = aux_normalizer.inverse_transform(test_aux_data)
  
     cblv_df = pd.DataFrame(test_phy_data)

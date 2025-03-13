@@ -33,11 +33,11 @@ def main():
 
     # get formated tree data
     with h5py.File(data_fn, "r") as f:
+        # print((f['aux_data_names'][...][:,14]) )
         phy_data = torch.tensor(f['phy_data'][0:num_subset,...], dtype = torch.float32)
         aux_data = torch.tensor(f['aux_data'][0:num_subset,...], dtype = torch.float32)
         test_phy_data = torch.tensor(f['phy_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
         test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
-
 
     # checking how much aux_data is helping encode tree patterns
     # rand_idx = torch.randperm(aux_data.shape[0])
