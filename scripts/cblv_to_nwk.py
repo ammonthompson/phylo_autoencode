@@ -109,13 +109,17 @@ def main():
     # read in data from file. Format format for input file see: phyddle -s F
     if re.search(r"\.csv$", args.tree) or re.search(r"\.cblv$", args.tree) or re.search(r"\.cblvs$", args.tree):
         phy_data = pd.read_csv(args.tree, header = None, index_col = None).to_numpy()
+
     elif re.search(r"\.hdf5$", args.tree) or re.search(r"\.h5$", args.tree):
         with h5py.File(args.tree, "r") as f:
             phy_data = pd.DataFrame(f['phy_data']).to_numpy()
+
     else:
         print("Input cblv file must be a .csv or .hdf5 file.")
         sys.exit(1)
+    # print(phy_data.shape)
 
+    
     # read in num tips file (single column)
     # if num tips is negative, set to 1
     if args.num_tips is not None:
@@ -127,7 +131,8 @@ def main():
     else:
         num_tips = [int(args.max_tips) for i in range(phy_data.shape[0])]
 
-
+    # print("here")
+    # quit()
     # convert to cblv format
     cblvs = phy_data.reshape((phy_data.shape[0], phy_data.shape[1]//max_tips, max_tips), order = "F")
 

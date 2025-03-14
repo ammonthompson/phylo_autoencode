@@ -27,7 +27,7 @@ def main():
     # not used. dataset too small
     # num_cpus = multiprocessing.cpu_count()
     # num_workers = 0 if (num_cpus - 4) < 0 else num_cpus - 4
-    num_subset = 50000
+    num_subset = 100000
     nworkers = 0
     rand_seed = np.random.randint(0,10000)
 
@@ -55,46 +55,55 @@ def main():
                                                      num_workers = nworkers)
 
     # create model
-    ae_model  = ph.PhyloAEModel.AECNN(num_structured_input_channel = ae_data.nchannels, 
-                                      structured_input_width   = ae_data.phy_width,  # Input width for structured data
-                                      unstructured_input_width = ae_data.aux_width,
-                                      stride        = [2,2,7,9],
-                                      kernel        = [3,3,8,10],
-                                      out_channels  = [8,16,32,32],
-                                      latent_layer_type = "GAUSS",
+    ae_model  = ph.PhyloAEModel.AECNN(num_structured_input_channel  = ae_data.nchannels, 
+                                      structured_input_width        = ae_data.phy_width,
+                                      unstructured_input_width      = ae_data.aux_width,
+                                      stride                        = [2,8],
+                                      kernel                        = [3,9],
+                                      out_channels                  = [16,64],
+                                      latent_layer_type             = "GAUSS",
                                       )
 
     # create Trainer
     tree_autoencoder = PhyloAutoencoder(model     = ae_model, 
                                         optimizer = torch.optim.Adam(ae_model.parameters()), 
                                         loss_func = torch.nn.MSELoss(), 
-                                        phy_loss_weight = 0.5,
-                                        mmd_weight = 1.0,
+                                        phy_loss_weight = 0.85,
+                                        mmd_weight = 2.0,
                                         )
     
     # Load data loaders and Train model and plot
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
-    tree_autoencoder.train(num_epochs = 250, seed = rand_seed)
+    tree_autoencoder.train(num_epochs = 350, seed = rand_seed)
     tree_autoencoder.plot_losses().savefig("AElossplot.pdf")
     tree_autoencoder.save_model(out_prefix + ".ae_trained.pt")
 
 
     # Test data
+    # save true data and predictions pushed through the autoencoder
+    # save true data
+    phy_true_df = pd.DataFrame(test_phy_data.numpy())
+    phy_true_df.to_csv(out_prefix + ".phy_true.cblv", header = False, index = False)
+    aux_true_df = pd.DataFrame(test_aux_data.numpy())
+    aux_true_df.to_csv(out_prefix + ".aux_true.csv", header = False, index = False)
+
+    # make predictions of test data with trained model
     phy_normalizer, aux_normalizer = ae_data.get_normalizers()
     phydat = phy_normalizer.transform(test_phy_data)
     auxdat = aux_normalizer.transform(test_aux_data)
-    phydat = phydat.reshape((phydat.shape[0], ae_data.nchannels, 
-                            int(phydat.shape[1]/ae_data.nchannels)), order = "F")
+    phydat = phydat.reshape((phydat.shape[0], ae_data.nchannels, ae_data.phy_width), order = "F")
     phydat = torch.Tensor(phydat)
     auxdat = torch.Tensor(auxdat)
     phy_pred, auxpred = tree_autoencoder.predict(phydat, auxdat)
+    # transform and flatten data
     phy_pred = phy_normalizer.inverse_transform(phy_pred.reshape((phy_pred.shape[0], -1), order = "F"))
+    auxpred  = aux_normalizer.inverse_transform(auxpred)
 
-    phy_true_df = pd.DataFrame(test_phy_data.numpy())
-    phy_true_df.to_csv(out_prefix + ".phy_true.cblv", header = False)
-
+    # save predictions
     phy_pred_df = pd.DataFrame(phy_pred)
-    phy_pred_df.to_csv(out_prefix + ".phy_pred.cblv", header = False)
+    phy_pred_df.to_csv(out_prefix + ".phy_pred.cblv", header = False, index = False)
+    aux_pred_df = pd.DataFrame(auxpred)
+    aux_pred_df.to_csv(out_prefix + ".aux_pred.csv", header  = False, index = False)
 
 
     # for PCA analysis of a sample of training trees
@@ -102,9 +111,9 @@ def main():
     rand_idx = np.random.randint(0, ae_data.prop_train * num_subset, size = min(5000, num_subset))
     latent_dat = tree_autoencoder.tree_encode(torch.Tensor(ae_data.norm_train_phy_data[rand_idx,...]), 
                                               torch.Tensor(ae_data.norm_train_aux_data[rand_idx,...]))
-
     latent_dat_df = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), columns = None, index = None)
     latent_dat_df.to_csv(out_prefix + ".traindat_latent.csv", header = False, index = False)
+
 
 if __name__ == "__main__":
     main()
