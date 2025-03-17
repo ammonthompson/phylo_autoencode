@@ -56,12 +56,14 @@ class PhyloAutoencoder(object):
 
             with torch.no_grad():
                 if self.model.latent_layer_type == "GAUSS":
-                    epoch_validation_loss, decode_loss, mmd_loss = self._mini_batch(validation=True)
+                    epoch_validation_loss, phy_loss, aux_loss, mmd_loss = self._mini_batch(validation=True)
                     self.mmd_weight = min(self.mmd_weight_max, 1.5 * self.mmd_weight + 0.1)
 
-                    print(f"epoch {str(epoch)}, loss: {epoch_validation_loss:.4f}, \
-                                         decode loss: {decode_loss:.4f}, \
-                                             MMD2 loss: {mmd_loss:.4f}")
+                    print(f"epoch {epoch},  " +
+                            f"loss: {epoch_validation_loss:.4f},  " +
+                            f"phy loss: {phy_loss:.4f},  " +
+                            f"aux loss: {aux_loss:.4f},  " +
+                            f"MMD2 loss: {mmd_loss:.4f}")
                 else:
                     epoch_validation_loss = self._mini_batch(validation=True)
                     print(f"epoch {str(epoch)}, loss: {epoch_validation_loss:.4f}")
@@ -87,6 +89,7 @@ class PhyloAutoencoder(object):
     def _mini_batch(self, validation = False):
         # Uses self.step_function to perform SGD step for each batch
         # returns the mean loss from the mini batch steps
+        # If validation = True, then returns phy, aux, and mmd loss.
 
         # set data loader and step function
         if validation:
@@ -102,30 +105,42 @@ class PhyloAutoencoder(object):
         # perform step and return loss
         # loop through all batches of train or val data
         mini_batch_losses = []
-        dc_mini_batch_losses = []
-        kl_mini_batch_losses = []
+        phy_mini_batch_losses = []
+        aux_mini_batch_losses = []
+        mmd_mini_batch_losses = []
         for phy_batch, aux_batch in data_loader:
             phy_batch = phy_batch.to(self.device)
             aux_batch = aux_batch.to(self.device)
-            if self.model.latent_layer_type == "GAUSS" and validation:
-                loss, dc_loss, mmd_loss = step_function(phy_batch, aux_batch)
-                dc_mini_batch_losses.append(dc_loss)
-                kl_mini_batch_losses.append(mmd_loss)
-                mini_batch_losses.append(loss)
-            else:
+            if not validation:
                 loss = step_function(phy_batch, aux_batch)
-                mini_batch_losses.append(loss)
+            elif self.model.latent_layer_type == "GAUSS" and validation:
+                loss, phy_loss, aux_loss, mmd_loss = step_function(phy_batch, aux_batch)
+                phy_mini_batch_losses.append(phy_loss)
+                aux_mini_batch_losses.append(aux_loss)
+                mmd_mini_batch_losses.append(mmd_loss)
+            else:
+                loss, phy_loss, aux_loss = step_function(phy_batch, aux_batch)
+                phy_mini_batch_losses.append(phy_loss)
+                aux_mini_batch_losses.append(aux_loss)
+
+            mini_batch_losses.append(loss)
 
         # return the mean loss over all batches
         if self.model.latent_layer_type == "GAUSS" and validation:
-            return np.mean(mini_batch_losses), np.mean(dc_mini_batch_losses), np.mean(kl_mini_batch_losses)
-        else:    
+            return  np.mean(mini_batch_losses), \
+                    np.mean(phy_mini_batch_losses), \
+                    np.mean(aux_mini_batch_losses), \
+                    np.mean(mmd_mini_batch_losses)
+        elif validation:    
+            return np.mean(mini_batch_losses), np.mean(phy_mini_batch_losses), np.mean(aux_mini_batch_losses)
+        else:
             return np.mean(mini_batch_losses)
 
     def _make_train_step_func(self):
 
         def train_step(phy: torch.Tensor, aux: torch.Tensor):
             # set model to train mode
+            # only returns total loss. validation also returns each component's loss
             self.model.train()
 
             # get model predictions and losses
@@ -170,14 +185,14 @@ class PhyloAutoencoder(object):
                 loss = self.phy_loss_weight * phy_loss + \
                     (1 - self.phy_loss_weight) * aux_loss + \
                         self.mmd_weight * mmd_loss
-                return loss.item(), phy_loss.item(), mmd_loss.item()
+                return loss.item(), phy_loss.item(), aux_loss.item(), mmd_loss.item()
             else:
                 phy_hat, aux_hat = self.model((phy, aux))
                 phy_loss = self.loss_func(phy_hat, phy)
                 aux_loss = self.loss_func(aux_hat, aux)                
                 loss = self.phy_loss_weight * phy_loss + \
                     (1 - self.phy_loss_weight) * aux_loss
-                return loss.item()
+                return loss.item(), phy_loss.item(), aux_loss.item()
 
         return evaluate
 
