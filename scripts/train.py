@@ -27,17 +27,20 @@ def main():
     # not used. dataset too small
     # num_cpus = multiprocessing.cpu_count()
     # num_workers = 0 if (num_cpus - 4) < 0 else num_cpus - 4
-    num_subset = 100000
+    num_subset = 10000
     nworkers = 0
     rand_seed = np.random.randint(0,10000)
 
     # get formated tree data
     with h5py.File(data_fn, "r") as f:
-        # print((f['aux_data_names'][...][:,14]) )
+        idx = np.where(f['aux_data_names'][...][0] == b'num_taxa')[0][0]
         phy_data = torch.tensor(f['phy_data'][0:num_subset,...], dtype = torch.float32)
-        aux_data = torch.tensor(f['aux_data'][0:num_subset,...], dtype = torch.float32)
+        # aux_data = torch.tensor(f['aux_data'][0:num_subset,...], dtype = torch.float32)
+        aux_data = torch.tensor(f['aux_data'][0:num_subset,idx], dtype = torch.float32).view(-1,1)
         test_phy_data = torch.tensor(f['phy_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
-        test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
+        # test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
+        test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500),idx], dtype = torch.float32).view(-1,1)
+
 
     # checking how much aux_data is helping encode tree patterns
     # rand_idx = torch.randperm(aux_data.shape[0])
@@ -58,9 +61,9 @@ def main():
     ae_model  = ph.PhyloAEModel.AECNN(num_structured_input_channel  = ae_data.nchannels, 
                                       structured_input_width        = ae_data.phy_width,
                                       unstructured_input_width      = ae_data.aux_width,
-                                      stride                        = [2,8],
-                                      kernel                        = [3,9],
-                                      out_channels                  = [16,64],
+                                      stride                        = [2,4,8],
+                                      kernel                        = [3,5,9],
+                                      out_channels                  = [16,64,128],
                                       latent_layer_type             = "GAUSS",
                                       )
 
@@ -69,7 +72,7 @@ def main():
                                         optimizer = torch.optim.Adam(ae_model.parameters()), 
                                         loss_func = torch.nn.MSELoss(), 
                                         phy_loss_weight = 0.85,
-                                        mmd_weight = 2.0,
+                                        mmd_weight = 4.0,
                                         )
     
     # Load data loaders and Train model and plot

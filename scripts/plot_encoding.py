@@ -16,7 +16,8 @@ def plot_contour(df_1, df_2, percent_variance = None):
         x=df_1.iloc[:, 0], y=df_1.iloc[:, 1],
         fill=True, cmap="Blues", alpha=1.0, levels=20,
     )
-    plt.scatter(df_2.iloc[:, 0], df_2.iloc[:, 1], color="red", label="Test Trees", alpha=0.7)
+    if df_2 is not None:
+        plt.scatter(df_2.iloc[:, 0], df_2.iloc[:, 1], color="red", label="Test Trees", alpha=0.7)
     pc_percent_variance = f"({percent_variance[0]:.1f}%, {percent_variance[1]:.1f}%)" if percent_variance is not None else ""
     plt.title(
         f"Contour Plot of {df_1.columns[0]} vs {df_1.columns[1]} {pc_percent_variance}",
@@ -76,8 +77,9 @@ def plot_distributions(df_1, df_2, percent_variance = None, output_pdf = "pca_di
                 if np.std(df_1[pc]) > 0:
                     sns.kdeplot(df_1[pc], fill=True, color="blue", alpha=0.5, label=f"{pc} Dist.")
                 # Plot vertical lines for df_2
-                for value in df_2[pc]:
-                    plt.axvline(x=value, color="red", linestyle="--", alpha=0.7)
+                if df_2 is not None:
+                    for value in df_2[pc]:
+                        plt.axvline(x=value, color="red", linestyle="--", alpha=0.7)
                 plt.title("encoding " + str(pc), fontsize=10)
                 plt.ylabel("Density", fontsize=10)
                 plt.xlabel("")
@@ -86,8 +88,9 @@ def plot_distributions(df_1, df_2, percent_variance = None, output_pdf = "pca_di
                 plt.subplot(5, 3, (i % 15) + 1)
                 sns.kdeplot(df_1[pc], fill=True, color="blue", alpha=0.5, label=f"{pc} Dist.")
                 # Plot vertical lines for df_2
-                for value in df_2[pc]:
-                    plt.axvline(x=value, color="red", linestyle="--", alpha=0.7)
+                if df_2 is not None:    
+                    for value in df_2[pc]:
+                        plt.axvline(x=value, color="red", linestyle="--", alpha=0.7)
                 plt.title(f"{pc_percent_variance}", fontsize=10)
                 plt.ylabel("Density", fontsize=10)
                 plt.xlabel("")
@@ -174,7 +177,11 @@ if __name__ == "__main__":
     assert(os.path.isfile(train_trees))
 
     df_1 = pd.read_csv(train_trees, header = None, index_col = None)
-    df_2 = pd.read_csv(test_trees, header = None, index_col = None)
+
+    if test_trees is not None:
+        df_2 = pd.read_csv(test_trees, header = None, index_col = None)
+    else:
+        df_2 = None
 
    # Standardize and perform PCA on the first file
     df1_scaler = StandardScaler()
@@ -197,17 +204,25 @@ if __name__ == "__main__":
     pc_df_1.to_csv(out_prefix + ".pca.csv", index=False)
 
     # Standardize the test tree file using the same scaler and transform with the fitted PCA
-    scaled_data_2 = df1_scaler.transform(df_2)
-    principal_components_2 = pca.transform(scaled_data_2)
+    if df_2 is not None:
+        scaled_data_2 = df1_scaler.transform(df_2)
+        principal_components_2 = pca.transform(scaled_data_2)
 
-    # Create a DataFrame for PCA-transformed data from the second file
-    pc_df_2 = pd.DataFrame(
-        data=principal_components_2,
-        columns=[f"PC{i+1}" for i in range(pca.n_components_)]
-    )
+                # Create a DataFrame for PCA-transformed data from the second file
+        pc_df_2 = pd.DataFrame(
+            data=principal_components_2,
+            columns=[f"PC{i+1}" for i in range(pca.n_components_)]
+        )
 
-    # Save PCA-transformed data for the second file
-    pc_df_2.to_csv(out_prefix + ".test_trees.pca.csv", index=False)
+        # Save PCA-transformed data for the second file
+        if df_2 is not None:
+            pc_df_2.to_csv(out_prefix + ".test_trees.pca.csv", index=False)
+
+    else:
+        sclaed_data_2 = None
+        principal_components_2 = None
+        pc_df_2 = None
+
 
     # create plot
     plot_distributions(df_1, df_2, None, out_prefix + "_encoded_plots.pdf")
