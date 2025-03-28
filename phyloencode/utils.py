@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as fun
 from torch.utils.data import Dataset, DataLoader, TensorDataset
 from typing import List, Dict, Tuple, Optional, Union
+import numpy as np
 
 def mmd_loss(latent_pred):
 
@@ -42,8 +43,6 @@ def conv1d_sequential_outshape(sequential: nn.Sequential,
 
     return batch_size, channels, width
 
-
-
 def tconv1d_sequential_outshape(sequential: nn.Sequential, 
                                 input_channels: int, 
                                 input_width: int) -> Tuple[int, int, int]:
@@ -71,7 +70,6 @@ def tconv1d_sequential_outshape(sequential: nn.Sequential,
 
     return batch_size, channels, width
 
-
 def conv1d_layer_outwidth(layer, input_width):
     # Extract Conv1d parameters
     kernel_size = layer.kernel_size[0]
@@ -95,7 +93,6 @@ def tconv1d_layer_outwidth(layer, input_width):
     return width
 
 
-
 # classes for MMD2 loss to encourage latent space to be be N(0,1) distributed
 class RBF(nn.Module):
     ''' Derived From: https://github.com/yiftachbeer/mmd_loss_pytorch/blob/master/mmd_loss.py'''
@@ -103,6 +100,7 @@ class RBF(nn.Module):
         super().__init__()
         self.device = device
         self.bw_multipliers = mul_factor ** (torch.arange(n_kernels) - n_kernels // 2)
+        # print(mul_factor ** (torch.arange(n_kernels) - n_kernels // 2))
         self.bw_multipliers = self.bw_multipliers.to(self.device)
         if bw != None:
             self.bw = torch.tensor(bw).to(self.device)
@@ -116,8 +114,14 @@ class RBF(nn.Module):
 
         return self.bw
 
-    def forward(self, X):
-        L2_dists = torch.cdist(X, X) ** 2
+    def forward(self, X, Y = None):
+        # X is 2N x D (N examples, D features) + N, D-dimensional samples from N(0,I)
+        # returns a 2N x 2N matrix with the RBF kernel between all possible pairs of rows
+        if Y is None:
+            L2_dists = torch.cdist(X, X) ** 2
+        else:
+            L2_dists = torch.cdist(X, Y) ** 2
+
         sf = (self.get_bw(L2_dists) * self.bw_multipliers)[:, None, None]
 
         return torch.exp(-L2_dists[None, ...] / sf).sum(dim=0)
@@ -130,14 +134,19 @@ class MMDLoss(nn.Module):
         self.kernel = RBF(device, bw = None)
 
     def forward(self, X, Y):
+
+        # MMD^2
         K = self.kernel(torch.vstack([X, Y]))
-        # print(str(K.shape) + "  " + str(X.shape) + "  " + str(Y.shape))
-        # print(K)
         X_size = X.shape[0]
-        XX = K[:X_size, :X_size].mean()
-        XY = K[:X_size, X_size:].mean()
-        YY = K[X_size:, X_size:].mean()
-        # print(str(XX) + "  " + str(XY) + "  " + str(YY))
-        return XX - 2 * XY + YY
+        XX = K[:X_size, :X_size]
+        XY = K[:X_size, X_size:]
+        YY = K[X_size:, X_size:]
+        MMD_loss = (XX - 2 * XY + YY).mean()    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
+
+        # Var_mar
+        XY2 = self.kernel(X.T, Y.T)
+        var_mar = XY2.var()                    # xxx, www
+
+        return MMD_loss + var_mar
     
 
