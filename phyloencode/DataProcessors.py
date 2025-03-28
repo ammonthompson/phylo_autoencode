@@ -5,9 +5,11 @@ import h5py
 import numpy as np
 import sklearn
 import joblib
+import sklearn.preprocessing as pp
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from typing import List, Dict, Tuple, Optional, Union
+import phyloencode.utils as utils
 
 # class that contains the DataSet and DataLoaders
 # splits and normalizes/denormalizes it
@@ -21,7 +23,8 @@ class AEData(object):
     def __init__(self, 
                  data       : Tuple[torch.Tensor, torch.Tensor],
                  prop_train : float, 
-                 nchannels  : int):
+                 nchannels  : int
+                 ):
         """
         each tree in data is assumed to be flattend in column-major order
         of a matrix of dimensions (nchannels, ntips)

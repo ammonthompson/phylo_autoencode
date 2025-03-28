@@ -93,7 +93,7 @@ class AECNN(nn.Module):
 
         self.combined_latent_width = struct_outshape[1] * struct_outshape[2] + self.unstructured_latent_width
         if self.latent_layer_type == "CNN":
-            self.latent_layer = LatentCNN(struct_outshape)
+            self.latent_layer = LatentCNN(struct_outshape, kernel_size = self.layer_params['kernel'][-1])
         elif self.latent_layer_type == "GAUSS":
             self.latent_layer = LatentGauss(self.combined_latent_width)
         elif self.latent_layer_type == "DENSE":
@@ -120,17 +120,16 @@ class AECNN(nn.Module):
         structured_encoded_x   = self.structured_encoder(data[0]) # (nbatch, nchannels, out_width)
         unstructured_encoded_x = self.unstructured_encoder(data[1]) # (nbatch, out_width)
 
-        # Combine Latents
+        # Combine encodings and reshape depending on the latent layer type
         flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)
         combined_latent           = torch.cat((flat_structured_encoded_x, unstructured_encoded_x), dim=1)
-
         reshaped_shared_latent = combined_latent.view(-1, self.num_structured_latent_channels, 
                                                           self.reshaped_shared_latent_width)
         
         if self.latent_layer_type == "CNN":
             shared_latent_out      = self.latent_layer(reshaped_shared_latent)
             structured_decoded_x   = self.structured_decoder(shared_latent_out)
-            unstructured_decoded_x = self.unstructured_decoder(combined_latent)
+            unstructured_decoded_x = self.unstructured_decoder(shared_latent_out.flatten(start_dim=1))
             return structured_decoded_x, unstructured_decoded_x
         
         elif self.latent_layer_type == "GAUSS":
@@ -145,7 +144,7 @@ class AECNN(nn.Module):
             shared_latent_out   = self.latent_layer(combined_latent)
             reshaped_latent_out = shared_latent_out.view(-1, self.num_structured_latent_channels, 
                                                                 self.reshaped_shared_latent_width)
-            structured_decoded_x   = self.structured_decoder(reshaped_shared_latent)
+            structured_decoded_x   = self.structured_decoder(reshaped_latent_out)
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
             return structured_decoded_x, unstructured_decoded_x
 
@@ -331,14 +330,14 @@ class CnnDecoder(nn.Module):
     
 # Latent layer classes
 class LatentCNN(nn.Module):
-
-    def __init__(self, in_cnn_shape: Tuple[int, int]):
+    def __init__(self, in_cnn_shape: Tuple[int, int], kernel_size = 9):
         # creates a tensor with shape (in_cnn_shape[1], in_cnn_shape[2] + 1)
         super().__init__()
+        odd_kernel = kernel_size - kernel_size % 2 + 1
         self.shared_layer = nn.Sequential( # preserve input shape
             nn.Conv1d(in_cnn_shape[1], in_cnn_shape[1], 
-                      stride = 1, kernel_size = 1, padding=0),
-            nn.ReLU()
+                      stride = 1, kernel_size = odd_kernel, 
+                      padding = (odd_kernel-1)//2)
         )
     
     def forward(self, x):
@@ -349,8 +348,7 @@ class LatentDense(nn.Module):
         super().__init__()
         # Shared Latent Layer
         self.shared_layer = nn.Sequential(
-            nn.Linear(in_width, in_width),
-            nn.ReLU()
+            nn.Linear(in_width, in_width)
         )
     
     def forward(self, x):

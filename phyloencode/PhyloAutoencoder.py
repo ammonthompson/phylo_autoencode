@@ -17,7 +17,9 @@ class PhyloAutoencoder(object):
         '''
             model is an object from torch.model
             optimizer is an object from torch.optim
-            loss_func is ???
+            loss_func is an object from torch.nn
+            phy_loss_weight is a float between 0 and 1
+            mmd_weight is a float >= 0
         '''
 
         self.device    = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -65,8 +67,11 @@ class PhyloAutoencoder(object):
                             f"aux loss: {aux_loss:.4f},  " +
                             f"MMD2 loss: {mmd_loss:.4f}")
                 else:
-                    epoch_validation_loss = self._mini_batch(validation=True)
-                    print(f"epoch {str(epoch)}, loss: {epoch_validation_loss:.4f}")
+                    epoch_validation_loss, phy_loss, aux_loss = self._mini_batch(validation=True)
+                    print(f"epoch {epoch},  " +
+                            f"loss: {epoch_validation_loss:.4f},  " +
+                            f"phy loss: {phy_loss:.4f},  " +
+                            f"aux loss: {aux_loss:.4f}")
 
 
             self.losses.append(epoch_train_loss)
@@ -223,14 +228,15 @@ class PhyloAutoencoder(object):
         self.val_loader   = val_loader
 
     def plot_losses(self):
-        fig = plt.figure(figsize=(11,8))
-        plt.plot(self.losses, label = 'Training Loss', c="b")
+        fig = plt.figure(figsize=(11, 8))
+        plt.plot(np.log10(self.losses), label='Training Loss', c="b")
         if self.val_loader:
-            plt.plot(self.val_losses, label = 'Validation Loss', c='r')
-        plt.yscale('log')
+            plt.plot(np.log10(self.val_losses), label='Validation Loss', c='r')
         plt.xlabel('Epochs')
-        plt.ylabel('Loss')
-        plt.legend()
+        plt.ylabel('log Loss')
+        plt.legend()        
+        plt.grid(True) 
+        plt.xticks(ticks=np.arange(0, len(self.losses), step=len(self.losses) // 10))
         plt.tight_layout()
         return fig
 
@@ -274,16 +280,15 @@ class PhyloAutoencoder(object):
         structured_encoded_x   = self.model.structured_encoder(phy)    # (1, nchannels, out_width)
         unstructured_encoded_x = self.model.unstructured_encoder(aux)  # (1, out_width)
 
-        # get combined latent output
+        # reshape structured embeddings
         flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)
         combined_latent           = torch.cat((flat_structured_encoded_x, 
                                                unstructured_encoded_x), dim=1)
         
-        reshaped_shared_latent_width = combined_latent.shape[1] // structured_encoded_x.shape[1]
-
-        reshaped_shared_latent = combined_latent.view(-1, structured_encoded_x.shape[1], 
-                                                    reshaped_shared_latent_width)
+        reshaped_shared_latent = combined_latent.view(-1, self.model.num_structured_latent_channels, 
+                                                    self.model.reshaped_shared_latent_width)
         
+        # get combined latent output
         if self.model.latent_layer_type   == "CNN":
             shared_latent_out = self.model.latent_layer(reshaped_shared_latent)
 
@@ -292,7 +297,6 @@ class PhyloAutoencoder(object):
 
         elif self.model.latent_layer_type == "DENSE":
             shared_latent_out = self.model.latent_layer(combined_latent)
-
 
         self.model.train()
 
