@@ -27,21 +27,43 @@ def main():
     # not used. dataset too small
     # num_cpus = multiprocessing.cpu_count()
     # num_workers = 0 if (num_cpus - 4) < 0 else num_cpus - 4
-    num_subset = 10000
+    num_subset = 100000
     nworkers = 0
     rand_seed = np.random.randint(0,10000)
+    num_epochs = 500
+    batch_size = 1024
+
+    nchannels = 9
+    max_tips = 1000
+
+    # mmd_weight = 5. # ppp - zzz
+    # mmd_weight = 20. # aaa
+    mmd_weight = 5. # xxx5
+    phy_loss_weight = 0.85
 
     # get formated tree data
     with h5py.File(data_fn, "r") as f:
-        idx = np.where(f['aux_data_names'][...][0] == b'num_taxa')[0][0]
+        # idx = np.where(f['aux_data_names'][...][0] == b'num_taxa')[0][0]
+
         phy_data = torch.tensor(f['phy_data'][0:num_subset,...], dtype = torch.float32)
-        # aux_data = torch.tensor(f['aux_data'][0:num_subset,...], dtype = torch.float32)
-        aux_data = torch.tensor(f['aux_data'][0:num_subset,idx], dtype = torch.float32).view(-1,1)
+        aux_data = torch.tensor(f['aux_data'][0:num_subset,...], dtype = torch.float32)
+        # phy_data = np.array(f['phy_data'][0:num_subset,...], dtype = np.float32)
+        # phy_data = phy_data.reshape((phy_data.shape[0],9,max_tips), order = "F")
+        # phy_data = phy_data[:,0:nchannels,:]
+        # phy_data = phy_data.reshape((phy_data.shape[0],-1), order = "F")
+        # phy_data = torch.tensor(phy_data, dtype = torch.float32)
+        # aux_data = torch.tensor(f['aux_data'][0:num_subset,idx], dtype = torch.float32).view(-1,1)
+
         test_phy_data = torch.tensor(f['phy_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
-        # test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
-        test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500),idx], dtype = torch.float32).view(-1,1)
+        test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
+        # test_phy_data = np.array(f['phy_data'][num_subset:(num_subset + 500),...], dtype = np.float32)
+        # test_phy_data = test_phy_data.reshape((test_phy_data.shape[0],9,max_tips), order = "F")
+        # test_phy_data = test_phy_data[:,0:nchannels,:]
+        # test_phy_data = test_phy_data.reshape((test_phy_data.shape[0],-1), order = "F")
+        # test_phy_data = torch.tensor(test_phy_data, dtype = torch.float32)
+        # test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500),idx], dtype = torch.float32).view(-1,1)
 
-
+    
     # checking how much aux_data is helping encode tree patterns
     # rand_idx = torch.randperm(aux_data.shape[0])
     # aux_data = aux_data[rand_idx]
@@ -49,11 +71,16 @@ def main():
     # create Data container
     ae_data = ph.DataProcessors.AEData(data = (phy_data, aux_data), 
                                         prop_train = 0.8,  
-                                        nchannels  = 9)
+                                        nchannels  = nchannels)
     ae_data.save_normalizers(out_prefix)
 
+
+    ###############################################################################
+    # TODO: CHECKING CBLV impact of normalization on terminal vs internal branches
+    ###############################################################################
+
     # create data loaders
-    trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = 256, 
+    trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = batch_size, 
                                                      shuffle     = True, 
                                                      num_workers = nworkers)
 
@@ -61,9 +88,9 @@ def main():
     ae_model  = ph.PhyloAEModel.AECNN(num_structured_input_channel  = ae_data.nchannels, 
                                       structured_input_width        = ae_data.phy_width,
                                       unstructured_input_width      = ae_data.aux_width,
-                                      stride                        = [2,4,8],
-                                      kernel                        = [3,5,9],
-                                      out_channels                  = [16,64,128],
+                                      stride                        = [2,8],
+                                      kernel                        = [3,9],
+                                      out_channels                  = [16,64],
                                       latent_layer_type             = "GAUSS",
                                       )
 
@@ -71,13 +98,13 @@ def main():
     tree_autoencoder = PhyloAutoencoder(model     = ae_model, 
                                         optimizer = torch.optim.Adam(ae_model.parameters()), 
                                         loss_func = torch.nn.MSELoss(), 
-                                        phy_loss_weight = 0.85,
-                                        mmd_weight = 4.0,
+                                        phy_loss_weight = phy_loss_weight,
+                                        mmd_weight = mmd_weight,
                                         )
     
     # Load data loaders and Train model and plot
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
-    tree_autoencoder.train(num_epochs = 350, seed = rand_seed)
+    tree_autoencoder.train(num_epochs = num_epochs, seed = rand_seed)
     tree_autoencoder.plot_losses().savefig("AElossplot.pdf")
     tree_autoencoder.save_model(out_prefix + ".ae_trained.pt")
 
@@ -94,6 +121,7 @@ def main():
     phy_normalizer, aux_normalizer = ae_data.get_normalizers()
     phydat = phy_normalizer.transform(test_phy_data)
     auxdat = aux_normalizer.transform(test_aux_data)
+
     phydat = phydat.reshape((phydat.shape[0], ae_data.nchannels, ae_data.phy_width), order = "F")
     phydat = torch.Tensor(phydat)
     auxdat = torch.Tensor(auxdat)

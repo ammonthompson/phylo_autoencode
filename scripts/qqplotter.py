@@ -64,6 +64,7 @@ with PdfPages(args.outfile) as pdf:
     # divided by reference: a wasserstein distance of two random normal data sets of equal size
     plt.figure()
     plt.hist(relative_wasserstein, bins = 20)
+    plt.axline((1, 0), (1, 100), color = "red", linestyle = "--")
     plt.title("Distribution of Relative Wasserstein Distances")
     plt.xlabel("Relative Wasserstein Distance")
     plt.ylabel("Frequency")

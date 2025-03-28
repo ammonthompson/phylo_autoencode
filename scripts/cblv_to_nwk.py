@@ -108,11 +108,11 @@ def main():
 
     # read in data from file. Format format for input file see: phyddle -s F
     if re.search(r"\.csv$", args.tree) or re.search(r"\.cblv$", args.tree) or re.search(r"\.cblvs$", args.tree):
-        phy_data = pd.read_csv(args.tree, header = None, index_col = None).to_numpy()
+        phy_data = pd.read_csv(args.tree, header = None, index_col = None).to_numpy(dtype=np.float64)
 
     elif re.search(r"\.hdf5$", args.tree) or re.search(r"\.h5$", args.tree):
         with h5py.File(args.tree, "r") as f:
-            phy_data = pd.DataFrame(f['phy_data']).to_numpy()
+            phy_data = pd.DataFrame(f['phy_data']).to_numpy(dtype=np.float64)
 
     else:
         print("Input cblv file must be a .csv or .hdf5 file.")
@@ -132,9 +132,9 @@ def main():
         num_tips = [int(args.max_tips) for i in range(phy_data.shape[0])]
 
     # print("here")
-    # quit()
     # convert to cblv format
     cblvs = phy_data.reshape((phy_data.shape[0], phy_data.shape[1]//max_tips, max_tips), order = "F")
+    # print(cblvs.shape)
 
     num_trees = cblvs.shape[0]
     if args.num_trees is not None:
@@ -149,9 +149,12 @@ def main():
         # print("num_tips_i: " + str(num_tips_i))
 
         cblv = cblvs[i, 0:(cblvs.shape[1] - num_chars), 0:num_tips_i]
+        # print(cblv.shape)
+        # quit()
 
         # encodings sometimes produce negative values, shift to make all positive (shift back below)
         shift = np.min(cblv)
+        shift = 0.
         cblv -= shift
         # print(cblvs[i, 0:(cblvs.shape[1] - num_chars), (num_tips_i - 10):(num_tips_i + 10)])
 

@@ -46,10 +46,12 @@ def plot_distributions(df_1, df_2, percent_variance = None, output_pdf = "pca_di
 
         # bar plot of percent variance explained
         if np.sum(percent_variance is not None) > 0:
-            hivar = percent_variance[0:sum([v > 1 for v in percent_variance ])]
+            # hivar = percent_variance[0:sum([v > 1 for v in percent_variance ])]
+            hivar = np.array(percent_variance)[np.cumsum(percent_variance) < 90]
+            total_variance = np.round(sum(hivar),  decimals=1)
             plt.figure()
             plt.bar([x for x in range(1, len(hivar) + 1)], hivar)
-            plt.title("PCA Percent variance explained")
+            plt.title(str(total_variance) + "% of PCA variance explained")
             plt.xlabel("Component")
             plt.ylabel("% variance")
             pdf.savefig()
@@ -154,7 +156,7 @@ def print_plot_variance_explained(explained_variance_ratio):
     print("Percentage of Total Variance Explained (tree_file_1):")
     vars = []
     for i, variance in enumerate(explained_variance_ratio, start=1):
-        if variance > 0.1:
+        if variance > 0.1 and i < 11:
             print(f"PC{i}: {variance:.2f}%")
             vars.append(variance)
 
@@ -183,47 +185,52 @@ if __name__ == "__main__":
     else:
         df_2 = None
 
-   # Standardize and perform PCA on the first file
-    df1_scaler = StandardScaler()
-    scaled_data_1 = df1_scaler.fit_transform(df_1)
-    pca = PCA(n_components=df_1.shape[1])
-    principal_components_1 = pca.fit_transform(scaled_data_1)
+    # PCA analysis
+    if df_1.shape[0] >= df_1.shape[1]:
+        # Standardize and perform PCA on the first file
+        df1_scaler = StandardScaler()
+        scaled_data_1 = df1_scaler.fit_transform(df_1)
+        pca = PCA(n_components=df_1.shape[1])
+        principal_components_1 = pca.fit_transform(scaled_data_1)
 
-    # Calculate the proportion of total variance explained
-    explained_variance_ratio = pca.explained_variance_ratio_ * 100
+        # Calculate the proportion of total variance explained
+        explained_variance_ratio = pca.explained_variance_ratio_ * 100
 
-    # Print Variance Explained
-    var_explained = print_plot_variance_explained(explained_variance_ratio)
+        # Print Variance Explained
+        var_explained = print_plot_variance_explained(explained_variance_ratio)
 
-    # Save tree stats and PCA-transformed data for the first file
-    pc_df_1 = pd.DataFrame(
-        data=principal_components_1,
-        columns=[f"PC{i+1}" for i in range(pca.n_components_)]
-    )
-    df_1.to_csv(out_prefix + ".encoded.csv", header = True, index=False)
-    pc_df_1.to_csv(out_prefix + ".pca.csv", index=False)
-
-    # Standardize the test tree file using the same scaler and transform with the fitted PCA
-    if df_2 is not None:
-        scaled_data_2 = df1_scaler.transform(df_2)
-        principal_components_2 = pca.transform(scaled_data_2)
-
-                # Create a DataFrame for PCA-transformed data from the second file
-        pc_df_2 = pd.DataFrame(
-            data=principal_components_2,
+        # Save tree stats and PCA-transformed data for the first file
+        pc_df_1 = pd.DataFrame(
+            data=principal_components_1,
             columns=[f"PC{i+1}" for i in range(pca.n_components_)]
         )
+        pc_df_1.to_csv(out_prefix + ".pca.csv", index=False)
 
-        # Save PCA-transformed data for the second file
+
+        # test trees
+        # Standardize the test tree file using the same scaler and transform with the fitted PCA
         if df_2 is not None:
-            pc_df_2.to_csv(out_prefix + ".test_trees.pca.csv", index=False)
+            scaled_data_2 = df1_scaler.transform(df_2)
+            principal_components_2 = pca.transform(scaled_data_2)
 
-    else:
-        sclaed_data_2 = None
-        principal_components_2 = None
-        pc_df_2 = None
+            # Create a DataFrame for PCA-transformed data from the second file
+            pc_df_2 = pd.DataFrame(
+                data=principal_components_2,
+                columns=[f"PC{i+1}" for i in range(pca.n_components_)]
+            )
+
+            # Save PCA-transformed data for the second file
+            if df_2 is not None:
+                pc_df_2.to_csv(out_prefix + ".test_trees.pca.csv", index=False)
+
+        else:
+            sclaed_data_2 = None
+            principal_components_2 = None
+            pc_df_2 = None
+
+        plot_distributions(pc_df_1, pc_df_2, explained_variance_ratio, out_prefix + "_pca_plots.pdf")
 
 
     # create plot
     plot_distributions(df_1, df_2, None, out_prefix + "_encoded_plots.pdf")
-    plot_distributions(pc_df_1, pc_df_2, explained_variance_ratio, out_prefix + "_pca_plots.pdf")
+    # df_1.to_csv(out_prefix + ".encoded.csv", header = True, index=False)
