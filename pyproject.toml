@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "phyloencode"
 version = "0.1"
-description = "A Python package for phylogenetic data encoding. Designed to work with Phyddle -format output."
+description = "A Python package for phylogenetic data encoding. Designed to work with Phyddle format step output."
 readme = "README.md"
 authors = [{name = "Ammon Thompson", email = "ammonthompson@gmail.com"}]
 license = {text = "MIT"}
