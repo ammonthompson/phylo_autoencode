@@ -7,14 +7,42 @@ from torch.utils.data import Dataset, DataLoader, TensorDataset
 from typing import List, Dict, Tuple, Optional, Union
 import numpy as np
 
-def mmd_loss(latent_pred):
+def mmd_loss(latent_pred, target = None):
 
     device = latent_pred.device
     x = latent_pred
-    y = torch.randn(x.shape).to(device)
+    if target is None:
+        y = torch.randn(x.shape).to(device)
+    else:
+        y = target.to(device)
     MMD2 = MMDLoss(device)(x, y)
             
     return MMD2
+
+def vz_loss(latent_pred, target = None):
+    device = latent_pred.device
+    x = latent_pred
+    if target is None:
+        y = torch.randn(x.shape).to(device)
+    else:
+        y = target.to(device)
+    VZ = VZLoss(device)(x, y)
+
+    return VZ
+
+def recon_loss(x, y, tip1_loss = False):
+    """
+    Compute the reconstruction loss between the reconstructed and original data.
+    """
+    mse_loss = fun.mse_loss(x, y)
+    # Phyddle normalizes tree heights to all = 1.
+    # So first two values in flattened clbv (+s) should be [1,0]
+    if tip1_loss:
+        tip1_loss = fun.mse_loss(x[:,0:2,0], y[:,0:2,0]) 
+    else:
+        tip1_loss = 0.
+    return mse_loss + tip1_loss
+
 
 def conv1d_sequential_outshape(sequential: nn.Sequential, 
                                input_channels: int, 
@@ -126,7 +154,6 @@ class RBF(nn.Module):
 
         return torch.exp(-L2_dists[None, ...] / sf).sum(dim=0)
 
-
 class MMDLoss(nn.Module):
     ''' From: https://github.com/yiftachbeer/mmd_loss_pytorch/blob/master/mmd_loss.py'''
     def __init__(self, device):
@@ -134,19 +161,20 @@ class MMDLoss(nn.Module):
         self.kernel = RBF(device, bw = None)
 
     def forward(self, X, Y):
-
-        # MMD^2
         K = self.kernel(torch.vstack([X, Y]))
         X_size = X.shape[0]
-        XX = K[:X_size, :X_size]
-        XY = K[:X_size, X_size:]
-        YY = K[X_size:, X_size:]
-        MMD_loss = (XX - 2 * XY + YY).mean()    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
-
-        # Var_mar
-        XY2 = self.kernel(X.T, Y.T)
-        var_mar = XY2.var()                    # xxx, www
-
-        return MMD_loss + var_mar
+        k_xx = K[:X_size, :X_size]
+        k_xy = K[:X_size, X_size:]
+        k_yy = K[X_size:, X_size:]
+        MMD_loss = torch.sqrt((k_xx - 2 * k_xy + k_yy).mean())    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
+        return MMD_loss #+ var_mar
+    
+class VZLoss(nn.Module):
+    def __init__(self, device):
+        super().__init__()
+        self.kernel = RBF(device)
+    
+    def forward(self, X, Y):
+        return self.kernel(X.T, Y.T).var()
     
 

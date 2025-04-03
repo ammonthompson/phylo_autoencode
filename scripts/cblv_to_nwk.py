@@ -58,9 +58,12 @@ def find_oldest_int_node(nodes):
 def recurse(nodes, nd):
     
     # tip node
-    if len(nodes) == 1:
-        # do nothing
-        pass
+    # if len(nodes) == 1:
+    #     # do nothing
+    #     pass
+    if nd.label.startswith('t'):
+        return nd
+
 
     # internal node
     else:
@@ -82,7 +85,8 @@ def recurse(nodes, nd):
         nd.add_child(nd_right)
 
         # update edge lengths
-        for i,ch in enumerate(nd.child_nodes()):
+        # for i,ch in enumerate(nd.child_nodes()):
+        for ch in nd.child_nodes():
             ch.edge_length = ch.height - nd.height
     
     return nd
@@ -145,35 +149,23 @@ def main():
      # loop through each tree encoded in cblv format and convert to newick string then print to stdout
     for i in range(num_trees):
         num_tips_i = int(num_tips[i])
-        # print(i)
-        # print("num_tips_i: " + str(num_tips_i))
-
-        cblv = cblvs[i, 0:(cblvs.shape[1] - num_chars), 0:num_tips_i]
-        # print(cblv.shape)
-        # quit()
-
-        # encodings sometimes produce negative values, shift to make all positive (shift back below)
-        shift = np.min(cblv)
-        shift = 0.
-        cblv -= shift
-        # print(cblvs[i, 0:(cblvs.shape[1] - num_chars), (num_tips_i - 10):(num_tips_i + 10)])
-
+    
+        # cblv = cblvs[i, 0:(cblvs.shape[1] - num_chars), 0:num_tips_i]
+        cblv = cblvs[i, 0:2, 0:num_tips_i]
+     
         nodes = get_node_heights(pd.DataFrame(cblv), num_tips = num_tips_i)
         heights = [ nd.height for nd in nodes ]        
-        # idx_root = heights.index(min(heights))
 
         # find root node with smallest height and is an internal node (label starts with 'n')
         min_int_node = min([ nd.height for nd in nodes if nd.label.startswith('n') ])
         idx_root = heights.index(min_int_node)
 
-        # print("len nodes: ", len(nodes))
         nd_root = nodes[idx_root] 
-        # quit()
-        # print("nd_root: ", nd_root)
+    
         nd_root = recurse(nodes, nd_root)
         phy_decode = dp.Tree(seed_node=nd_root)
-        shift_node_heights(phy_decode, shift)
-        print(phy_decode.extract_tree().as_string("newick"))
+        
+        print(phy_decode.extract_tree().as_string("newick", suppress_leaf_node_labels=False))
 
 
 if __name__ == "__main__":

@@ -102,8 +102,7 @@ class AECNN(nn.Module):
             raise ValueError("""Must set latent_layer_type to either CNN, GAUSS or DENSE""")
 
         # Unstructured Decoder
-        self.unstructured_decoder = DenseDecoder(self.combined_latent_width,
-                                                 self.unstructured_input_width)
+        self.unstructured_decoder = DenseDecoder(self.combined_latent_width, self.unstructured_input_width)
 
         # Structured Decoder
         self.reshaped_shared_latent_width = self.combined_latent_width // struct_outshape[1]
@@ -130,6 +129,7 @@ class AECNN(nn.Module):
             shared_latent_out      = self.latent_layer(reshaped_shared_latent)
             structured_decoded_x   = self.structured_decoder(shared_latent_out)
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out.flatten(start_dim=1))
+            # unstructured_decoded_x = data[1]
             return structured_decoded_x, unstructured_decoded_x
         
         elif self.latent_layer_type == "GAUSS":
@@ -138,6 +138,7 @@ class AECNN(nn.Module):
                                                                self.reshaped_shared_latent_width)
             structured_decoded_x   = self.structured_decoder(reshaped_latent_out)
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
+            # unstructured_decoded_x = data[1]
             return structured_decoded_x, unstructured_decoded_x, shared_latent_out
         
         elif self.latent_layer_type == "DENSE":
@@ -146,6 +147,7 @@ class AECNN(nn.Module):
                                                                 self.reshaped_shared_latent_width)
             structured_decoded_x   = self.structured_decoder(reshaped_latent_out)
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
+            # unstructured_decoded_x = data[1]
             return structured_decoded_x, unstructured_decoded_x
 
 # encoder classes
@@ -244,12 +246,13 @@ class CnnDecoder(nn.Module):
 
         self.tcnn_layers.add_module("trans_conv1d_0", 
                                     nn.ConvTranspose1d(
-                                        in_channels  = out_channels[nl-1], 
-                                        out_channels = out_channels[nl-2], 
-                                        kernel_size  = kernel[nl-1], 
-                                        stride       = stride[nl-1], 
-                                        padding      = 0,
-                                        output_padding = 0))
+                                        in_channels     = out_channels[nl-1], 
+                                        out_channels    = out_channels[nl-2], 
+                                        kernel_size     = kernel[nl-1], 
+                                        stride          = stride[nl-1], 
+                                        padding         = 0,
+                                        output_padding  = 0 
+                                        ))
  
         self.tcnn_layers.add_module("tconv_ReLU_0", nn.ReLU())
 
@@ -269,12 +272,13 @@ class CnnDecoder(nn.Module):
 
             self.tcnn_layers.add_module("conv1d_" + str(i), 
                                         nn.ConvTranspose1d(
-                                            in_channels  = out_channels[i], 
-                                            out_channels = out_channels[i-1], 
-                                            kernel_size  = kernel[i], 
-                                            stride       = stride[i], 
-                                            padding      = npad,
-                                            output_padding= noutpad))
+                                            in_channels     = out_channels[i], 
+                                            out_channels    = out_channels[i-1], 
+                                            kernel_size     = kernel[i], 
+                                            stride          = stride[i], 
+                                            padding         = npad,
+                                            output_padding  = noutpad
+                                            ))
             
             print(utils.tconv1d_sequential_outshape(self.tcnn_layers, 
                                                 num_cnn_latent_channels, 
@@ -283,9 +287,7 @@ class CnnDecoder(nn.Module):
             self.tcnn_layers.add_module("tconv_ReLU_" + str(i), nn.ReLU())
 
         # get correct padding and output_padding for final decoder layer
-        outshape = utils.tconv1d_sequential_outshape(self.tcnn_layers, 
-                                                    num_cnn_latent_channels, 
-                                                    latent_width)
+        outshape = utils.tconv1d_sequential_outshape(self.tcnn_layers, num_cnn_latent_channels, latent_width)
         
 
         width = outshape[2]
@@ -299,11 +301,10 @@ class CnnDecoder(nn.Module):
                                         kernel_size    = kernel[0], 
                                         stride         = stride[0], 
                                         padding        = pad, 
-                                        output_padding = outpad))
+                                        output_padding = outpad
+                                        ))
         
-        print(utils.tconv1d_sequential_outshape(self.tcnn_layers, 
-                                        num_cnn_latent_channels, 
-                                        latent_width))
+        print(utils.tconv1d_sequential_outshape(self.tcnn_layers, num_cnn_latent_channels, latent_width))
         
     def forward(self, x):
         return self.tcnn_layers(x)
