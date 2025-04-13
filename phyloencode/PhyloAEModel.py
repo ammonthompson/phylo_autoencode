@@ -72,9 +72,12 @@ class AECNN(nn.Module):
             raise ValueError("""unstructured_latent_width must be an integer 
                              multiple of num_structured_latent_channels""")
         
+        
+
         ''' 
-        create NN architecture 
+            Create NN Layers
         '''
+
         # Unstructured Encoder
         self.unstructured_encoder = DenseEncoder(self.unstructured_input_width, 
                                                  self.unstructured_latent_width)
@@ -113,6 +116,11 @@ class AECNN(nn.Module):
                                              self.layer_params)
 
     def forward(self, data: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
+
+        ''' 
+        create NN architecture 
+        '''
+
         # data is a tuple (structured, unstructured)
         
         # Encode
@@ -121,7 +129,8 @@ class AECNN(nn.Module):
 
         # Combine encodings and reshape depending on the latent layer type
         flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)
-        combined_latent           = torch.cat((flat_structured_encoded_x, unstructured_encoded_x), dim=1)
+        # combined_latent           = torch.cat((flat_structured_encoded_x, unstructured_encoded_x), dim=1)
+        combined_latent           = torch.cat((flat_structured_encoded_x, unstructured_encoded_x), dim=1)  # aux latent first
         reshaped_shared_latent = combined_latent.view(-1, self.num_structured_latent_channels, 
                                                           self.reshaped_shared_latent_width)
         
@@ -129,7 +138,6 @@ class AECNN(nn.Module):
             shared_latent_out      = self.latent_layer(reshaped_shared_latent)
             structured_decoded_x   = self.structured_decoder(shared_latent_out)
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out.flatten(start_dim=1))
-            # unstructured_decoded_x = data[1]
             return structured_decoded_x, unstructured_decoded_x
         
         elif self.latent_layer_type == "GAUSS":
@@ -138,7 +146,6 @@ class AECNN(nn.Module):
                                                                self.reshaped_shared_latent_width)
             structured_decoded_x   = self.structured_decoder(reshaped_latent_out)
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
-            # unstructured_decoded_x = data[1]
             return structured_decoded_x, unstructured_decoded_x, shared_latent_out
         
         elif self.latent_layer_type == "DENSE":
@@ -147,16 +154,19 @@ class AECNN(nn.Module):
                                                                 self.reshaped_shared_latent_width)
             structured_decoded_x   = self.structured_decoder(reshaped_latent_out)
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
-            # unstructured_decoded_x = data[1]
             return structured_decoded_x, unstructured_decoded_x
+
 
 # encoder classes
 class DenseEncoder(nn.Module):
     def __init__(self, in_width, out_width):
         super().__init__()
         self.unstructured_encoder = nn.Sequential(
-            nn.Linear(in_width, out_width),
-            nn.ReLU()
+            nn.Linear(in_width, 10),
+            nn.BatchNorm1d(10),# experimenting
+            nn.ReLU(),
+            nn.Linear(10, out_width),
+            nn.BatchNorm1d(out_width)# experimenting
         )
     def forward(self, x):
         return self.unstructured_encoder(x)
@@ -182,6 +192,9 @@ class CnnEncoder(nn.Module):
         self.conv_out_width = [conv_out_shape[2]]
         print(conv_out_shape)
 
+        # experimenting
+        self.cnn_layers.add_module("cnn_batchnorm_0", nn.BatchNorm1d(out_channels[0]))
+
         # add more layers if depth greater than 1.
         if len(out_channels) > 1:
             self.cnn_layers.add_module("conv_ReLU_0", nn.ReLU())
@@ -200,6 +213,9 @@ class CnnEncoder(nn.Module):
                 
                 print(conv_out_shape)
 
+                self.cnn_layers.add_module("cnn_batchnorm_" + str(i),
+                                            nn.BatchNorm1d(out_channels[i])) # experimenting
+
                 if i < (nl-1):
                     self.cnn_layers.add_module("conv_ReLU_" + str(i), nn.ReLU())
 
@@ -212,7 +228,9 @@ class DenseDecoder(nn.Module):
     def __init__(self, in_width, out_width):
         super().__init__()
         self.unstructured_decoder = nn.Sequential(
-            nn.Linear(in_width, out_width)
+            nn.Linear(in_width, 10),
+            nn.ReLU(),
+            nn.Linear(10, out_width)
         )
     def forward(self, x):
         return self.unstructured_decoder(x)
@@ -307,7 +325,8 @@ class CnnDecoder(nn.Module):
         print(utils.tconv1d_sequential_outshape(self.tcnn_layers, num_cnn_latent_channels, latent_width))
         
     def forward(self, x):
-        return self.tcnn_layers(x)
+        decoded_x = self.tcnn_layers(x)
+        return decoded_x
 
     def _get_decode_paddings(self, w_out_target, w_in, s, k, d=1):
         # convtranspose1d formulat: 
