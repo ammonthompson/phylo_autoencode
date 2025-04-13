@@ -6,7 +6,8 @@ import numpy as np
 import sklearn
 import joblib
 import sklearn.preprocessing as pp
-from sklearn.preprocessing import StandardScaler
+# from sklearn.preprocessing import StandardScaler
+# from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from typing import List, Dict, Tuple, Optional, Union
 import phyloencode.utils as utils
@@ -45,8 +46,9 @@ class AEData(object):
         val_aux_data   = val_data[:,phy_width:]
 
         # standardize train data
-        self.phy_ss = StandardScaler()
-        self.aux_ss = StandardScaler()
+        self.phy_ss = pp.StandardScaler() # this performs better than RobustScaler, MinMaxScaler, and LogStandardScaler
+        self.aux_ss = pp.StandardScaler()
+
         self.phy_normalizer = self.phy_ss.fit(train_phy_data)
         self.aux_normalizer = self.aux_ss.fit(train_aux_data)
         self.norm_train_phy_data = self.phy_normalizer.transform(train_phy_data)
