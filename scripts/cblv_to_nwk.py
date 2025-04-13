@@ -14,7 +14,8 @@ import sys
 
 
 # prepare inorder node heights
-def get_node_heights(y, num_tips):
+def get_node_heights(y, num_tips, chars = None):
+    # y is a dataframe with shape (2, max_num_tips)
     # inorder node heights
     nodes = [ None ] * (2*num_tips - 1)
 
@@ -23,12 +24,26 @@ def get_node_heights(y, num_tips):
         # node heights
         int_height = y.iloc[1,i]
         tip_height = y.iloc[0,i] + int_height
+        # tip_char = {"char_" + str(k) : str(np.round(v, decimals=2).item()) 
+        #             for k,v in enumerate(chars[:,i])}
+        if(chars is not None):
+            tip_char = ' '.join(chars[:,i].astype(str))
 
         # make tip node
         tip_nd = dp.Node(label=f't{i}')
         tip_nd.height = tip_height
         tip_nd.value = y.iloc[0,i]
         tip_nd.index = 2*i
+        if chars is not None:
+            tip_nd.annotations.add_new("char_data", tip_char)
+            # for key, value in tip_char.items():
+            #     tip_nd.annotations.add_new(key, value)
+
+
+       # Debugging: Print annotations for the tip node
+        # print(f"Tip Node {tip_nd.label} Annotations: {tip_nd.annotations}")
+
+
         nodes[tip_nd.index] = tip_nd
 
         # do not make int node for first tip
@@ -41,6 +56,8 @@ def get_node_heights(y, num_tips):
         int_nd.value = y.iloc[1,i]
         int_nd.index = 2*i - 1
         nodes[int_nd.index] = int_nd
+
+    
 
     return nodes
 
@@ -97,6 +114,39 @@ def shift_node_heights(dp_tree, shift_value):
         if node.height is not None:
             node.height += shift_value
 
+# print newick strings to stdout
+def convert_to_newick(cblv, num_tips, char_data):
+    '''
+    Convert cblv format to newick format and print to stdout.
+    cblv: cblv format
+    num_tips: number of tips in each tree
+    '''
+
+    # loop through each tree encoded in cblv format and convert to newick string then print to stdout
+    for i in range(cblv.shape[0]):
+        num_tips_i = int(num_tips[i])
+    
+        # cblv is first two channels
+        cblv_i = cblv[i, 0:2, 0:num_tips_i]
+
+        char_data_i = char_data[i, :, 0:num_tips_i]
+     
+        nodes = get_node_heights(pd.DataFrame(cblv_i), num_tips_i, char_data_i)
+        heights = [ nd.height for nd in nodes ]        
+
+        # find root node with smallest height and is an internal node (label starts with 'n')
+        min_int_node = min([ nd.height for nd in nodes if nd.label.startswith('n') ])
+        idx_root = heights.index(min_int_node)
+
+        nd_root = nodes[idx_root] 
+    
+        nd_root = recurse(nodes, nd_root)
+        phy_decode = dp.Tree(seed_node=nd_root)
+
+             
+        print(phy_decode.as_string("newick", suppress_leaf_node_labels=False, suppress_annotations=False))
+
+
 def main():
     # parse arguments
     parser = argparse.ArgumentParser()
@@ -104,7 +154,7 @@ def main():
     # parser.add_argument("-a", "--aux", required=True, help = "File of auxilliary data.")
     parser.add_argument("-m", "--max-tips", required=True, help = "Maximum number of tips. Last dimension of cblv tensor.")
     parser.add_argument("-n", "--num-tips", required=False, help = "Num tips in trees. Single column file. Same order as cblv file.")
-    parser.add_argument("-c", "--num-chars", required=True, help = "Number of characters.")
+    parser.add_argument("-c", "--num-chars", required=True, help = "Number of characters.") # deprecated
     parser.add_argument("-x", "--num-trees", required=False, help = "Number of trees to translate.")
     args = parser.parse_args()
     max_tips = int(args.max_tips)
@@ -135,10 +185,16 @@ def main():
     else:
         num_tips = [int(args.max_tips) for i in range(phy_data.shape[0])]
 
-    # print("here")
     # convert to cblv format
     cblvs = phy_data.reshape((phy_data.shape[0], phy_data.shape[1]//max_tips, max_tips), order = "F")
-    # print(cblvs.shape)
+
+    # get character data
+    char_data = cblvs[:, (cblvs.shape[1]-num_chars):cblvs.shape[1], :]
+
+    # check if num_tips is same length as cblvs
+    if len(num_tips) != cblvs.shape[0]:
+        print("num_tips and cblvs must be same length.")
+        sys.exit(1)
 
     num_trees = cblvs.shape[0]
     if args.num_trees is not None:
@@ -146,27 +202,8 @@ def main():
     if num_trees > cblvs.shape[0]:
         num_trees = cblvs.shape[0]
 
-     # loop through each tree encoded in cblv format and convert to newick string then print to stdout
-    for i in range(num_trees):
-        num_tips_i = int(num_tips[i])
-    
-        # cblv = cblvs[i, 0:(cblvs.shape[1] - num_chars), 0:num_tips_i]
-        cblv = cblvs[i, 0:2, 0:num_tips_i]
-     
-        nodes = get_node_heights(pd.DataFrame(cblv), num_tips = num_tips_i)
-        heights = [ nd.height for nd in nodes ]        
-
-        # find root node with smallest height and is an internal node (label starts with 'n')
-        min_int_node = min([ nd.height for nd in nodes if nd.label.startswith('n') ])
-        idx_root = heights.index(min_int_node)
-
-        nd_root = nodes[idx_root] 
-    
-        nd_root = recurse(nodes, nd_root)
-        phy_decode = dp.Tree(seed_node=nd_root)
-        
-        print(phy_decode.extract_tree().as_string("newick", suppress_leaf_node_labels=False))
-
+    # print newick trees to stdout
+    convert_to_newick(cblvs[0:num_trees,...], num_tips[0:num_trees,...], char_data[0:num_trees,...])
 
 if __name__ == "__main__":
     main()
