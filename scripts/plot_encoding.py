@@ -72,7 +72,7 @@ def plot_distributions(df_1, df_2, percent_variance = None, output_pdf = "pca_di
                 plt.figure(figsize=(10, 10))
                 plt.subplots_adjust(wspace=0.4, hspace=0.4)  # Adjust margins
 
-            pc_percent_variance = f"({percent_variance[i]:.1f}% of variance)" if percent_variance is not None else ""
+            pc_percent_variance = f"PC {i} ({percent_variance[i]:.1f}% of variance)" if percent_variance is not None else ""
             # Create a subplot for each Encoding
             if np.sum(percent_variance == None) > 0:
                 plt.subplot(5, 3, (i % 15) + 1)

@@ -30,6 +30,7 @@ def main():
     parser.add_argument("-ns", "--num_subset",       required = False, help = "subset of data used for training/testing. Default 10000")
     parser.add_argument("-nc", "--num_channels",     required = False, help = "number of data channels. Default 9")
     parser.add_argument("-l", "--latent_model_type", required = False, help = "latent model type (GAUSS, DENSE, or CNN). Default GAUSS")
+    parser.add_argument("-cw", "--char_weight",     required = False, help = "how much weight to give to char loss. Default 0.0")
     parser.add_argument("-k", "--kernel",           required = False, help = "kernel size. Default 3,5,5")
     parser.add_argument("-r", "--stride",           required = False, help = "stride size. Default 2,4,4")
     parser.add_argument("-oc", "--out_channels",    required = False, help = "output channels. Default 32,32,128")
@@ -44,7 +45,7 @@ def main():
 
     # Default settings
     num_subset  = 10000
-    nworkers    = 16
+    nworkers    = 0
     rand_seed   = np.random.randint(0,10000)
     num_epochs  = 100
     batch_size  = 128
@@ -53,10 +54,11 @@ def main():
     mmd_lambda  = 1. # xxx5
     vz_lambda   = 1. # xxx5
     phy_loss_weight = 0.9
+    char_weight = 0.5
     latent_model_type = "GAUSS"
-    stride          = [2,4,4]
-    kernel          = [3,5,5]
-    out_channels    = [32,32,128]
+    stride          = [2,6,6]
+    kernel          = [3,9,9]
+    out_channels    = [16,32,256]
 
 
     # user optional settings
@@ -76,6 +78,8 @@ def main():
         vz_lambda = float(args.vz_lambda)
     if args.phy_loss_weight is not None:
         phy_loss_weight = float(args.phy_loss_weight)
+    if args.char_weight is not None:
+        char_weight = float(args.char_weight)
     if args.latent_model_type is not None:
         latent_model_type = args.latent_model_type
     if args.kernel is not None:
@@ -90,7 +94,6 @@ def main():
         config_fn = args.config
         config = ph.utils.read_config(config_fn)
         config = pd.read_json(config_fn, orient = "index").to_dict(orient = "records")[0]
-
         if "num_subset" in config:
             num_subset = config["num_subset"]
         if "num_epochs" in config:
@@ -107,6 +110,8 @@ def main():
             vz_lambda = config["vz_lambda"]
         if "phy_loss_weight" in config:
             phy_loss_weight = config["phy_loss_weight"]
+        if "char_weight" in config:
+            char_weight = config["char_weight"]
         if "latent_model_type" in config:
             latent_model_type = config["latent_model_type"]
         if "kernel" in config:
@@ -122,25 +127,25 @@ def main():
 
     # get formated tree data
     with h5py.File(data_fn, "r") as f:
-        idx = np.where(f['aux_data_names'][...][0] == b'num_taxa')[0][0]
+        # idx = np.where(f['aux_data_names'][...][0] == b'num_taxa')[0][0]
 
         # phy_data = torch.tensor(f['phy_data'][0:num_subset,...], dtype = torch.float32)
-        # aux_data = torch.tensor(f['aux_data'][0:num_subset,...], dtype = torch.float32)
+        aux_data = torch.tensor(f['aux_data'][0:num_subset,...], dtype = torch.float32)
         phy_data = np.array(f['phy_data'][0:num_subset,...], dtype = np.float32)
         phy_data = phy_data.reshape((phy_data.shape[0], phy_data.shape[1]//max_tips, max_tips), order = "F")
         phy_data = phy_data[:,0:nchannels,:]
         phy_data = phy_data.reshape((phy_data.shape[0],-1), order = "F")
         phy_data = torch.tensor(phy_data, dtype = torch.float32)
-        aux_data = torch.tensor(f['aux_data'][0:num_subset,idx], dtype = torch.float32).view(-1,1)
+        # aux_data = torch.tensor(f['aux_data'][0:num_subset,idx], dtype = torch.float32).view(-1,1)
 
         # test_phy_data = torch.tensor(f['phy_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
-        # test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
+        test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
         test_phy_data = np.array(f['phy_data'][num_subset:(num_subset + 500),...], dtype = np.float32)
         test_phy_data = test_phy_data.reshape((test_phy_data.shape[0], test_phy_data.shape[1]//max_tips, max_tips), order = "F")
         test_phy_data = test_phy_data[:,0:nchannels,:]
         test_phy_data = test_phy_data.reshape((test_phy_data.shape[0],-1), order = "F")
         test_phy_data = torch.tensor(test_phy_data, dtype = torch.float32)
-        test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500),idx], dtype = torch.float32).view(-1,1)
+        # test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500),idx], dtype = torch.float32).view(-1,1)
 
     
     # checking how much aux_data is helping encode tree patterns
@@ -152,7 +157,6 @@ def main():
                                         prop_train = 0.85,  
                                         nchannels  = nchannels)
     ae_data.save_normalizers(out_prefix)
-
 
     # create data loaders
     trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = batch_size, 
@@ -172,8 +176,10 @@ def main():
     # create Trainer
     tree_autoencoder = PhyloAutoencoder(model           = ae_model, 
                                         optimizer       = torch.optim.Adam(ae_model.parameters()), 
-                                        loss_func       = utils.recon_loss, 
+                                        loss_func       = ph.utils.recon_loss, 
+                                        batch_size      = batch_size,
                                         phy_loss_weight = phy_loss_weight,
+                                        char_weight     = char_weight,
                                         mmd_lambda      = mmd_lambda,
                                         vz_lambda       = vz_lambda
                                         )
@@ -181,7 +187,7 @@ def main():
     # Load data loaders and Train model and plot
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
     tree_autoencoder.train(num_epochs = num_epochs, seed = rand_seed)
-    tree_autoencoder.plot_losses().savefig("AElossplot.pdf")
+    tree_autoencoder.plot_losses(out_prefix)
     tree_autoencoder.save_model(out_prefix + ".ae_trained.pt")
 
 
@@ -212,8 +218,6 @@ def main():
     aux_pred_df = pd.DataFrame(auxpred)
     aux_pred_df.to_csv(out_prefix + ".aux_pred.csv", header  = False, index = False)
 
-
-    # for PCA analysis of a sample of training trees
     # make encoded tree file
     rand_idx = np.random.randint(0, ae_data.prop_train * num_subset, size = min(5000, num_subset))
     latent_dat = tree_autoencoder.tree_encode(torch.Tensor(ae_data.norm_train_phy_data[rand_idx,...]), 
