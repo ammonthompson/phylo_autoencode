@@ -24,7 +24,7 @@ def main ():
     cmd.add_argument("-p", "--phy-normalizer", required=True, help="Path to the phy_normalizer.pkl file")
     cmd.add_argument("-a", "--aux-normalizer", required=True, help="Path to the aux_normalizer.pkl file")
     cmd.add_argument("-e", "--encoded-data", required=True, help="Path to the model encoded data file")
-    cmd.add_argument("-c", "--num-channels", required=True, help="Number of channels in the encoded data")
+    cmd.add_argument("-c", "--num-latent-channels", required=True, help="Number of channels in the encoded data (latent space)")
     cmd.add_argument("-o", "--out-prefix", required=False, help="Path to out file prefix")
 
     args = cmd.parse_args()
@@ -44,14 +44,15 @@ def main ():
     phy_normalizer = joblib.load(phy_normalizer_fn)
     aux_normalizer = joblib.load(aux_normalizer_fn)
 
+ 
     tree_autoencoder = PhyloAutoencoder(model     = ae_model, 
                                         optimizer = torch.optim.Adam(ae_model.parameters()), 
                                         loss_func = torch.nn.MSELoss())
 
     # import test data
     encoded_data = pd.read_csv(encoded_data_fn, header = None, index_col = None).to_numpy(dtype=np.float32)
-    encoded_data = encoded_data.reshape((encoded_data.shape[0], int(args.num_channels), 
-                                         int(encoded_data.shape[1]/int(args.num_channels))),  order = "F")
+    encoded_data = encoded_data.reshape((encoded_data.shape[0], int(args.num_latent_channels), 
+                                         int(encoded_data.shape[1]/int(args.num_latent_channels))),  order = "F")
     encoded_data = torch.tensor(encoded_data, dtype = torch.float32)
 
     # decode the encoded data

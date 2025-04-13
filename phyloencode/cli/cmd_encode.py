@@ -41,8 +41,7 @@ def main ():
 
     tree_autoencoder = PhyloAutoencoder(model     = ae_model, 
                                         optimizer = torch.optim.Adam(ae_model.parameters()), 
-                                        loss_func = torch.nn.MSELoss(), 
-                                        phy_loss_weight = 1.0)
+                                        loss_func = torch.nn.MSELoss())
 
     # import test data
     with h5py.File(tree_data_fn, "r") as f:
