@@ -6,6 +6,9 @@ import torch.nn.functional as fun
 from torch.utils.data import Dataset, DataLoader, TensorDataset
 from typing import List, Dict, Tuple, Optional, Union
 import numpy as np
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.preprocessing import StandardScaler
+
 
 def mmd_loss(latent_pred, target = None):
 
@@ -14,10 +17,10 @@ def mmd_loss(latent_pred, target = None):
     if target is None:
         y = torch.randn(x.shape).to(device)
     else:
-        y = target.to(device)
-    MMD2 = MMDLoss(device)(x, y)
+        y = target[0:x.shape[0],:]
+    MMD = MMDLoss(device)(x, y)
             
-    return MMD2
+    return MMD
 
 def vz_loss(latent_pred, target = None):
     device = latent_pred.device
@@ -25,23 +28,52 @@ def vz_loss(latent_pred, target = None):
     if target is None:
         y = torch.randn(x.shape).to(device)
     else:
-        y = target.to(device)
+        y = target[0:x.shape[0],:]
     VZ = VZLoss(device)(x, y)
 
     return VZ
 
-def recon_loss(x, y, tip1_loss = False):
+def recon_loss(x, y, char_weight = 0.5, tip1_weight = 0.0):
     """
-    Compute the reconstruction loss between the reconstructed and original data.
+    Compute the reconstruction loss between the reconstructed and original cblv+S and aux data.
+    Default is to weight the first two values in the cblv+S data equally to the rest of the data.
+    And weight the first tip in the phylogenetic data equally to the rest of the data.
+
+    Note: If Char_weight is 0.0, character data informs the tree reconstruction, but not character reconstruction.
+
+    Args:
+        x (torch.Tensor): Reconstructed data.
+        y (torch.Tensor): Original data.
+        char_weight (float): Weight for the character data in the loss calculation.
+        tip1_weight (float): Weight for the first tip in the phylogenetic data.
     """
-    mse_loss = fun.mse_loss(x, y)
+    # we assume that the first two values in the flattened clbv values
+    # and the rest are the character values and potentially two additional cblv-like values
+    
+    # check that x is cblv-like data
+    if len(x.shape) == 3:
+        # phylogenetic data contains extra cblv elements and/or character data 
+        # dims are (batch_size, num_channels, num_tips)
+        tree_mse_loss = fun.mse_loss(x[:,0:2], y[:,0:2])
+        if char_weight == 0. or x.shape[1] <= 2:
+            mse_loss = tree_mse_loss
+        else:
+            mse_loss = (1 - char_weight) * tree_mse_loss + char_weight * fun.mse_loss(x[:,2:], y[:,2:])
+
+    else:
+        # auxiliary data is (batch_size, num_features)
+        mse_loss = fun.mse_loss(x, y)
+
     # Phyddle normalizes tree heights to all = 1.
     # So first two values in flattened clbv (+s) should be [1,0]
-    if tip1_loss:
+    # adding a term for just the first two values is equivalent to
+    # upweighting the first two values in the mse loss
+    if tip1_weight > 0.:
         tip1_loss = fun.mse_loss(x[:,0:2,0], y[:,0:2,0]) 
     else:
         tip1_loss = 0.
-    return mse_loss + tip1_loss
+
+    return mse_loss + tip1_weight *  tip1_loss
 
 
 def conv1d_sequential_outshape(sequential: nn.Sequential, 
@@ -166,7 +198,8 @@ class MMDLoss(nn.Module):
         k_xx = K[:X_size, :X_size]
         k_xy = K[:X_size, X_size:]
         k_yy = K[X_size:, X_size:]
-        MMD_loss = torch.sqrt((k_xx - 2 * k_xy + k_yy).mean())    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
+        # MMD_loss = torch.sqrt((k_xx - 2 * k_xy + k_yy).mean())    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
+        MMD_loss = (k_xx - 2 * k_xy + k_yy).mean()    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
         return MMD_loss #+ var_mar
     
 class VZLoss(nn.Module):
@@ -176,5 +209,69 @@ class VZLoss(nn.Module):
     
     def forward(self, X, Y):
         return self.kernel(X.T, Y.T).var()
+
+
+# this is a modified version of sklearn's StandardScaler
+# it is used to transform the data to a log scale before standardizing
+########### this performs pretty poorly. Dont use.
+class LogStandardScaler(BaseEstimator, TransformerMixin):
+    def __init__(self, base=np.float32(np.e)):
+        super().__init__()
+        self.base = base
+        self.scaler = StandardScaler()
+        self.min_positive_values = None
+
+    def fit(self, X, y=None):
+        # Ensure X is a NumPy array
+        X = np.asarray(X)
+
+        # Compute the smallest positive value for each feature
+        self.min_positive_values = np.min(np.where(X > 0, X, np.inf), axis=0)
+
+        # Replace infinities (features with no positive values) with 1e-8
+        self.min_positive_values = np.where(np.isinf(self.min_positive_values), 
+        1e-8, self.min_positive_values)
+
+        # Shift the data to make all values strictly positive
+        X_shifted = X + self.min_positive_values
+
+        # Apply log transformation
+        X_log = np.log(X_shifted) / np.log(self.base)
+
+        # Fit the standard scaler on the log-transformed data
+        self.scaler.fit(X_log)
+        return self
+
+    def transform(self, X):
+        # Ensure X is a NumPy array
+        X = np.asarray(X)
+
+        # Shift the data using the precomputed smallest positive values
+        X_shifted = X + self.min_positive_values
+
+        # Apply log transformation
+        X_log = np.log(X_shifted) / np.log(self.base)
+
+        # Standardize the log-transformed data
+        X_scaled = self.scaler.transform(X_log)
+
+        return X_scaled
+
+    def inverse_transform(self, X):
+        # Convert PyTorch tensor back to NumPy array if necessary
+        if isinstance(X, torch.Tensor):
+            X = X.numpy()
+
+        # Reverse standardization
+        X_inv = self.scaler.inverse_transform(X)
+
+        # Reverse log transformation
+        X_exp = np.exp(X_inv * np.log(self.base))
+
+        # Reverse the shift
+        return X_exp - self.min_positive_values
     
 
+
+
+# Print profiling results
