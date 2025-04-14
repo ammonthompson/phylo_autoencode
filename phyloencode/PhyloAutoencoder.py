@@ -15,8 +15,8 @@ import os
 
 
 class PhyloAutoencoder(object):
-    def __init__(self, model, optimizer, loss_func, batch_size=128,
-                 phy_loss_weight=0.5, char_weight=0.5,
+    def __init__(self, model, optimizer, loss_func, 
+                 batch_size=128, phy_loss_weight=0.5, char_weight=0.5,
                  mmd_lambda=None, vz_lambda=None):
         '''
             model is an object from torch.model
@@ -40,6 +40,9 @@ class PhyloAutoencoder(object):
         self.model              = model
         self.model.to(self.device)
 
+        self.nchars             = self.model.num_chars
+        self.char_type          = self.model.char_type
+        
         # TODO: do a proper error handing at some point 
         # (should be passed as a parameter)
 
@@ -55,15 +58,6 @@ class PhyloAutoencoder(object):
             self.std_norm = torch.randn(self.latent_layer_shape).to(self.device)
             self.mmd_losses = []
             self.vz_losses = []
-
-
-        # step functions. These perform a single gradient descent step:
-        # (model(x), then backward) given a batch
-        # updates internal state. returns the loss for the batch
-        # self.train_step = self._make_train_step_func()
-        # self.val_step   = self._make_val_func()
-        # self.train_step = self.train_step
-        # self.val_step   = self.evaluate
 
 
         # self.writer = None
@@ -203,12 +197,12 @@ class PhyloAutoencoder(object):
             # get model predictions
             phy_hat, aux_hat, latent = self.model((phy, aux))
             # compute recon loss
-            phy_loss = self.loss_func(phy_hat, phy, self.char_weight, tip1_weight = 1.0)
+            phy_loss = self.loss_func(phy_hat, phy, 
+                                      self.nchars, self.char_type, 
+                                      self.char_weight, tip1_weight = 1.0)
             aux_loss = self.loss_func(aux_hat, aux)
             recon_loss = self.phy_loss_weight * phy_loss + (1-self.phy_loss_weight) * aux_loss
             # compute latent loss
-            # mmd_loss = utils.mmd_loss(latent, self.std_norm)
-            # vz_loss  = utils.vz_loss(latent, self.std_norm)
             std_norm = torch.randn(latent.shape).to(self.device)
             mmd_loss = utils.mmd_loss(latent, std_norm)
             if self.vz_lambda > 0:
@@ -221,7 +215,9 @@ class PhyloAutoencoder(object):
             loss = recon_loss + latent_loss                        
         else:
             phy_hat, aux_hat = self.model((phy, aux))
-            phy_loss = self.loss_func(phy_hat, phy, self.char_weight, tip1_weight = 1.0)
+            phy_loss = self.loss_func(phy_hat, phy,
+                                       self.nchars, self.char_type, 
+                                       self.char_weight, tip1_weight = 1.0)
             aux_loss = self.loss_func(aux_hat, aux)
             loss = self.phy_loss_weight * phy_loss + (1-self.phy_loss_weight) * aux_loss
             
@@ -248,13 +244,13 @@ class PhyloAutoencoder(object):
             # get model predictions
             phy_hat, aux_hat, latent = self.model((phy, aux))
             # compute recon loss
-            phy_loss    = self.loss_func(phy_hat, phy, self.char_weight, tip1_weight = 1.0)
+            phy_loss    = self.loss_func(phy_hat, phy, 
+                                         self.nchars, self.char_type, 
+                                         self.char_weight, tip1_weight = 1.0)
             aux_loss    = self.loss_func(aux_hat, aux)
             recon_loss  = self.phy_loss_weight * phy_loss + (1-self.phy_loss_weight) * aux_loss
             
             # compute latent loss
-            # mmd_loss = utils.mmd_loss(latent, self.std_norm)
-            # vz_loss  = utils.vz_loss(latent, self.std_norm)
             std_norm = torch.randn(latent.shape).to(self.device)
             mmd_loss = utils.mmd_loss(latent, std_norm)
             if self.vz_lambda > 0.0:
@@ -265,14 +261,14 @@ class PhyloAutoencoder(object):
             latent_loss = self.mmd_lambda * mmd_loss + self.vz_lambda * vz_loss
             # compute total loss
             loss = recon_loss + latent_loss
-            # return loss.item(), phy_loss.item(), aux_loss.item(), mmd_loss.item(), vz_loss.item()
             return loss, phy_loss, aux_loss, mmd_loss, vz_loss
         else:
             phy_hat, aux_hat = self.model((phy, aux))
-            phy_loss = self.loss_func(phy_hat, phy, self.char_weight, tip1_weight = 1.0)
+            phy_loss = self.loss_func(phy_hat, phy, 
+                                      self.nchars, self.char_type, 
+                                      self.char_weight, tip1_weight = 1.0)
             aux_loss = self.loss_func(aux_hat, aux)                
             loss = self.phy_loss_weight * phy_loss + (1-self.phy_loss_weight) * aux_loss
-            # return loss.item(), phy_loss.item(), aux_loss.item()
             return loss, phy_loss, aux_loss
 
         # return evaluate

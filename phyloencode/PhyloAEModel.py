@@ -16,6 +16,8 @@ class AECNN(nn.Module):
                  structured_input_width,  # Input width for structured data
                  unstructured_input_width,
                  unstructured_latent_width = None, # must be integer multiple of num_structured_latent_channels
+                 num_chars = 0,
+                 char_type = "categorical", # categorical, continuous
                  stride = [2,2],
                  kernel = [3,3],
                  out_channels = [16, 32],
@@ -29,6 +31,10 @@ class AECNN(nn.Module):
         # kernal[i] > stride[i]
 
         super().__init__()
+
+        self.char_type = char_type
+        self.num_chars = num_chars
+        
 
         nl = len(out_channels)
         # ensure stride and kernel array lengths match the out_channel earray's length
@@ -113,7 +119,9 @@ class AECNN(nn.Module):
                                              self.reshaped_shared_latent_width,
                                              self.num_structured_input_channel,
                                              self.structured_input_width,
-                                             self.layer_params)
+                                             self.layer_params,
+                                             self.num_chars,
+                                             self.char_type)
 
     def forward(self, data: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
 
@@ -241,9 +249,21 @@ class CnnDecoder(nn.Module):
                  latent_width, 
                  data_channels, 
                  data_width, 
-                 layer_params):
+                 layer_params,
+                 num_chars,
+                 char_type):
         
         super().__init__()
+
+        self.char_type = char_type
+        self.num_chars = num_chars
+
+        #TEMPORARY: In future, do not normalize categorical character values.
+        # self.mean_cat = torch.tensor(1/self.num_chars)
+        # self.sd_cat = torch.sqrt(torch.tensor((self.num_chars - 1) / (self.num_chars ** 2)))
+
+
+
         out_channels = layer_params['out_channels']
         kernel       = layer_params['kernel']
         stride       = layer_params['stride']
@@ -308,10 +328,12 @@ class CnnDecoder(nn.Module):
         outshape = utils.tconv1d_sequential_outshape(self.tcnn_layers, num_cnn_latent_channels, latent_width)
         
 
+        # final decoder layer
         width = outshape[2]
         new_target_width = data_width
         pad, outpad = self._get_decode_paddings(new_target_width, width, stride[0], kernel[0])
 
+        # TODO: split this by phylo and char data
         self.tcnn_layers.add_module("struct_decoder_out", 
                                     nn.ConvTranspose1d(
                                         in_channels    = out_channels[0], 
@@ -322,11 +344,25 @@ class CnnDecoder(nn.Module):
                                         output_padding = outpad
                                         ))
         
+        # print out shape
         print(utils.tconv1d_sequential_outshape(self.tcnn_layers, num_cnn_latent_channels, latent_width))
-        
+
+      
     def forward(self, x):
         decoded_x = self.tcnn_layers(x)
-        return decoded_x
+        # If has categorical character data, add a logistic layer
+        # concatenate categorical output to phhylo output
+        if self.char_type == "categorical" and self.num_chars > 0:
+            char_start_idx = decoded_x.shape[1] - self.num_chars
+            decoded_cat = nn.Softmax(dim=1)(decoded_x[:, char_start_idx:, :])
+            # temporary: In future, do not standardize categorical character values.
+            # norm_decoded_cat = (decoded_cat - self.mean_cat) / self.sd_cat
+            final_decoded_x = torch.cat((decoded_x[:, :char_start_idx, :],
+                                         decoded_cat), dim = 1)
+            return final_decoded_x
+        else:
+            return decoded_x
+
 
     def _get_decode_paddings(self, w_out_target, w_in, s, k, d=1):
         # convtranspose1d formulat: 

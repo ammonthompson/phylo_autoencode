@@ -33,7 +33,11 @@ def vz_loss(latent_pred, target = None):
 
     return VZ
 
-def recon_loss(x, y, char_weight = 0.5, tip1_weight = 0.0):
+def recon_loss(x, y, 
+               num_chars = 0, 
+               char_type = "categorical", # [categorical, continuous]
+               char_weight = 0.5, 
+               tip1_weight = 0.0):
     """
     Compute the reconstruction loss between the reconstructed and original cblv+S and aux data.
     Default is to weight the first two values in the cblv+S data equally to the rest of the data.
@@ -50,30 +54,58 @@ def recon_loss(x, y, char_weight = 0.5, tip1_weight = 0.0):
     # we assume that the first two values in the flattened clbv values
     # and the rest are the character values and potentially two additional cblv-like values
     
+    # use cat_recon_loss(x, y) if x is character data
+
     # check that x is cblv-like data
     if len(x.shape) == 3:
         # phylogenetic data contains extra cblv elements and/or character data 
         # dims are (batch_size, num_channels, num_tips)
-        tree_mse_loss = fun.mse_loss(x[:,0:2], y[:,0:2])
-        if char_weight == 0. or x.shape[1] <= 2:
-            mse_loss = tree_mse_loss
+        if char_weight == 0. or x.shape[1] <= 2 or num_chars == 0:
+            tree_mse_loss = fun.mse_loss(x, y)
+            char_loss = torch.tensor(0.0)
         else:
-            mse_loss = (1 - char_weight) * tree_mse_loss + char_weight * fun.mse_loss(x[:,2:], y[:,2:])
+            tree_mse_loss = fun.mse_loss(x[:,0:(x.shape[1]-num_chars)], y[:,0:(x.shape[1]-num_chars)])
+            if char_type == "categorical": 
+                char_loss = cat_recon_loss(x[:,(x.shape[1]-num_chars):], y[:,(x.shape[1]-num_chars):])
+            else:
+                char_loss = fun.mse_loss(x[:,(x.shape[1]-num_chars):], y[:,(x.shape[1]-num_chars):])
+
+        # Phyddle normalizes tree heights to all = 1.
+        # So first two values in flattened clbv (+s) should be [1,0]
+        # adding a term for just the first two values is equivalent to
+        # upweighting the first two values in the mse loss
+        if tip1_weight > 0.:
+            tip1_loss = fun.mse_loss(x[:,0:2,0], y[:,0:2,0]) 
+        else:
+            tip1_loss = 0.
+
+        return (1 - char_weight) * tree_mse_loss + char_weight * char_loss + tip1_weight * tip1_loss
 
     else:
         # auxiliary data is (batch_size, num_features)
-        mse_loss = fun.mse_loss(x, y)
+       return fun.mse_loss(x, y)
 
-    # Phyddle normalizes tree heights to all = 1.
-    # So first two values in flattened clbv (+s) should be [1,0]
-    # adding a term for just the first two values is equivalent to
-    # upweighting the first two values in the mse loss
-    if tip1_weight > 0.:
-        tip1_loss = fun.mse_loss(x[:,0:2,0], y[:,0:2,0]) 
-    else:
-        tip1_loss = 0.
 
-    return mse_loss + tip1_weight *  tip1_loss
+def cat_recon_loss(x, y):
+    """
+    Compute the reconstruction loss for character data.
+
+    Args:
+        x (torch.Tensor): Reconstructed character data ((nchannels - 2) x ntips or (nchannels - 4) x ntips).
+        y (torch.Tensor): Original character data ((nchannels - 2) x ntips or (nchannels - 4) x ntips).
+        is_categorical (bool): Whether the character data is categorical.
+
+    Returns:
+        torch.Tensor: Reconstruction loss for character data.
+    """
+    
+    # Use cross-entropy loss for categorical data
+    # Reshape to (batch_size * ntips, n_classes) for cross-entropy
+    x = x.permute(0, 2, 1).reshape(-1, x.shape[1])  # (batch_size * ntips, n_classes)
+    y = y.permute(0, 2, 1).reshape(-1, y.shape[1])  # (batch_size * ntips, n_classes)
+    loss = fun.cross_entropy(x, y, reduction = 'mean')
+
+    return loss
 
 
 def conv1d_sequential_outshape(sequential: nn.Sequential, 
@@ -209,6 +241,67 @@ class VZLoss(nn.Module):
     
     def forward(self, X, Y):
         return self.kernel(X.T, Y.T).var()
+
+# this is a modified version of sklearn's StandardScaler. For one-hot encoded categorical data.
+class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
+    def __init__(self, num_chars, num_chans, num_tips):
+        super().__init__()
+        self.cblv_scaler = StandardScaler()
+        self.num_chars = num_chars
+        self.num_chans = num_chans
+        self.num_tips   = num_tips
+
+        dim1_idx = np.arange(0, num_chans * num_tips, num_chans)
+        char_idx = np.arange(num_chans - num_chars, num_chans)
+        phy_idx  = np.arange(0, num_chans - num_chars)
+
+        self.char_idxs = (dim1_idx[:, None] + char_idx).flatten()
+        self.tree_idxs = (dim1_idx[:, None] + phy_idx).flatten()
+
+
+    def fit(self, X, y=None):
+        # Ensure X is a NumPy array
+        X = np.asarray(X)
+        self.cblv_scaler.fit(X[:, self.tree_idxs])
+        return self
+    
+    def transform(self, X):
+        X = np.asarray(X)
+        
+        # Standardize the cblv-like data
+        X_cblv = self.cblv_scaler.transform(X[:, self.tree_idxs])
+        char_data = X[:, self.char_idxs]
+
+        # reshape -> concatenate X_cblv and chardata -> un-reshape
+        X_cblv    = X_cblv.reshape(X.shape[0], self.num_chans - self.num_chars, self.num_tips, order = "F")
+        char_data = char_data.reshape(X.shape[0], self.num_chars, self.num_tips, order= "F")
+        X = np.concatenate((X_cblv, char_data), axis=1)
+        X = X.reshape(X.shape[0], -1, order="F")
+
+        return X
+
+    def inverse_transform(self, X):
+        # Convert PyTorch tensor back to NumPy array if necessary
+        if isinstance(X, torch.Tensor):
+            X = X.numpy()
+
+        # separate cblv-like and character data
+        X_cblv = X[:, self.tree_idxs]
+        char_data = X[:, self.char_idxs]
+
+        # Inverse transform the cblv-like data
+        X_cblv = self.cblv_scaler.inverse_transform(X_cblv)
+
+        # reshape before concatenating along axis=1 ( cblv-like data and character data)
+        X_cblv = X_cblv.reshape(X.shape[0], self.num_chans - self.num_chars, self.num_tips, order="F")
+        char_data = char_data.reshape(X.shape[0], self.num_chars, self.num_tips, order="F")
+
+        # Concatenate the cblv-like and character data
+        X = np.concatenate((X_cblv, char_data), axis=1)
+        X = X.reshape(X.shape[0], -1, order="F")
+
+        return X
+    
 
 
 # this is a modified version of sklearn's StandardScaler
