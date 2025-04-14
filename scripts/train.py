@@ -28,7 +28,8 @@ def main():
     parser.add_argument("-mt", "--max_tips",         required = False, help = "maximum number of tips.   Default 1000")
     parser.add_argument("-w", "--phy_loss_weight",  required = False, help = "Phylogenetic loss weight (in [0,1]) . Default 0.9")
     parser.add_argument("-ns", "--num_subset",       required = False, help = "subset of data used for training/testing. Default 10000")
-    parser.add_argument("-nc", "--num_channels",     required = False, help = "number of data channels. Default 9")
+    parser.add_argument("-nchans", "--num_channels",     required = False, help = "number of data channels. Default 9")
+    parser.add_argument("-nchars", "--num_chars",     required = False, help = "number of characters. Default 5")
     parser.add_argument("-l", "--latent_model_type", required = False, help = "latent model type (GAUSS, DENSE, or CNN). Default GAUSS")
     parser.add_argument("-cw", "--char_weight",     required = False, help = "how much weight to give to char loss. Default 0.0")
     parser.add_argument("-k", "--kernel",           required = False, help = "kernel size. Default 3,5,5")
@@ -49,6 +50,7 @@ def main():
     rand_seed   = np.random.randint(0,10000)
     num_epochs  = 100
     batch_size  = 128
+    nchars      = 5
     nchannels   = 9
     max_tips    = 1000
     mmd_lambda  = 1. # xxx5
@@ -58,7 +60,7 @@ def main():
     latent_model_type = "GAUSS"
     stride          = [2,6,6]
     kernel          = [3,9,9]
-    out_channels    = [16,32,256]
+    out_channels    = [16,64,256]
 
 
     # user optional settings
@@ -70,6 +72,8 @@ def main():
         batch_size = int(args.batch_size)
     if args.num_channels is not None:
         nchannels = int(args.num_channels)
+    if args.num_chars is not None:
+        nchars = int(args.num_chars)
     if args.max_tips is not None:
         max_tips = int(args.max_tips)
     if args.mmd_lambda is not None:
@@ -102,6 +106,8 @@ def main():
             batch_size = config["batch_size"]               
         if "num_channels" in config:
             nchannels = config["num_channels"]
+        if "num_chars" in config:
+            nchars = config["num_chars"]
         if "max_tips" in config:
             max_tips = config["max_tips"]
         if "mmd_lambda" in config:
@@ -153,9 +159,11 @@ def main():
     # aux_data = aux_data[rand_idx]
 
     # create Data container
-    ae_data = ph.DataProcessors.AEData(data = (phy_data, aux_data), 
-                                        prop_train = 0.85,  
-                                        nchannels  = nchannels)
+    ae_data = ph.DataProcessors.AEData(data         = (phy_data, aux_data), 
+                                        prop_train  = 0.85,  
+                                        nchannels   = nchannels, 
+                                        nchars      = nchars)
+    
     ae_data.save_normalizers(out_prefix)
 
     # create data loaders
@@ -171,6 +179,8 @@ def main():
                                       kernel                        = kernel,
                                       out_channels                  = out_channels,
                                       latent_layer_type             = latent_model_type,
+                                      num_chars                     = nchars,
+                                      char_type                     = "categorical" #["categorical", "continuous"]
                                       )
 
     # create Trainer

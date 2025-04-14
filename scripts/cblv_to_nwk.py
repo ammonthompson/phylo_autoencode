@@ -24,10 +24,9 @@ def get_node_heights(y, num_tips, chars = None):
         # node heights
         int_height = y.iloc[1,i]
         tip_height = y.iloc[0,i] + int_height
-        # tip_char = {"char_" + str(k) : str(np.round(v, decimals=2).item()) 
-        #             for k,v in enumerate(chars[:,i])}
         if(chars is not None):
-            tip_char = ' '.join(chars[:,i].astype(str))
+            tip_char = {"char_" + str(k) : str(np.round(v, decimals=2).item()) 
+                    for k,v in enumerate(chars[:,i])}
 
         # make tip node
         tip_nd = dp.Node(label=f't{i}')
@@ -35,9 +34,8 @@ def get_node_heights(y, num_tips, chars = None):
         tip_nd.value = y.iloc[0,i]
         tip_nd.index = 2*i
         if chars is not None:
-            tip_nd.annotations.add_new("char_data", tip_char)
-            # for key, value in tip_char.items():
-            #     tip_nd.annotations.add_new(key, value)
+            for key, value in tip_char.items():
+                tip_nd.annotations.add_new(key, value)
 
 
        # Debugging: Print annotations for the tip node
