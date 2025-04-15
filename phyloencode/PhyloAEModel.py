@@ -257,6 +257,7 @@ class CnnDecoder(nn.Module):
 
         self.char_type = char_type
         self.num_chars = num_chars
+        self.data_channels = data_channels
 
         #TEMPORARY: In future, do not normalize categorical character values.
         # self.mean_cat = torch.tensor(1/self.num_chars)
@@ -352,7 +353,7 @@ class CnnDecoder(nn.Module):
         decoded_x = self.tcnn_layers(x)
         # If has categorical character data, add a logistic layer
         # concatenate categorical output to phhylo output
-        if self.char_type == "categorical" and self.num_chars > 0:
+        if self.char_type == "categorical" and self.num_chars > 0 and self.data_channels > 2:
             char_start_idx = decoded_x.shape[1] - self.num_chars
             decoded_cat = nn.Softmax(dim=1)(decoded_x[:, char_start_idx:, :])
             # temporary: In future, do not standardize categorical character values.

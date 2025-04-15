@@ -188,8 +188,10 @@ if __name__ == "__main__":
     # PCA analysis
     if df_1.shape[0] >= df_1.shape[1]:
         # Standardize and perform PCA on the first file
-        df1_scaler = StandardScaler()
-        scaled_data_1 = df1_scaler.fit_transform(df_1)
+        # df1_scaler = StandardScaler()
+        # scaled_data_1 = df1_scaler.fit_transform(df_1)
+        scaled_data_1 = df_1
+
         pca = PCA(n_components=df_1.shape[1])
         principal_components_1 = pca.fit_transform(scaled_data_1)
 
@@ -210,7 +212,8 @@ if __name__ == "__main__":
         # test trees
         # Standardize the test tree file using the same scaler and transform with the fitted PCA
         if df_2 is not None:
-            scaled_data_2 = df1_scaler.transform(df_2)
+            # scaled_data_2 = df1_scaler.transform(df_2)
+            scaled_data_2 = df_2
             principal_components_2 = pca.transform(scaled_data_2)
 
             # Create a DataFrame for PCA-transformed data from the second file

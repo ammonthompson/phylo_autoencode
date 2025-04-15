@@ -41,6 +41,12 @@ class AEData(object):
         self.data = np.hstack((self.phy_data, self.aux_data))
         phy_width = self.phy_data.shape[1]
 
+        if self.char_data_type == "categorical" and (self.nchars == 0 or self.nchannels <= 2):
+            print("Warning: char_data_type is categorical but nchars == 0 or nchannels <= 2. "
+            "Setting char_data_type to continuous.")
+            self.char_data_type = "continuous"
+
+
 
         # split data 
         self.prop_train = prop_train
@@ -52,7 +58,6 @@ class AEData(object):
         val_aux_data   = val_data[:,phy_width:]
 
         # standardize train data
-        # self.phy_ss = pp.StandardScaler() # this performs better than RobustScaler, MinMaxScaler, and LogStandardScaler
         if self.char_data_type == "continuous":
             self.phy_ss = pp.StandardScaler()
         elif self.char_data_type == "categorical":

@@ -60,7 +60,7 @@ def main():
     latent_model_type = "GAUSS"
     stride          = [2,6,6]
     kernel          = [3,9,9]
-    out_channels    = [16,64,256]
+    out_channels    = [16,64,128]
 
 
     # user optional settings

@@ -157,6 +157,7 @@ def main():
     args = parser.parse_args()
     max_tips = int(args.max_tips)
     num_chars = int(args.num_chars)
+    
 
     # read in data from file. Format format for input file see: phyddle -s F
     if re.search(r"\.csv$", args.tree) or re.search(r"\.cblv$", args.tree) or re.search(r"\.cblvs$", args.tree):
