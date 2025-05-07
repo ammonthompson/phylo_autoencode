@@ -25,9 +25,11 @@ def plot_contour(df_1, df_2, percent_variance = None):
     )
     plt.xlabel(f"{df_1.columns[0]}", fontsize=12)
     plt.ylabel(f"{df_1.columns[1]}", fontsize=12)
-    plt.legend()
+    if df_2 is not None:
+        plt.legend()
 
-def plot_distributions(df_1, df_2, percent_variance = None, output_pdf = "pca_distributions.pdf"):
+def plot_distributions(df_1, df_2, percent_variance = None, 
+                       ref_percent_variance_explained = None, output_pdf = "pca_distributions.pdf"):
     """
     Creates a PDF with plots of PCA distributions for df_1 and points for df_2 values.
     The first plot is a contour plot of the first two PCs with points from df_2.
@@ -47,10 +49,13 @@ def plot_distributions(df_1, df_2, percent_variance = None, output_pdf = "pca_di
         # bar plot of percent variance explained
         if np.sum(percent_variance is not None) > 0:
             # hivar = percent_variance[0:sum([v > 1 for v in percent_variance ])]
-            hivar = np.array(percent_variance)[np.cumsum(percent_variance) < 90]
+            hivar = np.array(percent_variance)[np.cumsum(percent_variance) < 100]
             total_variance = np.round(sum(hivar),  decimals=1)
             plt.figure()
             plt.bar([x for x in range(1, len(hivar) + 1)], hivar)
+            if ref_percent_variance_explained is not None:
+                plt.plot(ref_percent_variance_explained, color="red", label="Reference")
+                plt.legend()
             plt.title(str(total_variance) + "% of PCA variance explained")
             plt.xlabel("Component")
             plt.ylabel("% variance")
@@ -185,12 +190,21 @@ if __name__ == "__main__":
     else:
         df_2 = None
 
+   # create encoding  plot
+    plot_distributions(df_1, df_2, None, out_prefix + "_encoded_plots.pdf")
     # PCA analysis
     if df_1.shape[0] >= df_1.shape[1]:
         # Standardize and perform PCA on the first file
         # df1_scaler = StandardScaler()
         # scaled_data_1 = df1_scaler.fit_transform(df_1)
         scaled_data_1 = df_1
+
+        # make reference PCA with distribution iid normal
+        ref_data = np.random.normal(size=scaled_data_1.shape)
+        refpca = PCA(n_components=ref_data.shape[1])
+        ref_pincomp = refpca.fit_transform(ref_data)
+        ref_explained_variance_ratio = refpca.explained_variance_ratio_ * 100
+        
 
         pca = PCA(n_components=df_1.shape[1])
         principal_components_1 = pca.fit_transform(scaled_data_1)
@@ -231,9 +245,9 @@ if __name__ == "__main__":
             principal_components_2 = None
             pc_df_2 = None
 
-        plot_distributions(pc_df_1, pc_df_2, explained_variance_ratio, out_prefix + "_pca_plots.pdf")
+        plot_distributions(pc_df_1, pc_df_2, explained_variance_ratio, 
+                           ref_explained_variance_ratio, out_prefix + "_pca_plots.pdf")
 
 
-    # create plot
-    plot_distributions(df_1, df_2, None, out_prefix + "_encoded_plots.pdf")
+ 
     # df_1.to_csv(out_prefix + ".encoded.csv", header = True, index=False)

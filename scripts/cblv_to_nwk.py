@@ -149,24 +149,22 @@ def main():
     # parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--tree", required=True, help = "File of ntips + cblv(s) formatted phylo data.")
-    # parser.add_argument("-a", "--aux", required=True, help = "File of auxilliary data.")
     parser.add_argument("-m", "--max-tips", required=True, help = "Maximum number of tips. Last dimension of cblv tensor.")
     parser.add_argument("-n", "--num-tips", required=False, help = "Num tips in trees. Single column file. Same order as cblv file.")
-    parser.add_argument("-c", "--num-chars", required=True, help = "Number of characters.") # deprecated
+     # phyddle cblv dims are either (2, num_tips) or (4, num_tips). Consequently, need number of characters to determine    
+    parser.add_argument("-c", "--num-chars", required=True, help = "Number of characters.")
     parser.add_argument("-x", "--num-trees", required=False, help = "Number of trees to translate.")
     args = parser.parse_args()
     max_tips = int(args.max_tips)
     num_chars = int(args.num_chars)
     
 
-    # read in data from file. Format format for input file see: phyddle -s F
+    # read in data from file. Format for input file see: phyddle -s F
     if re.search(r"\.csv$", args.tree) or re.search(r"\.cblv$", args.tree) or re.search(r"\.cblvs$", args.tree):
         phy_data = pd.read_csv(args.tree, header = None, index_col = None).to_numpy(dtype=np.float64)
-
     elif re.search(r"\.hdf5$", args.tree) or re.search(r"\.h5$", args.tree):
         with h5py.File(args.tree, "r") as f:
             phy_data = pd.DataFrame(f['phy_data']).to_numpy(dtype=np.float64)
-
     else:
         print("Input cblv file must be a .csv or .hdf5 file.")
         sys.exit(1)
@@ -188,6 +186,9 @@ def main():
     cblvs = phy_data.reshape((phy_data.shape[0], phy_data.shape[1]//max_tips, max_tips), order = "F")
 
     # get character data
+    if cblvs.shape[1] < (num_chars + 2):
+        print("cblvs must be at least as long as num_chars + 2.")
+        sys.exit(1)
     char_data = cblvs[:, (cblvs.shape[1]-num_chars):cblvs.shape[1], :]
 
     # check if num_tips is same length as cblvs
@@ -195,6 +196,7 @@ def main():
         print("num_tips and cblvs must be same length.")
         sys.exit(1)
 
+    # check if num_trees exceeds number of trees in the file
     num_trees = cblvs.shape[0]
     if args.num_trees is not None:
         num_trees = int(args.num_trees)

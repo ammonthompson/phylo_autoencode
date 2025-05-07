@@ -35,6 +35,7 @@ def main():
     parser.add_argument("-k", "--kernel",           required = False, help = "kernel size. Default 3,5,5")
     parser.add_argument("-r", "--stride",           required = False, help = "stride size. Default 2,4,4")
     parser.add_argument("-oc", "--out_channels",    required = False, help = "output channels. Default 32,32,128")
+    parser.add_argument("-ct", "--char_type",       required = False, help = "character type (categorical or continuous). Default categorical")
 
     args = parser.parse_args()
     data_fn = args.trn_data
@@ -50,36 +51,37 @@ def main():
     rand_seed   = np.random.randint(0,10000)
     num_epochs  = 100
     batch_size  = 128
-    nchars      = 5
-    nchannels   = 9
+    nchars      = 0
+    nchannels   = 2
     max_tips    = 1000
-    mmd_lambda  = 1. # xxx5
-    vz_lambda   = 1. # xxx5
+    mmd_lambda  = 1.  
+    vz_lambda   = 1. 
     phy_loss_weight = 0.9
-    char_weight = 0.5
+    char_weight = 0.1
     latent_model_type = "GAUSS"
-    stride          = [2,6,6]
-    kernel          = [3,9,9]
+    stride          = [2,4,8]
+    kernel          = [3,5,9]
     out_channels    = [16,64,128]
+    char_type = "categorical" #["categorical", "continuous"]
 
 
     # user optional settings
     if args.num_subset is not None:
-        num_subset = int(args.num_subset)
+        num_subset  = int(args.num_subset)
     if args.num_epochs is not None:
-        num_epochs = int(args.num_epochs)
+        num_epochs  = int(args.num_epochs)
     if args.batch_size is not None:
-        batch_size = int(args.batch_size)
+        batch_size  = int(args.batch_size)
     if args.num_channels is not None:
-        nchannels = int(args.num_channels)
+        nchannels   = int(args.num_channels)
     if args.num_chars is not None:
-        nchars = int(args.num_chars)
+        nchars      = int(args.num_chars)
     if args.max_tips is not None:
-        max_tips = int(args.max_tips)
+        max_tips    = int(args.max_tips)
     if args.mmd_lambda is not None:
-        mmd_lambda = float(args.mmd_lambda)
+        mmd_lambda  = float(args.mmd_lambda)
     if args.vz_lambda is not None:
-        vz_lambda = float(args.vz_lambda)
+        vz_lambda   = float(args.vz_lambda)
     if args.phy_loss_weight is not None:
         phy_loss_weight = float(args.phy_loss_weight)
     if args.char_weight is not None:
@@ -87,65 +89,72 @@ def main():
     if args.latent_model_type is not None:
         latent_model_type = args.latent_model_type
     if args.kernel is not None:
-        kernel = [int(i) for i in args.kernel.split(",")]
+        kernel      = [int(i) for i in args.kernel.split(",")]
     if args.stride is not None:
-        stride = [int(i) for i in args.stride.split(",")]
+        stride      = [int(i) for i in args.stride.split(",")]
     if args.out_channels is not None:
         out_channels = [int(i) for i in args.out_channels.split(",")]
+    if args.char_type is not None:
+        char_type   = args.char_type
 
     # if config file provided, read in settings and override user settings
     if args.config is not None:
         config_fn = args.config
         config = ph.utils.read_config(config_fn)
-        config = pd.read_json(config_fn, orient = "index").to_dict(orient = "records")[0]
-        if "num_subset" in config:
-            num_subset = config["num_subset"]
-        if "num_epochs" in config:
-            num_epochs = config["num_epochs"]
-        if "batch_size" in config:
-            batch_size = config["batch_size"]               
-        if "num_channels" in config:
-            nchannels = config["num_channels"]
-        if "num_chars" in config:
-            nchars = config["num_chars"]
-        if "max_tips" in config:
-            max_tips = config["max_tips"]
-        if "mmd_lambda" in config:
-            mmd_lambda = config["mmd_lambda"]
-        if "vz_lambda" in config:
-            vz_lambda = config["vz_lambda"]
+        # config = pd.read_json(config_fn, orient = "index").to_dict(orient = "records")[0]
+        if "num_subset"     in config:
+            num_subset      = config["num_subset"]
+        if "num_epochs"     in config:
+            num_epochs      = config["num_epochs"]
+        if "batch_size"     in config:
+            batch_size      = config["batch_size"]               
+        if "num_channels"   in config:
+            nchannels       = config["num_channels"]
+        if "num_chars"      in config:
+            nchars          = config["num_chars"]
+        if "max_tips"       in config:
+            max_tips        = config["max_tips"]
+        if "mmd_lambda"     in config:
+            mmd_lambda      = config["mmd_lambda"]
+        if "vz_lambda"      in config:
+            vz_lambda       = config["vz_lambda"]
         if "phy_loss_weight" in config:
             phy_loss_weight = config["phy_loss_weight"]
-        if "char_weight" in config:
-            char_weight = config["char_weight"]
+        if "char_weight"    in config:
+            char_weight     = config["char_weight"]
         if "latent_model_type" in config:
             latent_model_type = config["latent_model_type"]
-        if "kernel" in config:
-            kernel = config["kernel"]
-        if "stride" in config:      
-            stride = config["stride"]
-        if "out_channels" in config:
-            out_channels = config["out_channels"]
-        if "num_workers" in config:
-            nworkers = config["num_workers"]
-        if "seed" in config:
-            rand_seed = config["seed"]
+        if "kernel"         in config:
+            kernel          = config["kernel"]
+        if "stride"         in config:      
+            stride          = config["stride"]
+        if "out_channels"   in config:
+            out_channels    = config["out_channels"]
+        if "num_workers"    in config:
+            nworkers        = config["num_workers"]
+        if "seed"           in config:
+            rand_seed       = config["seed"]
+        if "char_type"      in config:
+            char_type       = config["char_type"]
 
     # get formated tree data
     with h5py.File(data_fn, "r") as f:
         # idx = np.where(f['aux_data_names'][...][0] == b'num_taxa')[0][0]
-
         # phy_data = torch.tensor(f['phy_data'][0:num_subset,...], dtype = torch.float32)
         aux_data = torch.tensor(f['aux_data'][0:num_subset,...], dtype = torch.float32)
+        if len(aux_data.shape) != 2: # i.e. is an array but should be a matrix with 1 column
+            aux_data = aux_data.reshape((aux_data.shape[0], 1))
         phy_data = np.array(f['phy_data'][0:num_subset,...], dtype = np.float32)
         phy_data = phy_data.reshape((phy_data.shape[0], phy_data.shape[1]//max_tips, max_tips), order = "F")
         phy_data = phy_data[:,0:nchannels,:]
         phy_data = phy_data.reshape((phy_data.shape[0],-1), order = "F")
         phy_data = torch.tensor(phy_data, dtype = torch.float32)
         # aux_data = torch.tensor(f['aux_data'][0:num_subset,idx], dtype = torch.float32).view(-1,1)
-
+        
         # test_phy_data = torch.tensor(f['phy_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
         test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
+        if len(test_aux_data.shape) != 2: # i.e. is an array but should be a matrix with 1 column
+            test_aux_data = test_aux_data.reshape((test_aux_data.shape[0], 1))
         test_phy_data = np.array(f['phy_data'][num_subset:(num_subset + 500),...], dtype = np.float32)
         test_phy_data = test_phy_data.reshape((test_phy_data.shape[0], test_phy_data.shape[1]//max_tips, max_tips), order = "F")
         test_phy_data = test_phy_data[:,0:nchannels,:]
@@ -159,10 +168,10 @@ def main():
     # aux_data = aux_data[rand_idx]
 
     # create Data container
-    ae_data = ph.DataProcessors.AEData(data         = (phy_data, aux_data), 
-                                        prop_train  = 0.85,  
-                                        nchannels   = nchannels, 
-                                        nchars      = nchars)
+    ae_data = ph.DataProcessors.AEData(data        = (phy_data, aux_data), 
+                                       prop_train  = 0.85,  
+                                       nchannels   = nchannels, 
+                                       nchars      = nchars)
     
     ae_data.save_normalizers(out_prefix)
 
@@ -180,7 +189,7 @@ def main():
                                       out_channels                  = out_channels,
                                       latent_layer_type             = latent_model_type,
                                       num_chars                     = nchars,
-                                      char_type                     = "categorical" #["categorical", "continuous"]
+                                      char_type                     = char_type,
                                       )
 
     # create Trainer
@@ -197,11 +206,23 @@ def main():
     # Load data loaders and Train model and plot
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
     tree_autoencoder.train(num_epochs = num_epochs, seed = rand_seed)
-    tree_autoencoder.plot_losses(out_prefix)
     tree_autoencoder.save_model(out_prefix + ".ae_trained.pt")
 
+    # make encoded tree file for 5,000 random trees from training data
+    rand_idx = np.random.randint(0, ae_data.prop_train * num_subset, size = min(5000, num_subset))
+    rand_train_phy = torch.Tensor(ae_data.norm_train_phy_data[rand_idx,...])
+    rand_train_aux = torch.Tensor(ae_data.norm_train_aux_data[rand_idx,...])
+    latent_dat = tree_autoencoder.tree_encode(rand_train_phy, rand_train_aux)
+    latent_dat_df = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), columns = None, index = None)
+    latent_dat_df.to_csv(out_prefix + ".traindat_latent.csv", header = False, index = False)
 
-    # save true data in cblv format
+    tree_autoencoder.plot_losses(out_prefix)
+
+    #############################
+    # Test Data Prediction 
+    #############################
+    # make predictions with trained model on test data
+    # save true values of test data in cblv format
     phy_true_df = pd.DataFrame(test_phy_data.numpy())
     phy_true_df.to_csv(out_prefix + ".phy_true.cblv", header = False, index = False)
     aux_true_df = pd.DataFrame(test_aux_data.numpy())
@@ -215,7 +236,7 @@ def main():
     phydat = torch.Tensor(phydat)
     auxdat = torch.Tensor(auxdat)
 
-    # make predictions
+    # make predictions for test data
     phy_pred, auxpred = tree_autoencoder.predict(phydat, auxdat)
 
     # transform and flatten predicted data
@@ -228,12 +249,6 @@ def main():
     aux_pred_df = pd.DataFrame(auxpred)
     aux_pred_df.to_csv(out_prefix + ".aux_pred.csv", header  = False, index = False)
 
-    # make encoded tree file
-    rand_idx = np.random.randint(0, ae_data.prop_train * num_subset, size = min(5000, num_subset))
-    latent_dat = tree_autoencoder.tree_encode(torch.Tensor(ae_data.norm_train_phy_data[rand_idx,...]), 
-                                              torch.Tensor(ae_data.norm_train_aux_data[rand_idx,...]))
-    latent_dat_df = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), columns = None, index = None)
-    latent_dat_df.to_csv(out_prefix + ".traindat_latent.csv", header = False, index = False)
 
 
 if __name__ == "__main__":

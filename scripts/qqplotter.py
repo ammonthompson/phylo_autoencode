@@ -19,10 +19,8 @@ encoded_dat = pd.read_csv(args.infile, header = None, index_col = None)
 ks_stats = []
 ks_pvals = []
 
-# set up a reference wasserstein distance 
-# which is the  distance of two random 
-# standard normal data sets
-# of size equal to that of the encoded data
+# set up a reference wasserstein distance  which is the  distance of two random 
+# standard normal data sets of size equal to that of the encoded data
 relative_wasserstein = []
 relative_wass_pvals = []
 wass_ref_set = [stats.wasserstein_distance(np.random.normal(size = encoded_dat.shape[0]),
@@ -30,10 +28,9 @@ wass_ref_set = [stats.wasserstein_distance(np.random.normal(size = encoded_dat.s
 mean_wasserstein_ref = np.mean(wass_ref_set)
 scaled_wass_ref_set = np.array([x / mean_wasserstein_ref for x in wass_ref_set])
 scaled_wass_q95 = np.quantile(scaled_wass_ref_set, 0.95)
-
 print("wasserstein reference completed")
 
-# 
+# compute ks test and wasserstein distance for each column
 for i in encoded_dat.columns:
     # encoded_dat[i] = (encoded_dat[i] - np.mean(encoded_dat[i])) / np.std(encoded_dat[i])
     ks_stats.append(stats.ks_1samp(encoded_dat[i], stats.norm.cdf))
@@ -76,20 +73,6 @@ with PdfPages(args.outfile) as pdf:
 
     
     # WASSERSTEIN DISTANCE
-    # plot histogram of Wasserstein distance refrerence scaled to have mean 1
-    plt.figure()
-    plt.hist(scaled_wass_ref_set, bins = 20)
-    plt.title("Reference Distribution of Scaled Wass. Distances (mean = 1)")
-    plt.xlabel("Wasserstein Distance")
-    plt.ylabel("Frequency")
-    # vertical line for 5% upper quantile of wasserstein distance
-    plt.axvline(x=np.quantile(scaled_wass_ref_set, 0.95), color='r', linestyle='--')
-    # add text to show the value of the 5% upper quantile
-    plt.text(1.01 * scaled_wass_q95, 0.9 * max(np.histogram(scaled_wass_ref_set, bins = 20)[0]),
-             f"5% upper quantile: {scaled_wass_q95:.2f}", fontsize=8, c="red")
-    pdf.savefig()
-    plt.close()
-
     # relative wasserstein distance which is wasserstein distance of encoded data
     # divided by reference mean: a wasserstein distance of two random normal data sets of equal size
     # relative wasserstein distance of 1 means that the data is as similar to a standard normal as a random 
@@ -122,14 +105,18 @@ with PdfPages(args.outfile) as pdf:
     ###########
     # qqplots #
     ###########
+    # create qqplots for each column
+    # set up a 2x2 grid of subplots
+    # set up a pdf file to save the plots
+
+    # first plot
+    plt.figure()
+    plt.subplots_adjust(wspace=0.4, hspace=0.4)  # Adjust margins 
+
+    # loop over each column in the encoded data
+    # and create a qqplot for each 
     for i in encoded_dat.columns:
-        if i % 4 == 0:
-            if i > 0:
-                pdf.savefig()
-                plt.close() 
-            
-            plt.figure()
-            plt.subplots_adjust(wspace=0.4, hspace=0.4)  # Adjust margins
+    
         # create qqplot
         plt.subplot(2, 2, (i % 4) + 1)
         # set up quantiles
@@ -138,7 +125,7 @@ with PdfPages(args.outfile) as pdf:
         stdnorm_quantiles = stats.norm.ppf(q)
         # plot quantiles
         plt.scatter(stdnorm_quantiles, dat_quantiles, c="black", s=20)  # Set point size to 20 points^2
-        plt.title(f"QQPlot for column {i}", fontsize=8)        
+        plt.title(f"QQPlot for dim {i}", fontsize=8)        
         text_col = "red" if ks_pvals[i] < 0.05 else "black"
         plt.text(min(stdnorm_quantiles), 0.9 * max(dat_quantiles), f"KS Statistic: {ks_stats[i].statistic:.2f}", fontsize=7, c=text_col)    
         plt.text(min(stdnorm_quantiles), 0.8 * max(dat_quantiles), f"P-value: {ks_pvals[i]:.3f}", fontsize=5, c=text_col)    
@@ -151,8 +138,19 @@ with PdfPages(args.outfile) as pdf:
         # equal mean point
         plt.plot([0], [0], '+', markersize = 10, linewidth=2, c="blue")  # Green plus sign at origin
         plt.xlabel("N(0,1)", fontsize=6)
-        plt.ylabel(f"Column {i}", fontsize=6)
-        # pdf.savefig()
-        # plt.close()
+        plt.ylabel(f"Dim {i}", fontsize=6)
+
+        if (i+1) % 4 == 0:
+            # save the figure
+            pdf.savefig()
+            plt.close() 
+            if i == len(encoded_dat.columns) - 1:
+                # plotting is finished
+                break
+            else:
+                # start a new page
+                plt.figure()
+                plt.subplots_adjust(wspace=0.4, hspace=0.4)  # Adjust margins
+
 
 print(f"QQPlots saved to {args.outfile}")
