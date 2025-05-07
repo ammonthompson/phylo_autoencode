@@ -27,6 +27,7 @@ class AEData(object):
                  nchannels  : int,
                  char_data_type : str = "categorical", # "continuous" or "categorical"
                  nchars     : int = 0,
+                #  normalizer  = pp.StandardScaler,
                  ):
         """
         each tree in data is assumed to be flattend in column-major order
@@ -40,6 +41,7 @@ class AEData(object):
         self.aux_data  = data[1]
         self.data = np.hstack((self.phy_data, self.aux_data))
         phy_width = self.phy_data.shape[1]
+        self.ntips = phy_width // nchannels
 
         if self.char_data_type == "categorical" and (self.nchars == 0 or self.nchannels <= 2):
             print("Warning: char_data_type is categorical but nchars == 0 or nchannels <= 2. "
@@ -59,18 +61,24 @@ class AEData(object):
 
         # standardize train data
         if self.char_data_type == "continuous":
+            # self.phy_ss = utils.NoScalerNormalizer()
+            # self.phy_ss = utils.ShiftedStandardScaler(buffer_factor=1.0)
             self.phy_ss = pp.StandardScaler()
+            # self.phy_ss = pp.MinMaxScaler(feature_range=(0.,1.))
+            # self.phy_ss = utils.LogitStandardScaler()
         elif self.char_data_type == "categorical":
             self.phy_ss = utils.StandardScalerPhyCategorical(self.nchars, self.nchannels, self.ntips)
+            # self.phy_ss = utils.NoScalerNormalizer()
         else:
             raise ValueError("char_data_type must be 'continuous' or 'categorical'")
         self.aux_ss = pp.StandardScaler()
 
         self.phy_normalizer = self.phy_ss.fit(train_phy_data)
         self.aux_normalizer = self.aux_ss.fit(train_aux_data)
-        # print(train_phy_data[5,:36])
+        # print(train_phy_data[15,:36])
         self.norm_train_phy_data = self.phy_normalizer.transform(train_phy_data)
-        # print(self.norm_train_phy_data[5,:36])
+        # print(self.norm_train_phy_data[15,:36])
+        # quit()
         self.norm_train_aux_data = self.aux_normalizer.transform(train_aux_data)
         self.norm_val_phy_data   = self.phy_normalizer.transform(val_phy_data)
         self.norm_val_aux_data   = self.aux_normalizer.transform(val_aux_data)

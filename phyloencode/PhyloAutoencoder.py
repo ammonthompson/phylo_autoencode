@@ -205,7 +205,7 @@ class PhyloAutoencoder(object):
             # compute latent loss
             std_norm = torch.randn(latent.shape).to(self.device)
             mmd_loss = utils.mmd_loss(latent, std_norm)
-            if self.vz_lambda > 0:
+            if self.vz_lambda > 0.:
                 vz_loss  = utils.vz_loss(latent, std_norm)
             else:
                 vz_loss = torch.tensor(0.0).to(self.device)
@@ -324,6 +324,12 @@ class PhyloAutoencoder(object):
             phy_pred, aux_pred, latent = self.model((phy, aux))
         else:
             phy_pred, aux_pred = self.model((phy, aux))
+
+        if self.char_type == "categorical":
+            # softmax the char data
+            char_start_idx = phy_pred.shape[1] - self.nchars
+            phy_pred[:,char_start_idx:,:] = torch.softmax(phy_pred[:,char_start_idx:,:], dim = 1)
+
         self.model.train()
         return phy_pred.detach().cpu().numpy(), aux_pred.detach().cpu().numpy()
 
@@ -372,6 +378,9 @@ class PhyloAutoencoder(object):
     def save_model(self, filename):
         torch.save(self.model, filename)
 
+
+    # Inference
+
     def tree_encode(self, phy: torch.Tensor, aux: torch.Tensor):
         self.model.eval() 
         phy = phy.to(self.device)
@@ -402,6 +411,7 @@ class PhyloAutoencoder(object):
         self.model.train()
 
         return(shared_latent_out.flatten(start_dim=1))
+    
 
     def get_latent_shape(self):
         return self.model.num_structured_latent_channels, self.model.reshaped_shared_latent_width
@@ -411,6 +421,10 @@ class PhyloAutoencoder(object):
         encoded_tree = encoded_tree.to(self.device)
         decoded_tree = self.model.structured_decoder(encoded_tree)
         decoded_aux  = self.model.unstructured_decoder(encoded_tree.flatten(start_dim=1))
+        if self.char_type == "categorical":
+            # softmax the char data
+            char_start_idx = decoded_tree.shape[1] - self.nchars
+            decoded_tree[:,char_start_idx:,:] = torch.softmax(decoded_tree[:,char_start_idx:,:], dim = 1)
         self.model.train()
         return decoded_tree, decoded_aux
 

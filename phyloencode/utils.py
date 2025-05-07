@@ -8,6 +8,25 @@ from typing import List, Dict, Tuple, Optional, Union
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.preprocessing import StandardScaler
+import importlib.util
+
+
+def read_config(config_file: str) -> Dict[str, Union[int, float, str]]:
+    """
+    Read a configuration file and return the settings as a dictionary.
+
+    Args:
+        config_file (str): Path to the configuration file.
+
+    Returns:
+        dict: Dictionary containing the settings.
+    """
+    # read a config file that contains one dictionary called settings
+    spec = importlib.util.spec_from_file_location("settings", config_file)
+    settings_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(settings_module)
+    settings = settings_module.settings
+    return settings
 
 
 def mmd_loss(latent_pred, target = None):
@@ -66,6 +85,9 @@ def recon_loss(x, y,
         else:
             tree_mse_loss = fun.mse_loss(x[:,0:(x.shape[1]-num_chars)], y[:,0:(x.shape[1]-num_chars)])
             if char_type == "categorical": 
+                # compare first 5 tips
+                # print(y[15,(x.shape[1]-num_chars):,0:5])
+                # print(x[15,(x.shape[1]-num_chars):,0:5])
                 char_loss = cat_recon_loss(x[:,(x.shape[1]-num_chars):], y[:,(x.shape[1]-num_chars):])
             else:
                 char_loss = fun.mse_loss(x[:,(x.shape[1]-num_chars):], y[:,(x.shape[1]-num_chars):])
@@ -88,7 +110,7 @@ def recon_loss(x, y,
 
 def cat_recon_loss(x, y):
     """
-    Compute the reconstruction loss for character data.
+    Compute the reconstruction loss for categorical character data.
 
     Args:
         x (torch.Tensor): Reconstructed character data ((nchannels - 2) x ntips or (nchannels - 4) x ntips).
@@ -103,6 +125,10 @@ def cat_recon_loss(x, y):
     # Reshape to (batch_size * ntips, n_classes) for cross-entropy
     x = x.permute(0, 2, 1).reshape(-1, x.shape[1])  # (batch_size * ntips, n_classes)
     y = y.permute(0, 2, 1).reshape(-1, y.shape[1])  # (batch_size * ntips, n_classes)
+
+    # Convert one-hot to class indices
+    y = y.argmax(dim=1)  # shape (N,)
+    
     loss = fun.cross_entropy(x, y, reduction = 'mean')
 
     return loss
@@ -184,6 +210,14 @@ def tconv1d_layer_outwidth(layer, input_width):
     width = (input_width - 1) * stride - 2 * padding + dilation * (kernel_size - 1) + output_padding + 1
     return width
 
+class SoftClip(nn.Module):
+    def __init__(self, low=1e-6):
+        super().__init__()
+        self.low = low
+
+    def forward(self, x):
+        return self.low + (1 - 2 * self.low) * torch.sigmoid(x)
+
 
 # classes for MMD2 loss to encourage latent space to be be N(0,1) distributed
 class RBF(nn.Module):
@@ -230,9 +264,11 @@ class MMDLoss(nn.Module):
         k_xx = K[:X_size, :X_size]
         k_xy = K[:X_size, X_size:]
         k_yy = K[X_size:, X_size:]
-        # MMD_loss = torch.sqrt((k_xx - 2 * k_xy + k_yy).mean())    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
-        MMD_loss = (k_xx - 2 * k_xy + k_yy).mean()    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
-        return MMD_loss #+ var_mar
+        # MMD_loss = torch.sqrt((k_xx - 2 * k_xy + k_yy).sum())/sum(X.shape)    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
+        MMD2_loss = k_xx.mean() - 2 * k_xy.mean() + k_yy.mean()   # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
+        # MMD2_loss = (k_xx - 2 * k_xy + k_yy).mean()    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
+        # MMD_loss = torch.sqrt(MMD2_loss) #/ sum(X.shape)    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
+        return MMD2_loss
     
 class VZLoss(nn.Module):
     def __init__(self, device):
@@ -242,8 +278,15 @@ class VZLoss(nn.Module):
     def forward(self, X, Y):
         return self.kernel(X.T, Y.T).var()
 
-# this is a modified version of sklearn's StandardScaler. For one-hot encoded categorical data.
+
+# these classes work with datasets output from the Format step in Phyddle
+# they are used to normalize the data before training
+# they are used to create a DataSet object. See TreeDataSet class
 class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
+    # this is a modified version of sklearn's StandardScaler. 
+    # For one-hot encoded categorical data.
+    # normalizes the data to have mean 0 and std 1.
+    # ignores the categorical data
     def __init__(self, num_chars, num_chans, num_tips):
         super().__init__()
         self.cblv_scaler = StandardScaler()
@@ -272,7 +315,7 @@ class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
         X_cblv = self.cblv_scaler.transform(X[:, self.tree_idxs])
         char_data = X[:, self.char_idxs]
 
-        # reshape -> concatenate X_cblv and chardata -> un-reshape
+        # reshape -> then concatenate X_cblv and chardata -> un-reshape
         X_cblv    = X_cblv.reshape(X.shape[0], self.num_chans - self.num_chars, self.num_tips, order = "F")
         char_data = char_data.reshape(X.shape[0], self.num_chars, self.num_tips, order= "F")
         X = np.concatenate((X_cblv, char_data), axis=1)
@@ -302,8 +345,109 @@ class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
 
         return X
     
+class ShiftedStandardScaler(BaseEstimator, TransformerMixin):
+    # this is a modified version of sklearn's StandardScaler. 
+    # standardizes the data then shifts it to be positive
+    # this is used for the cblv-like data
 
+    def __init__(self, buffer_factor = 1., copy = True):
+        '''arguments:
+        buffer_factor: float, default=1.0
+            The factor by which to multiply the minimum value of the
+            scaled data to ensure all values are positive.
+            A value of 1.0 means no change in scale, while a value of 
+            2.0 will shift the data to be at least twice the minimum value.'''
+        
+        print("Using ShiftedStandardScaler")
+        super().__init__()
+        self.copy = copy
+        self.scaler = StandardScaler()
+        self.msm = None
+        self.bf = buffer_factor # default no change
 
+    def fit(self, X, y=None):
+        # Ensure X is a NumPy array
+        X = np.asarray(X)
+        self.scaler.fit(X)
+        # find minimum value for whole dataset
+        self.msm = self.bf * np.abs(np.min(self.scaler.transform(X)))
+
+        return self
+    
+    def transform(self, X):
+        # Ensure X is a NumPy array
+        X = np.asarray(X)
+        # Standardize the data
+        X_scaled = self.scaler.transform(X)
+        # Shift the data to make all values positive
+        X_scaled_shifted = X_scaled + self.msm
+
+        return X_scaled_shifted
+    
+    def inverse_transform(self, X):
+        # Convert PyTorch tensor back to NumPy array if necessary
+        if isinstance(X, torch.Tensor):
+            X = X.numpy()
+        # Reverse the shift
+        X_inv = X - self.msm
+        # Reverse standardization
+        return self.scaler.inverse_transform(X_inv)
+   
+class NoScalerNormalizer(BaseEstimator, TransformerMixin):
+    # this just creates a normalizer object that 
+    # returns the input data untransformed
+    # for compatibility with downstream code
+    def __init__(self, copy=True):
+        self.copy = copy
+        print("Using NoScalerNormalizer")
+    
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        if isinstance(X, torch.Tensor):
+            X = X.detach().cpu().numpy()
+        return X.copy() if self.copy else X
+
+    def inverse_transform(self, X):
+        if isinstance(X, torch.Tensor):
+            X = X.detach().cpu().numpy()
+        return X.copy() if self.copy else X
+
+class LogitStandardScaler(BaseEstimator, TransformerMixin):
+    """
+    Combines a logit transformation with standard scaling.
+
+    - Applies logit: log(x / (1 - x)), after clipping to avoid 0/1 boundaries.
+    - Applies StandardScaler afterward.
+    """
+
+    def __init__(self, epsilon=1e-6):
+        self.epsilon = epsilon
+        self.scaler = StandardScaler()
+
+    def _logit(self, x):
+        x_clipped = np.clip(x, self.epsilon, 1 - self.epsilon)
+        return np.log(x_clipped / (1 - x_clipped))
+
+    def _sigmoid(self, x):
+        return 1 / (1 + np.exp(-x))
+
+    def fit(self, X, y=None):
+        X_logit = self._logit(np.asarray(X))
+        self.scaler.fit(X_logit)
+        return self
+
+    def transform(self, X):
+        X_logit = self._logit(np.asarray(X))
+        return self.scaler.transform(X_logit)
+
+    def inverse_transform(self, X_scaled):
+        X_logit = self.scaler.inverse_transform(X_scaled)
+        return self._sigmoid(X_logit)
+    
+
+# DONT USE for cblv tree. 
 # this is a modified version of sklearn's StandardScaler
 # it is used to transform the data to a log scale before standardizing
 ########### this performs pretty poorly. Dont use.

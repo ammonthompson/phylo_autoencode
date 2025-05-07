@@ -345,25 +345,29 @@ class CnnDecoder(nn.Module):
                                         output_padding = outpad
                                         ))
         
+        # self.tcnn_layers.add_module("tconv_ReLU_out", nn.ReLU())
+        # self.tcnn_layers.add_module("tconv_softclip_out", utils.SoftClip())
+        
         # print out shape
         print(utils.tconv1d_sequential_outshape(self.tcnn_layers, num_cnn_latent_channels, latent_width))
 
-      
     def forward(self, x):
         decoded_x = self.tcnn_layers(x)
-        # If has categorical character data, add a logistic layer
-        # concatenate categorical output to phhylo output
-        if self.char_type == "categorical" and self.num_chars > 0 and self.data_channels > 2:
-            char_start_idx = decoded_x.shape[1] - self.num_chars
-            decoded_cat = nn.Softmax(dim=1)(decoded_x[:, char_start_idx:, :])
-            # temporary: In future, do not standardize categorical character values.
-            # norm_decoded_cat = (decoded_cat - self.mean_cat) / self.sd_cat
-            final_decoded_x = torch.cat((decoded_x[:, :char_start_idx, :],
-                                         decoded_cat), dim = 1)
-            return final_decoded_x
-        else:
-            return decoded_x
+        char_start_idx = decoded_x.shape[1] - self.num_chars
 
+        # decoded_phylo = torch.sigmoid(decoded_x[:, :char_start_idx, :])
+        decoded_phylo =decoded_x[:, :char_start_idx, :]
+
+        # If has categorical character data, add a logistic layer
+        # concatenate categorical output to phhylo output        
+        if self.char_type == "categorical" and self.num_chars > 0 and self.data_channels > 2:
+            # decoded_cat = nn.Softmax(dim=1)(decoded_x[:, char_start_idx:, :])
+            decoded_cat = decoded_x[:, char_start_idx:, :]
+            final_decoded_x = torch.cat((decoded_phylo, decoded_cat), dim = 1)
+        else:
+            final_decoded_x = torch.cat((decoded_phylo, decoded_x[:, char_start_idx:, :]), dim = 1)
+
+        return final_decoded_x
 
     def _get_decode_paddings(self, w_out_target, w_in, s, k, d=1):
         # convtranspose1d formulat: 

@@ -51,8 +51,10 @@ def main ():
 
     # import test data
     encoded_data = pd.read_csv(encoded_data_fn, header = None, index_col = None).to_numpy(dtype=np.float32)
-    encoded_data = encoded_data.reshape((encoded_data.shape[0], int(args.num_latent_channels), 
-                                         int(encoded_data.shape[1]/int(args.num_latent_channels))),  order = "F")
+    encoded_data = encoded_data.reshape((encoded_data.shape[0], 
+                                         int(args.num_latent_channels), 
+                                         int(encoded_data.shape[1]/int(args.num_latent_channels))), 
+                                           order = "C")
     encoded_data = torch.tensor(encoded_data, dtype = torch.float32)
 
     # decode the encoded data
