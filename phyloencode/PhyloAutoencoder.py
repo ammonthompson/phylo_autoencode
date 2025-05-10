@@ -54,7 +54,7 @@ class PhyloAutoencoder(object):
         if model.latent_layer_type == "GAUSS":
             self.mmd_lambda = mmd_lambda
             self.vz_lambda = vz_lambda
-            self.latent_layer_shape = (self.batch_size, model.combined_latent_width)
+            self.latent_layer_shape = (self.batch_size, model.combined_latent_inwidth)
             self.std_norm = torch.randn(self.latent_layer_shape).to(self.device)
             self.mmd_losses = []
             self.vz_losses = []

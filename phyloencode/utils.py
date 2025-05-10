@@ -107,6 +107,23 @@ def recon_loss(x, y,
         # auxiliary data is (batch_size, num_features)
        return fun.mse_loss(x, y)
 
+def phy_recon_loss(x, y):
+    """
+    Compute the reconstruction loss for phylogenetic data.
+
+    Args:
+        x (torch.Tensor): Reconstructed phylogenetic data in cblv-like format.
+        y (torch.Tensor): Original phylogenetic data in same format.
+
+    Returns:
+        torch.Tensor: Reconstruction loss for phylogenetic data.
+    """
+    # if cblv-like data, use the first two values in the loss
+    # else if augmented cblv-like data, use the first four values in the data
+
+
+    # Use mean squared error for phylogenetic data
+    return fun.mse_loss(x, y)
 
 def cat_recon_loss(x, y):
     """
