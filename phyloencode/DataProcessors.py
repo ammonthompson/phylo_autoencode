@@ -11,6 +11,8 @@ import sklearn.preprocessing as pp
 from sklearn.model_selection import train_test_split
 from typing import List, Dict, Tuple, Optional, Union
 import phyloencode.utils as utils
+from matplotlib.backends.backend_pdf import PdfPages
+import matplotlib.pyplot as plt
 
 # class that contains the DataSet and DataLoaders
 # splits and normalizes/denormalizes it
@@ -22,12 +24,14 @@ import phyloencode.utils as utils
 # 
 class AEData(object):
     def __init__(self, 
-                 data       : Tuple[torch.Tensor, torch.Tensor],
+                #  data       : Tuple[torch.Tensor, torch.Tensor],
+                 phy_data   : torch.Tensor,
+                 aux_data   : torch.Tensor,
                  prop_train : float, 
                  nchannels  : int,
                  char_data_type : str = "categorical", # "continuous" or "categorical"
                  nchars     : int = 0,
-                #  normalizer  = pp.StandardScaler,
+                 num_tips   : Optional[int] = None, # TODO: maybe make this a boolean and do it internally
                  ):
         """
         each tree in data is assumed to be flattend in column-major order
@@ -36,38 +40,61 @@ class AEData(object):
         self.nchannels = nchannels
         self.char_data_type = char_data_type
         self.nchars = nchars
-        self.ntips = int(data[0].shape[1] / nchannels)
-        self.phy_data  = data[0]
-        self.aux_data  = data[1]
-        self.data = np.hstack((self.phy_data, self.aux_data))
-        phy_width = self.phy_data.shape[1]
-        self.ntips = phy_width // nchannels
 
         if self.char_data_type == "categorical" and (self.nchars == 0 or self.nchannels <= 2):
             print("Warning: char_data_type is categorical but nchars == 0 or nchannels <= 2. "
             "Setting char_data_type to continuous.")
             self.char_data_type = "continuous"
 
+        # prepare phy_data and aux_data for splitting into train and val sets  
+        self.max_tips = phy_data.shape[1] / nchannels
+        self.phy_data = phy_data
+        self.aux_data = aux_data
 
+        if num_tips is None:
+            self.data = np.hstack((self.phy_data, self.aux_data))
+        else:
+            self.data = np.hstack((self.phy_data, self.aux_data, num_tips))
+        flat_phy_width = self.phy_data.shape[1]
+        self.max_tips = flat_phy_width // nchannels
 
         # split data 
         self.prop_train = prop_train
         num_train = int(prop_train * self.phy_data.shape[0])
         train_data, val_data = train_test_split(self.data, train_size = num_train, shuffle=True)
-        train_phy_data = train_data[:,:phy_width]
-        train_aux_data = train_data[:,phy_width:]
-        val_phy_data   = val_data[:,:phy_width]
-        val_aux_data   = val_data[:,phy_width:]
+
+        # separate phy and aux data and num_tips if not None
+        if num_tips is None:
+            train_num_tips = None
+            val_num_tips   = None
+            train_aux_data = train_data[:,flat_phy_width:]
+            val_aux_data   = val_data[:,flat_phy_width:]
+            train_phy_data = train_data[:,:flat_phy_width]
+            val_phy_data   = val_data[:,:flat_phy_width]
+        else:
+            train_num_tips = train_data[:,-1]
+            val_num_tips   = val_data[:,-1]
+            train_aux_data = train_data[:,flat_phy_width:-1]
+            val_aux_data   = val_data[:,flat_phy_width:-1]
+            train_phy_data = train_data[:,:flat_phy_width]
+            val_phy_data   = val_data[:,:flat_phy_width]
+ 
 
         # standardize train data
         if self.char_data_type == "continuous":
+            # self.phy_ss = pp.StandardScaler()
+            if num_tips is None:
+                self.phy_ss = pp.StandardScaler()
+            else:
+                self.phy_ss = utils.PositiveStandardScaler()
             # self.phy_ss = utils.NoScalerNormalizer()
             # self.phy_ss = utils.ShiftedStandardScaler(buffer_factor=1.0)
-            self.phy_ss = pp.StandardScaler()
-            # self.phy_ss = pp.MinMaxScaler(feature_range=(0.,1.))
+            # self.phy_ss = pp.MinMaxScaler(feature_range=(-1., 1.)) # if decoder out is Tanh
+            # self.phy_ss = utils.StandardMinMaxScaler() # if decoder out is Tanh
+            # self.phy_ss = pp.MinMaxScaler(feature_range=(0., 1.)) # if decoder out is Sigmoid
             # self.phy_ss = utils.LogitStandardScaler()
         elif self.char_data_type == "categorical":
-            self.phy_ss = utils.StandardScalerPhyCategorical(self.nchars, self.nchannels, self.ntips)
+            self.phy_ss = utils.StandardScalerPhyCategorical(self.nchars, self.nchannels, self.max_tips)
             # self.phy_ss = utils.NoScalerNormalizer()
         else:
             raise ValueError("char_data_type must be 'continuous' or 'categorical'")
@@ -75,13 +102,12 @@ class AEData(object):
 
         self.phy_normalizer = self.phy_ss.fit(train_phy_data)
         self.aux_normalizer = self.aux_ss.fit(train_aux_data)
-        # print(train_phy_data[15,:36])
         self.norm_train_phy_data = self.phy_normalizer.transform(train_phy_data)
-        # print(self.norm_train_phy_data[15,:36])
-        # quit()
         self.norm_train_aux_data = self.aux_normalizer.transform(train_aux_data)
         self.norm_val_phy_data   = self.phy_normalizer.transform(val_phy_data)
         self.norm_val_aux_data   = self.aux_normalizer.transform(val_aux_data)
+
+
 
         # reshape phy data to (num examples, num channels, num tips)
         # (num examples, num channels x num tips) -> (num examples, num channels, num tips)
@@ -99,8 +125,9 @@ class AEData(object):
 
         # create Datasets. __getitem__() returns a tuple (phy, aux)
         # used to create a DataLoader object. See get_dataloaders()
-        self.train_dataset = TreeDataSet(self.norm_train_phy_data, self.norm_train_aux_data)
-        self.val_dataset   = TreeDataSet(self.norm_val_phy_data,   self.norm_val_aux_data)
+        self.train_dataset = TreeDataSet(self.norm_train_phy_data, self.norm_train_aux_data, train_num_tips)
+        self.val_dataset   = TreeDataSet(self.norm_val_phy_data,   self.norm_val_aux_data, val_num_tips)
+
 
     def get_datasets(self) -> Tuple[torch.utils.data.Dataset, torch.utils.data.Dataset]:
         return self.train_dataset, self.val_dataset
@@ -118,11 +145,11 @@ class AEData(object):
                         num_workers = 0) -> Tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
         # data loaders
         self.train_dataloader = DataLoader(self.train_dataset, 
-                                           batch_size=batch_size, 
-                                           shuffle=shuffle, 
-                                           num_workers=num_workers)
+                                           batch_size   = batch_size, 
+                                           shuffle      = shuffle, 
+                                           num_workers  = num_workers)
         self.val_dataloader   = DataLoader(self.val_dataset, 
-                                           batch_size=batch_size)
+                                           batch_size   = batch_size)
         return self.train_dataloader, self.val_dataloader
 
 
@@ -130,21 +157,38 @@ class AEData(object):
 
 # these classes work with datasets output from the Format step in Phyddle
 class TreeDataSet(Dataset):
-    def __init__(self, phy_features, aux_features):
+    def __init__(self, phy_features, aux_features, num_tips: Optional[int] = None):
         super().__init__()
         self.phy_features = phy_features
         self.aux_features = aux_features
         self.length = self.phy_features.shape[0]
+        self.num_tips = num_tips
+        if num_tips is not None:
+            # create mask for phy features  
+            num_tips = np.array(num_tips, dtype = int).flatten()
+            mask = np.zeros(self.phy_features.shape, dtype = bool)
+            for i in range(self.phy_features.shape[0]):
+                mask[i, :, :num_tips[i]] = True                
+            self.mask = torch.tensor(mask, dtype=torch.bool)
+        else:
+            self.mask = None
 
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        return((self.phy_features[index], self.aux_features[index]))
+    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        if self.mask is not None:
+            return self.phy_features[index], self.aux_features[index], self.mask[index]
+        else:
+            return self.phy_features[index], self.aux_features[index]
     
     def __len__(self):
-        return(self.length)
+        return self.length 
     
 
 
-# testing
+
+
+###########
+# testing #
+###########
 
 if __name__ == "__main__":
     import sys

@@ -143,22 +143,30 @@ class PhyloAutoencoder(object):
         aux_mini_batch_losses   = []
         mmd_mini_batch_losses   = []
         vz_mini_batch_losses    = []
-        for phy_batch, aux_batch in data_loader:
+        # for phy_batch, aux_batch, mask_batch in data_loader:
+        for batch in data_loader:
+            if len(batch) == 3:
+                phy_batch, aux_batch, mask_batch = batch
+                mask_batch = mask_batch.to(self.device)
+            else:
+                phy_batch, aux_batch = batch
+                mask_batch = None
             phy_batch = phy_batch.to(self.device)
             aux_batch = aux_batch.to(self.device)
             if not validation:
                 # one step of SGD
-                loss = step_function(phy_batch, aux_batch)
+                loss = step_function(phy_batch, aux_batch, mask_batch)
             elif self.model.latent_layer_type == "GAUSS" and validation:
                 # one step of SGD
-                loss, phy_loss, aux_loss, mmd_loss, vz_loss = step_function(phy_batch, aux_batch)
+
+                loss, phy_loss, aux_loss, mmd_loss, vz_loss = step_function(phy_batch, aux_batch, mask_batch)
                 phy_mini_batch_losses.append(phy_loss)
                 aux_mini_batch_losses.append(aux_loss)
                 mmd_mini_batch_losses.append(mmd_loss)
                 vz_mini_batch_losses.append(vz_loss)
             else:
                 # one step of SGD
-                loss, phy_loss, aux_loss = step_function(phy_batch, aux_batch)
+                loss, phy_loss, aux_loss = step_function(phy_batch, aux_batch, mask_batch)
                 phy_mini_batch_losses.append(phy_loss)
                 aux_mini_batch_losses.append(aux_loss)
 
@@ -184,10 +192,7 @@ class PhyloAutoencoder(object):
             return mean_loss.item()
     
 
-    # def _make_train_step_func(self):
-
-    # def train_step(phy: torch.Tensor, aux: torch.Tensor):
-    def train_step(self, phy: torch.Tensor, aux: torch.Tensor):
+    def train_step(self, phy: torch.Tensor, aux: torch.Tensor, mask: torch.Tensor = None):
         # set model to train mode
         # only returns total loss. validation also returns each component's loss
         self.model.train()
@@ -199,7 +204,8 @@ class PhyloAutoencoder(object):
             # compute recon loss
             phy_loss = self.loss_func(phy_hat, phy, 
                                       self.nchars, self.char_type, 
-                                      self.char_weight, tip1_weight = 1.0)
+                                      self.char_weight, tip1_weight = 1.0,
+                                      mask = mask)
             aux_loss = self.loss_func(aux_hat, aux)
             recon_loss = self.phy_loss_weight * phy_loss + (1-self.phy_loss_weight) * aux_loss
             # compute latent loss
@@ -217,7 +223,8 @@ class PhyloAutoencoder(object):
             phy_hat, aux_hat = self.model((phy, aux))
             phy_loss = self.loss_func(phy_hat, phy,
                                        self.nchars, self.char_type, 
-                                       self.char_weight, tip1_weight = 1.0)
+                                       self.char_weight, tip1_weight = 1.0, 
+                                       mask = mask)
             aux_loss = self.loss_func(aux_hat, aux)
             loss = self.phy_loss_weight * phy_loss + (1-self.phy_loss_weight) * aux_loss
             
@@ -230,15 +237,10 @@ class PhyloAutoencoder(object):
         # Clear the gradient for the next iteration, 
         # preventing accumulation from previous steps.
         self.optimizer.zero_grad()
-        # return loss.item()
         return loss
         
-        # return train_step
 
-    # def _make_val_func(self):
-
-    # def evaluate(phy: torch.Tensor, aux: torch.Tensor):
-    def evaluate(self, phy: torch.Tensor, aux: torch.Tensor):
+    def evaluate(self, phy: torch.Tensor, aux: torch.Tensor, mask: torch.Tensor = None):
         self.model.eval()
         if self.model.latent_layer_type == "GAUSS":
             # get model predictions
@@ -246,8 +248,9 @@ class PhyloAutoencoder(object):
             # compute recon loss
             phy_loss    = self.loss_func(phy_hat, phy, 
                                          self.nchars, self.char_type, 
-                                         self.char_weight, tip1_weight = 1.0)
-            aux_loss    = self.loss_func(aux_hat, aux)
+                                         self.char_weight, tip1_weight = 1.0,
+                                         mask = mask)
+            aux_loss    = self.loss_func(aux_hat, aux, mask = mask)
             recon_loss  = self.phy_loss_weight * phy_loss + (1-self.phy_loss_weight) * aux_loss
             
             # compute latent loss
@@ -266,7 +269,8 @@ class PhyloAutoencoder(object):
             phy_hat, aux_hat = self.model((phy, aux))
             phy_loss = self.loss_func(phy_hat, phy, 
                                       self.nchars, self.char_type, 
-                                      self.char_weight, tip1_weight = 1.0)
+                                      self.char_weight, tip1_weight = 1.0,
+                                      mask = mask)
             aux_loss = self.loss_func(aux_hat, aux)                
             loss = self.phy_loss_weight * phy_loss + (1-self.phy_loss_weight) * aux_loss
             return loss, phy_loss, aux_loss
@@ -304,7 +308,6 @@ class PhyloAutoencoder(object):
         plt.savefig(out_prefix + ".component_loss.pdf", bbox_inches='tight')
         plt.close(fig)
 
-
                 
     def fill_in_loss_comp_fig(self, val_losses, plot_label, ax):
         ax.plot(np.log10(val_losses), label=plot_label, c="b")
@@ -314,7 +317,6 @@ class PhyloAutoencoder(object):
         ax.grid(True)
         ax.set_xticks(ticks=np.arange(0, len(val_losses), step=len(val_losses) // 10))
          
-    
     
     def predict(self, phy: torch.Tensor, aux: torch.Tensor):
         self.model.eval() 
@@ -341,10 +343,11 @@ class PhyloAutoencoder(object):
             print(f"Didn't work, sending to {self.device} instead.")
 
     def set_data_loaders(self, train_loader : torch.utils.data.DataLoader, 
-                               val_loader   : torch.utils.data.DataLoader = None):
+                               val_loader   : torch.utils.data.DataLoader = None,
+                               mask_loader  : torch.utils.data.DataLoader = None):
         self.train_loader = train_loader
         self.val_loader   = val_loader
-
+        self.mask_loader  = mask_loader
 
 
     def make_graph(self):

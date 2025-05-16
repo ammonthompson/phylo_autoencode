@@ -9,26 +9,10 @@ import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.preprocessing import StandardScaler
 import importlib.util
+from matplotlib.backends.backend_pdf import PdfPages
+import matplotlib.pyplot as plt
 
-
-def read_config(config_file: str) -> Dict[str, Union[int, float, str]]:
-    """
-    Read a configuration file and return the settings as a dictionary.
-
-    Args:
-        config_file (str): Path to the configuration file.
-
-    Returns:
-        dict: Dictionary containing the settings.
-    """
-    # read a config file that contains one dictionary called settings
-    spec = importlib.util.spec_from_file_location("settings", config_file)
-    settings_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(settings_module)
-    settings = settings_module.settings
-    return settings
-
-
+# Loss functions
 def mmd_loss(latent_pred, target = None):
 
     device = latent_pred.device
@@ -56,13 +40,12 @@ def recon_loss(x, y,
                num_chars = 0, 
                char_type = "categorical", # [categorical, continuous]
                char_weight = 0.5, 
-               tip1_weight = 0.0):
+               tip1_weight = 0.0,
+               mask = None):
     """
     Compute the reconstruction loss between the reconstructed and original cblv+S and aux data.
-    Default is to weight the first two values in the cblv+S data equally to the rest of the data.
-    And weight the first tip in the phylogenetic data equally to the rest of the data.
-
-    Note: If Char_weight is 0.0, character data informs the tree reconstruction, but not character reconstruction.
+    Note: If Char_weight is 0.0, and num_chars > 0,
+      character data informs the tree reconstruction, but not character reconstruction.
 
     Args:
         x (torch.Tensor): Reconstructed data.
@@ -77,20 +60,23 @@ def recon_loss(x, y,
 
     # check that x is cblv-like data
     if len(x.shape) == 3:
+
         # phylogenetic data contains extra cblv elements and/or character data 
         # dims are (batch_size, num_channels, num_tips)
         if char_weight == 0. or x.shape[1] <= 2 or num_chars == 0:
-            tree_mse_loss = fun.mse_loss(x, y)
+            # print("x.shape: ", x.shape)
+            tree_loss = phy_recon_loss(x, y, mask)
             char_loss = torch.tensor(0.0)
+            char_weight = 0.
         else:
-            tree_mse_loss = fun.mse_loss(x[:,0:(x.shape[1]-num_chars)], y[:,0:(x.shape[1]-num_chars)])
-            if char_type == "categorical": 
-                # compare first 5 tips
-                # print(y[15,(x.shape[1]-num_chars):,0:5])
-                # print(x[15,(x.shape[1]-num_chars):,0:5])
-                char_loss = cat_recon_loss(x[:,(x.shape[1]-num_chars):], y[:,(x.shape[1]-num_chars):])
-            else:
-                char_loss = fun.mse_loss(x[:,(x.shape[1]-num_chars):], y[:,(x.shape[1]-num_chars):])
+            tree_loss = phy_recon_loss(x[:,0:(x.shape[1]-num_chars)], 
+                                       y[:,0:(x.shape[1]-num_chars)], 
+                                       mask[:,0:(x.shape[1]-num_chars)])
+            char_loss = char_recon_loss(x[:,(x.shape[1]-num_chars):], 
+                                        y[:,(x.shape[1]-num_chars):], 
+                                        char_type,
+                                        mask[:,(x.shape[1]-num_chars):])
+
 
         # Phyddle normalizes tree heights to all = 1.
         # So first two values in flattened clbv (+s) should be [1,0]
@@ -100,14 +86,14 @@ def recon_loss(x, y,
             tip1_loss = fun.mse_loss(x[:,0:2,0], y[:,0:2,0]) 
         else:
             tip1_loss = 0.
-
-        return (1 - char_weight) * tree_mse_loss + char_weight * char_loss + tip1_weight * tip1_loss
+        
+        return (1 - char_weight) * tree_loss + char_weight * char_loss + tip1_weight * tip1_loss
 
     else:
         # auxiliary data is (batch_size, num_features)
        return fun.mse_loss(x, y)
 
-def phy_recon_loss(x, y):
+def phy_recon_loss(x, y, mask = None):
     """
     Compute the reconstruction loss for phylogenetic data.
 
@@ -118,14 +104,16 @@ def phy_recon_loss(x, y):
     Returns:
         torch.Tensor: Reconstruction loss for phylogenetic data.
     """
-    # if cblv-like data, use the first two values in the loss
-    # else if augmented cblv-like data, use the first four values in the data
+    # if cblv-like data, use the first two channels in the loss
+    # else if augmented cblv-like data, use the first four channels in the data
+    if mask is not None:
+        tree_loss = (fun.mse_loss(x, y, reduction='none') * mask).mean()  
+    else:
+        tree_loss = fun.mse_loss(x, y) 
 
+    return tree_loss
 
-    # Use mean squared error for phylogenetic data
-    return fun.mse_loss(x, y)
-
-def cat_recon_loss(x, y):
+def char_recon_loss(x, y, char_type = "categorical", mask = None):
     """
     Compute the reconstruction loss for categorical character data.
 
@@ -137,103 +125,42 @@ def cat_recon_loss(x, y):
     Returns:
         torch.Tensor: Reconstruction loss for character data.
     """
-    
-    # Use cross-entropy loss for categorical data
-    # Reshape to (batch_size * ntips, n_classes) for cross-entropy
-    x = x.permute(0, 2, 1).reshape(-1, x.shape[1])  # (batch_size * ntips, n_classes)
-    y = y.permute(0, 2, 1).reshape(-1, y.shape[1])  # (batch_size * ntips, n_classes)
 
-    # Convert one-hot to class indices
-    y = y.argmax(dim=1)  # shape (N,)
-    
-    loss = fun.cross_entropy(x, y, reduction = 'mean')
+    if char_type == "categorical": 
+        # Use cross-entropy loss for categorical data
+        # Reshape to (batch_size * ntips, n_classes) for cross-entropy
+        x = x.permute(0, 2, 1).reshape(-1, x.shape[1])  # (batch_size * ntips, n_classes)
+        y = y.permute(0, 2, 1).reshape(-1, y.shape[1])  # (batch_size * ntips, n_classes)
 
-    return loss
+        # Convert one-hot to class indices
+        y = y.argmax(dim=1)  # shape (N,)
+        
+        char_loss = fun.cross_entropy(x, y, reduction = 'none')
+    else:
+        char_loss = fun.mse_loss(x, y, reduction = 'none')
 
+    if mask is not None:
+        # Apply the mask to the loss
+        char_loss = char_loss * mask
+        char_loss = char_loss.mean()
 
-def conv1d_sequential_outshape(sequential: nn.Sequential, 
-                               input_channels: int, 
-                               input_width: int) -> Tuple[int, int, int]:
+    return char_loss
+
+def aux_recon_loss(x, y):
     """
-    Compute the output shape of a PyTorch Sequential model consisting of Conv1d layers.
+    Compute the reconstruction loss for auxiliary data.
 
     Args:
-        sequential (nn.Sequential): Sequential model with Conv1d layers.
-        input_width (int): Width of the input data (e.g., number of time steps).
-        input_channels (int): Number of input channels.
+        x (torch.Tensor): Reconstructed auxiliary data.
+        y (torch.Tensor): Original auxiliary data.
 
     Returns:
-        tuple: Output shape as (batch_size, channels, width).
+        torch.Tensor: Reconstruction loss for auxiliary data.
     """
-    # Initialize with input shape
-    batch_size = 1  # Assume batch size of 1
-    channels = input_channels
-    width = input_width
+    # Use mean squared error for auxiliary data
+    return fun.mse_loss(x, y)
+    # return fun.l1_loss(x, y)
 
-    # Iterate through the layers in the Sequential model
-    for layer in sequential:
-        if isinstance(layer, nn.Conv1d):
-            width    = conv1d_layer_outwidth(layer, width)
-            channels = layer.out_channels
-
-    return batch_size, channels, width
-
-def tconv1d_sequential_outshape(sequential: nn.Sequential, 
-                                input_channels: int, 
-                                input_width: int) -> Tuple[int, int, int]:
-    """
-    Compute the output shape of a PyTorch Sequential model consisting of ConvTranspose1d layers.
-
-    Args:
-        sequential (nn.Sequential): Sequential model with ConvTranspose1d layers.
-        input_width (int): Width of the input data (e.g., number of time steps).
-        input_channels (int): Number of input channels.
-
-    Returns:
-        tuple: Output shape as (batch_size, channels, width).
-    """
-    # Initialize with input shape
-    batch_size = 1  # Assume batch size of 1
-    channels = input_channels
-    width = input_width
-
-    # Iterate through the layers in the Sequential model
-    for layer in sequential:
-        if isinstance(layer, nn.ConvTranspose1d):
-            width    = tconv1d_layer_outwidth(layer, width)
-            channels = layer.out_channels
-
-    return batch_size, channels, width
-
-def conv1d_layer_outwidth(layer, input_width):
-    # Extract Conv1d parameters
-    kernel_size = layer.kernel_size[0]
-    stride      = layer.stride[0]
-    padding     = layer.padding[0]
-    dilation    = layer.dilation[0]
-
-    # Compute output width using the Conv1d formula
-    width = (input_width + 2 * padding - dilation * (kernel_size - 1) - 1) // stride + 1
-    return width
-
-def tconv1d_layer_outwidth(layer, input_width):
-    # Extract ConvTranspose1d parameters
-    kernel_size    = layer.kernel_size[0]
-    stride         = layer.stride[0]
-    padding        = layer.padding[0]
-    output_padding = layer.output_padding[0]
-    dilation       = layer.dilation[0]
-    # Compute output width using the ConvTranspose1d formula
-    width = (input_width - 1) * stride - 2 * padding + dilation * (kernel_size - 1) + output_padding + 1
-    return width
-
-class SoftClip(nn.Module):
-    def __init__(self, low=1e-6):
-        super().__init__()
-        self.low = low
-
-    def forward(self, x):
-        return self.low + (1 - 2 * self.low) * torch.sigmoid(x)
 
 
 # classes for MMD2 loss to encourage latent space to be be N(0,1) distributed
@@ -282,10 +209,10 @@ class MMDLoss(nn.Module):
         k_xy = K[:X_size, X_size:]
         k_yy = K[X_size:, X_size:]
         # MMD_loss = torch.sqrt((k_xx - 2 * k_xy + k_yy).sum())/sum(X.shape)    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
-        MMD2_loss = k_xx.mean() - 2 * k_xy.mean() + k_yy.mean()   # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
-        # MMD2_loss = (k_xx - 2 * k_xy + k_yy).mean()    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
-        # MMD_loss = torch.sqrt(MMD2_loss) #/ sum(X.shape)    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
-        return MMD2_loss
+        # MMD2_loss = k_xx.mean() - 2 * k_xy.mean() + k_yy.mean()   # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
+        MMD2_loss = (k_xx - 2 * k_xy + k_yy).mean()    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
+        MMD_loss = torch.sqrt(MMD2_loss) #   # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
+        return MMD_loss
     
 class VZLoss(nn.Module):
     def __init__(self, device):
@@ -293,7 +220,28 @@ class VZLoss(nn.Module):
         self.kernel = RBF(device)
     
     def forward(self, X, Y):
+
+        # TESTING
+        # X_centered = X - X.mean(dim=0, keepdim=True)
+        # std = X.std(dim=0, unbiased=False, keepdim=True)
+        # X_norm = X_centered / (std + 1e-8)  # Normalize each feature to zero mean and unit variance
+
+        # corr_matrix = (X_norm.T @ X_norm) / X.shape[0]  # Shape: [latent_dim, latent_dim]
+        # corr_off_diag = corr_matrix[~torch.eye(corr_matrix.size(0), dtype=bool, device=X.device)]
+        
         return self.kernel(X.T, Y.T).var()
+        # return corr_off_diag.abs().mean()
+        # return self.kernel(X.T, Y.T).var() + corr_off_diag.abs().mean()
+    
+
+# Soft clipping function
+class SoftClip(nn.Module):
+    def __init__(self, low=1e-6):
+        super().__init__()
+        self.low = low
+
+    def forward(self, x):
+        return self.low + (1 - 2 * self.low) * torch.sigmoid(x)
 
 
 # these classes work with datasets output from the Format step in Phyddle
@@ -463,11 +411,44 @@ class LogitStandardScaler(BaseEstimator, TransformerMixin):
         X_logit = self.scaler.inverse_transform(X_scaled)
         return self._sigmoid(X_logit)
     
+class StandardMinMaxScaler(BaseEstimator, TransformerMixin):
+    def fit(self, X, y=None):
+        X = np.asarray(X)
+        self.mean = X.mean(axis=0)
+        self.std = X.std(axis=0)
+        self.std[np.where(self.std == 0)] = 1.
+        X_std = (X - self.mean) / self.std
+        self.min = X_std.min(axis=0)
+        self.max = X_std.max(axis=0)
+        return self
 
-# DONT USE for cblv tree. 
-# this is a modified version of sklearn's StandardScaler
-# it is used to transform the data to a log scale before standardizing
-########### this performs pretty poorly. Dont use.
+    def transform(self, X):
+        X = np.asarray(X)
+        X_std = (X - self.mean) / self.std
+        # Avoid division by zero
+        scale = np.where(self.max != self.min, self.max - self.min, 1)
+        X_scaled = 2 * (X_std - self.min) / scale - 1
+        return X_scaled
+
+    def inverse_transform(self, X_scaled):
+        X_std = ((X_scaled + 1) / 2) * (self.max - self.min) + self.min
+        return X_std * self.std + self.mean
+    
+class LogScaler(BaseEstimator, TransformerMixin):
+    def __init__(self, min_pos = 1e-8):
+        super().__init__()
+        self.min_positive_values = min_pos
+
+    def fit(self, X, y=None):
+        pass
+
+    def transform(self, X):
+        X = np.asarray(X)
+        return(np.log(X + self.min_positive_values))
+
+    def inverse_transform(self, X):
+        return(np.exp(X) - self.min_positive_values)    
+
 class LogStandardScaler(BaseEstimator, TransformerMixin):
     def __init__(self, base=np.float32(np.e)):
         super().__init__()
@@ -525,7 +506,177 @@ class LogStandardScaler(BaseEstimator, TransformerMixin):
         # Reverse the shift
         return X_exp - self.min_positive_values
     
+class PositiveStandardScaler(BaseEstimator, TransformerMixin):
+    def __init__(self):
+        super().__init__()
+        self.mean = None
+        self.std = None
+        self.mask = None
+    
+    def fit(self, X, y=None):
+        self.mask = X > 0
+        self.mask[:, 0:2] = True  # Always include the first two columns
+
+        sum_X = np.sum(X * self.mask, axis=0)
+
+        num_nonzero = np.sum(self.mask, axis=0)
+        num_nonzero[num_nonzero <= 1] = 2.
+
+        self.mean = sum_X / num_nonzero
+        self.std = np.sqrt(np.sum((X - self.mean) ** 2, axis=0) / (num_nonzero - 1))
+        self.std[self.std == 0] = 1.0  # Avoid division by zero
+        return self
+    
+    def transform(self, X):
+        X = np.array((X - self.mean) / self.std, dtype=np.float32)
+        return X
+    
+    def inverse_transform(self, X):
+        X = np.array((X * self.std) + self.mean, dtype=np.float32)
+        return X   
+
+# other functions
+def read_config(config_file: str) -> Dict[str, Union[int, float, str]]:
+    """
+    Read a configuration file and return the settings as a dictionary.
+
+    Args:
+        config_file (str): Path to the configuration file.
+
+    Returns:
+        dict: Dictionary containing the settings.
+    """
+    # read a config file that contains one dictionary called settings
+    spec = importlib.util.spec_from_file_location("settings", config_file)
+    settings_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(settings_module)
+    settings = settings_module.settings
+    return settings
+
+def get_outshape(sequential: nn.Sequential, input_channels: int, input_width: int) -> Tuple[int, int, int]:
+    
+    """
+    Compute the output shape of a PyTorch Sequential model.
+    Args:
+        sequential (nn.Sequential): Sequential model.       
+        input_shape (tuple): Input shape as (batch_size, channels, width).
+    Returns:
+        tuple: Output shape as (batch_size, channels, width).
+    """
+    # Initialize with input shape
+    batch_size, channels, width = 1, input_channels, input_width
+    # Iterate through the layers in the Sequential model
+    for layer in sequential:
+        if isinstance(layer, nn.Conv1d):
+            width = conv1d_layer_outwidth(layer, width)
+            channels = layer.out_channels
+        elif isinstance(layer, nn.ConvTranspose1d):
+            width = tconv1d_layer_outwidth(layer, width)
+            channels = layer.out_channels
+     
+    return batch_size, channels, width
 
 
+# def conv1d_sequential_outshape(sequential: nn.Sequential, 
+#                                input_channels: int, 
+#                                input_width: int) -> Tuple[int, int, int]:
+#     """
+#     Compute the output shape of a PyTorch Sequential model consisting of Conv1d layers.
 
-# Print profiling results
+#     Args:
+#         sequential (nn.Sequential): Sequential model with Conv1d layers.
+#         input_width (int): Width of the input data (e.g., number of time steps).
+#         input_channels (int): Number of input channels.
+
+#     Returns:
+#         tuple: Output shape as (batch_size, channels, width).
+#     """
+#     # Initialize with input shape
+#     batch_size = 1  # Assume batch size of 1
+#     channels = input_channels
+#     width = input_width
+
+#     # Iterate through the layers in the Sequential model
+#     for layer in sequential:
+#         if isinstance(layer, nn.Conv1d):
+#             width    = conv1d_layer_outwidth(layer, width)
+#             channels = layer.out_channels
+
+#     return batch_size, channels, width
+
+# def tconv1d_sequential_outshape(sequential: nn.Sequential, 
+#                                 input_channels: int, 
+#                                 input_width: int) -> Tuple[int, int, int]:
+#     """
+#     Compute the output shape of a PyTorch Sequential model consisting of ConvTranspose1d layers.
+
+#     Args:
+#         sequential (nn.Sequential): Sequential model with ConvTranspose1d layers.
+#         input_width (int): Width of the input data (e.g., number of time steps).
+#         input_channels (int): Number of input channels.
+
+#     Returns:
+#         tuple: Output shape as (batch_size, channels, width).
+#     """
+#     # Initialize with input shape
+#     batch_size = 1  # Assume batch size of 1
+#     channels = input_channels
+#     width = input_width
+
+#     # Iterate through the layers in the Sequential model
+#     for layer in sequential:
+#         if isinstance(layer, nn.ConvTranspose1d):
+#             width    = tconv1d_layer_outwidth(layer, width)
+#             channels = layer.out_channels
+
+#     return batch_size, channels, width
+
+def conv1d_layer_outwidth(layer, input_width):
+    # Extract Conv1d parameters
+    kernel_size = layer.kernel_size[0]
+    stride      = layer.stride[0]
+    padding     = layer.padding[0]
+    dilation    = layer.dilation[0]
+
+    # Compute output width using the Conv1d formula
+    width = (input_width + 2 * padding - dilation * (kernel_size - 1) - 1) // stride + 1
+    return width
+
+def tconv1d_layer_outwidth(layer, input_width):
+    # Extract ConvTranspose1d parameters
+    kernel_size    = layer.kernel_size[0]
+    stride         = layer.stride[0]
+    padding        = layer.padding[0]
+    output_padding = layer.output_padding[0]
+    dilation       = layer.dilation[0]
+    # Compute output width using the ConvTranspose1d formula
+    width = (input_width - 1) * stride - 2 * padding + dilation * (kernel_size - 1) + output_padding + 1
+    return width
+
+def get_numtips(tree_data) ->  torch.Tensor:
+    """
+    Get the number of tips from the tree data.
+
+    Args:
+        tree_data (torch.Tensor): Tree data tensor.
+
+    Returns:
+        int: Number of tips.
+    """
+    # tree_data should have shape (batch_size, num_channels, num_tips)
+    # get the number of tips from the length of zero paddings at the end of each tree
+
+    # convert to numpy array
+    if isinstance(tree_data, torch.Tensor):
+        # check if tree_data is on GPU
+         tree_data = tree_data.numpy()
+
+    num_tips = []
+    for i in range(tree_data.shape[0]):
+        # get the number of tips from the length of zero paddings at the end of each tree
+        tree_cumsum = tree_data.cumsum(tree_data[i,1,...] == 0, axis=2)
+        tree_cummax = tree_cumsum.max()
+        first_max = np.where(tree_cumsum == tree_cummax)[0]
+        num_tips.append(first_max)
+
+    return torch.Tensor(num_tips, dtype = torch.int32)
