@@ -139,17 +139,19 @@ def main():
 
     # get formated tree data
     with h5py.File(data_fn, "r") as f:
-        # idx = np.where(f['aux_data_names'][...][0] == b'num_taxa')[0][0]
+        num_tips_idx = np.where(f['aux_data_names'][...][0] == b'num_taxa')[0][0]
         # phy_data = torch.tensor(f['phy_data'][0:num_subset,...], dtype = torch.float32)
         aux_data = torch.tensor(f['aux_data'][0:num_subset,...], dtype = torch.float32)
         if len(aux_data.shape) != 2: # i.e. is an array but should be a matrix with 1 column
             aux_data = aux_data.reshape((aux_data.shape[0], 1))
         phy_data = np.array(f['phy_data'][0:num_subset,...], dtype = np.float32)
         phy_data = phy_data.reshape((phy_data.shape[0], phy_data.shape[1]//max_tips, max_tips), order = "F")
-        phy_data = phy_data[:,0:nchannels,:]
+        phy_data = phy_data[:,0:nchannels,:] 
+        # phy_data = phy_data[:,0:nchannels,0:100]  # TESTING
         phy_data = phy_data.reshape((phy_data.shape[0],-1), order = "F")
         phy_data = torch.tensor(phy_data, dtype = torch.float32)
-        # aux_data = torch.tensor(f['aux_data'][0:num_subset,idx], dtype = torch.float32).view(-1,1)
+        # aux_data = torch.tensor(f['aux_data'][0:num_subset, num_tips_idx], dtype = torch.float32).view(-1,1)
+        num_tips = torch.tensor(f['aux_data'][0:num_subset,num_tips_idx], dtype = torch.float32).view(-1,1)
         
         # test_phy_data = torch.tensor(f['phy_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
         test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
@@ -158,9 +160,10 @@ def main():
         test_phy_data = np.array(f['phy_data'][num_subset:(num_subset + 500),...], dtype = np.float32)
         test_phy_data = test_phy_data.reshape((test_phy_data.shape[0], test_phy_data.shape[1]//max_tips, max_tips), order = "F")
         test_phy_data = test_phy_data[:,0:nchannels,:]
+        # test_phy_data = test_phy_data[:,0:nchannels,0:100]  # TESTING
         test_phy_data = test_phy_data.reshape((test_phy_data.shape[0],-1), order = "F")
         test_phy_data = torch.tensor(test_phy_data, dtype = torch.float32)
-        # test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500),idx], dtype = torch.float32).view(-1,1)
+        # test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500), num_tips_idx], dtype = torch.float32).view(-1,1)
 
     
     # checking how much aux_data is helping encode tree patterns
@@ -168,13 +171,15 @@ def main():
     # aux_data = aux_data[rand_idx]
 
     # create Data container
-    ae_data = ph.DataProcessors.AEData(data        = (phy_data, aux_data), 
+    ae_data = ph.DataProcessors.AEData(#data        = (phy_data, aux_data), 
+                                       phy_data    = phy_data,
+                                       aux_data    = aux_data,
                                        prop_train  = 0.85,  
                                        nchannels   = nchannels, 
-                                       nchars      = nchars)
+                                       nchars      = nchars,
+                                       num_tips    = num_tips)
     
-    ae_data.save_normalizers(out_prefix)
-
+    
     # create data loaders
     trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = batch_size, 
                                                      shuffle     = True, 
@@ -215,6 +220,7 @@ def main():
     latent_dat = tree_autoencoder.tree_encode(rand_train_phy, rand_train_aux)
     latent_dat_df = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), columns = None, index = None)
     latent_dat_df.to_csv(out_prefix + ".traindat_latent.csv", header = False, index = False)
+    ae_data.save_normalizers(out_prefix)
 
     tree_autoencoder.plot_losses(out_prefix)
 

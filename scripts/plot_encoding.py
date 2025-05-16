@@ -191,7 +191,7 @@ if __name__ == "__main__":
         df_2 = None
 
    # create encoding  plot
-    plot_distributions(df_1, df_2, None, out_prefix + "_encoded_plots.pdf")
+    plot_distributions(df_1, df_2, None, None, out_prefix + "_encoded_plots.pdf")
     # PCA analysis
     if df_1.shape[0] >= df_1.shape[1]:
         # Standardize and perform PCA on the first file
