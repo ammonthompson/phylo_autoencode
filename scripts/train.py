@@ -208,10 +208,12 @@ def main():
                                         vz_lambda       = vz_lambda
                                         )
     
-    # Load data loaders and Train model and plot
+    # Load data loaders and Train model
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
     tree_autoencoder.train(num_epochs = num_epochs, seed = rand_seed)
+    # save model and normalizers
     tree_autoencoder.save_model(out_prefix + ".ae_trained.pt")
+    ae_data.save_normalizers(out_prefix)
 
     # make encoded tree file for 5,000 random trees from training data
     rand_idx = np.random.randint(0, ae_data.prop_train * num_subset, size = min(5000, num_subset))
@@ -220,18 +222,18 @@ def main():
     latent_dat = tree_autoencoder.tree_encode(rand_train_phy, rand_train_aux)
     latent_dat_df = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), columns = None, index = None)
     latent_dat_df.to_csv(out_prefix + ".traindat_latent.csv", header = False, index = False)
-    ae_data.save_normalizers(out_prefix)
 
     tree_autoencoder.plot_losses(out_prefix)
 
     #############################
     # Test Data Prediction 
-    #############################
     # make predictions with trained model on test data
+    #############################
+
     # save true values of test data in cblv format
     phy_true_df = pd.DataFrame(test_phy_data.numpy())
-    phy_true_df.to_csv(out_prefix + ".phy_true.cblv", header = False, index = False)
     aux_true_df = pd.DataFrame(test_aux_data.numpy())
+    phy_true_df.to_csv(out_prefix + ".phy_true.cblv", header = False, index = False)
     aux_true_df.to_csv(out_prefix + ".aux_true.csv", header = False, index = False)
 
     # normalize test data
@@ -251,8 +253,8 @@ def main():
 
     # save predictions to file
     phy_pred_df = pd.DataFrame(phy_pred)
-    phy_pred_df.to_csv(out_prefix + ".phy_pred.cblv", header = False, index = False)
     aux_pred_df = pd.DataFrame(auxpred)
+    phy_pred_df.to_csv(out_prefix + ".phy_pred.cblv", header = False, index = False)
     aux_pred_df.to_csv(out_prefix + ".aux_pred.csv", header  = False, index = False)
 
 

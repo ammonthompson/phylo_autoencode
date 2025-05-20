@@ -52,7 +52,7 @@ def plot_distributions(df_1, df_2, percent_variance = None,
             hivar = np.array(percent_variance)[np.cumsum(percent_variance) < 100]
             total_variance = np.round(sum(hivar),  decimals=1)
             plt.figure()
-            plt.bar([x for x in range(1, len(hivar) + 1)], hivar)
+            plt.bar([x for x in range(len(hivar))], hivar)
             if ref_percent_variance_explained is not None:
                 plt.plot(ref_percent_variance_explained, color="red", label="Reference")
                 plt.legend()
