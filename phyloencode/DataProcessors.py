@@ -65,19 +65,19 @@ class AEData(object):
 
         # separate phy and aux data and num_tips if not None
         if num_tips is None:
-            train_num_tips = None
-            val_num_tips   = None
+            train_phy_data = train_data[:,:flat_phy_width]
+            val_phy_data   = val_data[:,:flat_phy_width]
             train_aux_data = train_data[:,flat_phy_width:]
             val_aux_data   = val_data[:,flat_phy_width:]
+            train_num_tips = None
+            val_num_tips   = None
+        else:
             train_phy_data = train_data[:,:flat_phy_width]
             val_phy_data   = val_data[:,:flat_phy_width]
-        else:
-            train_num_tips = train_data[:,-1]
-            val_num_tips   = val_data[:,-1]
             train_aux_data = train_data[:,flat_phy_width:-1]
             val_aux_data   = val_data[:,flat_phy_width:-1]
-            train_phy_data = train_data[:,:flat_phy_width]
-            val_phy_data   = val_data[:,:flat_phy_width]
+            train_num_tips = train_data[:,-1]
+            val_num_tips   = val_data[:,-1]
  
 
         # standardize train data
@@ -106,8 +106,6 @@ class AEData(object):
         self.norm_train_aux_data = self.aux_normalizer.transform(train_aux_data)
         self.norm_val_phy_data   = self.phy_normalizer.transform(val_phy_data)
         self.norm_val_aux_data   = self.aux_normalizer.transform(val_aux_data)
-
-
 
         # reshape phy data to (num examples, num channels, num tips)
         # (num examples, num channels x num tips) -> (num examples, num channels, num tips)
@@ -163,15 +161,15 @@ class TreeDataSet(Dataset):
         self.aux_features = aux_features
         self.length = self.phy_features.shape[0]
         self.num_tips = num_tips
-        if num_tips is not None:
+        if num_tips is None:
+            self.mask = None
+        else:
             # create mask for phy features  
             num_tips = np.array(num_tips, dtype = int).flatten()
             mask = np.zeros(self.phy_features.shape, dtype = bool)
             for i in range(self.phy_features.shape[0]):
                 mask[i, :, :num_tips[i]] = True                
             self.mask = torch.tensor(mask, dtype=torch.bool)
-        else:
-            self.mask = None
 
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         if self.mask is not None:

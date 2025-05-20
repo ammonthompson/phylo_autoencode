@@ -64,7 +64,6 @@ def recon_loss(x, y,
         # phylogenetic data contains extra cblv elements and/or character data 
         # dims are (batch_size, num_channels, num_tips)
         if char_weight == 0. or x.shape[1] <= 2 or num_chars == 0:
-            # print("x.shape: ", x.shape)
             tree_loss = phy_recon_loss(x, y, mask)
             char_loss = torch.tensor(0.0)
             char_weight = 0.
@@ -160,6 +159,23 @@ def aux_recon_loss(x, y):
     # Use mean squared error for auxiliary data
     return fun.mse_loss(x, y)
     # return fun.l1_loss(x, y)
+
+# developing
+def losses(pred, true, mask, char_type):
+    # separate components
+    phy_hat, char_hat, aux_hat, latent_hat = pred
+    phy, char, aux, std_norm = true
+
+    # recon loss
+    phy_loss    = phy_recon_loss(phy_hat, phy, tip1_weight = 1., mask = mask)
+    char_loss   = char_recon_loss(char_hat, char, char_type, mask) if char is not None else 0.
+    aux_loss    = aux_recon_loss(aux_hat, aux)
+
+    # latent loss
+    mmd_loss    = mmd_loss(latent_hat, std_norm)
+    vz_loss     = vz_loss(latent_hat, std_norm)
+
+    return phy_loss, char_loss, aux_loss, mmd_loss, vz_loss
 
 
 
@@ -506,6 +522,7 @@ class LogStandardScaler(BaseEstimator, TransformerMixin):
         # Reverse the shift
         return X_exp - self.min_positive_values
     
+
 class PositiveStandardScaler(BaseEstimator, TransformerMixin):
     def __init__(self):
         super().__init__()
@@ -515,25 +532,30 @@ class PositiveStandardScaler(BaseEstimator, TransformerMixin):
     
     def fit(self, X, y=None):
         self.mask = X > 0
-        self.mask[:, 0:2] = True  # Always include the first two columns
+        self.mask[:, 0:2] = True  # Always include the first elements
 
         sum_X = np.sum(X * self.mask, axis=0)
-
         num_nonzero = np.sum(self.mask, axis=0)
-        num_nonzero[num_nonzero <= 1] = 2.
 
-        self.mean = sum_X / num_nonzero
-        self.std = np.sqrt(np.sum((X - self.mean) ** 2, axis=0) / (num_nonzero - 1))
-        self.std[self.std == 0] = 1.0  # Avoid division by zero
+        invalid = num_nonzero <= 1
+        num_nonzero_safe = np.where(invalid, 2, num_nonzero)
+
+        self.mean = sum_X / num_nonzero_safe
+
+        residuals = (X - self.mean) * self.mask
+        self.std = np.sqrt(np.sum(residuals ** 2, axis=0) / (num_nonzero_safe - 1))
+
+        self.mean[invalid] = 0.
+        self.std[invalid] = 1.
+        self.std[self.std == 0] = 1.0
         return self
-    
+
     def transform(self, X):
-        X = np.array((X - self.mean) / self.std, dtype=np.float32)
-        return X
+        return np.array((X - self.mean) / self.std, dtype=np.float32)
     
     def inverse_transform(self, X):
-        X = np.array((X * self.std) + self.mean, dtype=np.float32)
-        return X   
+        return np.array((X * self.std) + self.mean, dtype=np.float32)
+
 
 # other functions
 def read_config(config_file: str) -> Dict[str, Union[int, float, str]]:
@@ -575,61 +597,6 @@ def get_outshape(sequential: nn.Sequential, input_channels: int, input_width: in
             channels = layer.out_channels
      
     return batch_size, channels, width
-
-
-# def conv1d_sequential_outshape(sequential: nn.Sequential, 
-#                                input_channels: int, 
-#                                input_width: int) -> Tuple[int, int, int]:
-#     """
-#     Compute the output shape of a PyTorch Sequential model consisting of Conv1d layers.
-
-#     Args:
-#         sequential (nn.Sequential): Sequential model with Conv1d layers.
-#         input_width (int): Width of the input data (e.g., number of time steps).
-#         input_channels (int): Number of input channels.
-
-#     Returns:
-#         tuple: Output shape as (batch_size, channels, width).
-#     """
-#     # Initialize with input shape
-#     batch_size = 1  # Assume batch size of 1
-#     channels = input_channels
-#     width = input_width
-
-#     # Iterate through the layers in the Sequential model
-#     for layer in sequential:
-#         if isinstance(layer, nn.Conv1d):
-#             width    = conv1d_layer_outwidth(layer, width)
-#             channels = layer.out_channels
-
-#     return batch_size, channels, width
-
-# def tconv1d_sequential_outshape(sequential: nn.Sequential, 
-#                                 input_channels: int, 
-#                                 input_width: int) -> Tuple[int, int, int]:
-#     """
-#     Compute the output shape of a PyTorch Sequential model consisting of ConvTranspose1d layers.
-
-#     Args:
-#         sequential (nn.Sequential): Sequential model with ConvTranspose1d layers.
-#         input_width (int): Width of the input data (e.g., number of time steps).
-#         input_channels (int): Number of input channels.
-
-#     Returns:
-#         tuple: Output shape as (batch_size, channels, width).
-#     """
-#     # Initialize with input shape
-#     batch_size = 1  # Assume batch size of 1
-#     channels = input_channels
-#     width = input_width
-
-#     # Iterate through the layers in the Sequential model
-#     for layer in sequential:
-#         if isinstance(layer, nn.ConvTranspose1d):
-#             width    = tconv1d_layer_outwidth(layer, width)
-#             channels = layer.out_channels
-
-#     return batch_size, channels, width
 
 def conv1d_layer_outwidth(layer, input_width):
     # Extract Conv1d parameters

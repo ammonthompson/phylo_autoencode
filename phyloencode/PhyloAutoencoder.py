@@ -12,10 +12,11 @@ from phyloencode import utils
 # from sklearn.linear_model import LinearRegression
 import time
 import os
+from typing import List, Dict, Tuple, Optional, Union
 
 
 class PhyloAutoencoder(object):
-    def __init__(self, model, optimizer, loss_func, 
+    def __init__(self, model, optimizer = optim.Adam, loss_func = torch.nn.MSELoss, 
                  batch_size=128, phy_loss_weight=0.5, char_weight=0.5,
                  mmd_lambda=None, vz_lambda=None):
         '''
@@ -136,14 +137,15 @@ class PhyloAutoencoder(object):
         if data_loader == None:
             return None
 
-        # perform step and return loss
-        # loop through all batches of train or val data
+        # track loss components for plotting and printing to screen
         mini_batch_losses       = []
         phy_mini_batch_losses   = []
         aux_mini_batch_losses   = []
         mmd_mini_batch_losses   = []
         vz_mini_batch_losses    = []
-        # for phy_batch, aux_batch, mask_batch in data_loader:
+
+        # perform step and return loss
+        # loop through all batches of train or val data
         for batch in data_loader:
             if len(batch) == 3:
                 phy_batch, aux_batch, mask_batch = batch
@@ -191,7 +193,6 @@ class PhyloAutoencoder(object):
         else:
             return mean_loss.item()
     
-
     def train_step(self, phy: torch.Tensor, aux: torch.Tensor, mask: torch.Tensor = None):
         # set model to train mode
         # only returns total loss. validation also returns each component's loss
@@ -201,6 +202,7 @@ class PhyloAutoencoder(object):
         if self.model.latent_layer_type == "GAUSS":
             # get model predictions
             phy_hat, aux_hat, latent = self.model((phy, aux))
+
             # compute recon loss
             phy_loss = self.loss_func(phy_hat, phy, 
                                       self.nchars, self.char_type, 
@@ -208,6 +210,7 @@ class PhyloAutoencoder(object):
                                       mask = mask)
             aux_loss = self.loss_func(aux_hat, aux)
             recon_loss = self.phy_loss_weight * phy_loss + (1-self.phy_loss_weight) * aux_loss
+
             # compute latent loss
             std_norm = torch.randn(latent.shape).to(self.device)
             mmd_loss = utils.mmd_loss(latent, std_norm)
@@ -215,8 +218,8 @@ class PhyloAutoencoder(object):
                 vz_loss  = utils.vz_loss(latent, std_norm)
             else:
                 vz_loss = torch.tensor(0.0).to(self.device)
-            
             latent_loss = self.mmd_lambda * mmd_loss + self.vz_lambda * vz_loss
+            
             # compute total loss
             loss = recon_loss + latent_loss                        
         else:
@@ -239,7 +242,6 @@ class PhyloAutoencoder(object):
         self.optimizer.zero_grad()
         return loss
         
-
     def evaluate(self, phy: torch.Tensor, aux: torch.Tensor, mask: torch.Tensor = None):
         self.model.eval()
         if self.model.latent_layer_type == "GAUSS":
@@ -277,7 +279,6 @@ class PhyloAutoencoder(object):
 
         # return evaluate
 
-        
     def plot_losses(self, out_prefix = "AElossplot"):
         fig = plt.figure(figsize=(11, 8))
         plt.plot(np.log10(self.losses), label='Training Loss', c="b")
@@ -308,7 +309,6 @@ class PhyloAutoencoder(object):
         plt.savefig(out_prefix + ".component_loss.pdf", bbox_inches='tight')
         plt.close(fig)
 
-                
     def fill_in_loss_comp_fig(self, val_losses, plot_label, ax):
         ax.plot(np.log10(val_losses), label=plot_label, c="b")
         ax.set_title(f"{plot_label} Loss")
@@ -316,9 +316,8 @@ class PhyloAutoencoder(object):
         ax.set_ylabel('Log10 Loss')
         ax.grid(True)
         ax.set_xticks(ticks=np.arange(0, len(val_losses), step=len(val_losses) // 10))
-         
-    
-    def predict(self, phy: torch.Tensor, aux: torch.Tensor):
+        
+    def predict(self, phy: torch.Tensor, aux: torch.Tensor) -> Tuple[np.ndarray, np.ndarray]:
         self.model.eval() 
         phy = phy.to(self.device)
         aux = aux.to(self.device)
@@ -348,7 +347,6 @@ class PhyloAutoencoder(object):
         self.train_loader = train_loader
         self.val_loader   = val_loader
         self.mask_loader  = mask_loader
-
 
     def make_graph(self):
         if self.train_loader and self.writer:
@@ -381,9 +379,6 @@ class PhyloAutoencoder(object):
     def save_model(self, filename):
         torch.save(self.model, filename)
 
-
-    # Inference
-
     def tree_encode(self, phy: torch.Tensor, aux: torch.Tensor):
         self.model.eval() 
         phy = phy.to(self.device)
@@ -414,7 +409,6 @@ class PhyloAutoencoder(object):
         self.model.train()
 
         return(shared_latent_out.flatten(start_dim=1))
-    
 
     def get_latent_shape(self):
         return self.model.num_structured_latent_channels, self.model.reshaped_shared_latent_width
