@@ -110,7 +110,9 @@ def phy_recon_loss(x, y, mask = None):
     else:
         tree_loss = fun.mse_loss(x, y) 
 
-    return tree_loss
+    tip1_loss = fun.mse_loss(x[:,0:2,0], y[:,0:2,0]) 
+
+    return tree_loss + tip1_loss
 
 def char_recon_loss(x, y, char_type = "categorical", mask = None):
     """
@@ -166,16 +168,18 @@ def losses(pred : torch.tensor, true : torch.tensor, mask : torch.tensor, char_t
     phy_hat, char_hat, aux_hat, latent_hat = pred
     phy, char, aux, std_norm = true
 
+    device = phy_hat.device
+
     # recon loss
-    phy_loss    = phy_recon_loss(phy_hat, phy, tip1_weight = 1., mask = mask)
-    char_loss   = char_recon_loss(char_hat, char, char_type, mask) if char is not None else 0.
+    phy_loss    = phy_recon_loss(phy_hat, phy, mask = mask)
+    char_loss   = char_recon_loss(char_hat, char, char_type, mask) if char is not None else torch.tensor(0.).to(device)
     aux_loss    = aux_recon_loss(aux_hat, aux)
 
     # latent loss
-    mmd_loss    = mmd_loss(latent_hat, std_norm) if latent_hat is not None else 0.
-    vz_loss     = vz_loss(latent_hat, std_norm) if latent_hat is not None else 0.
+    latent_mmd_loss    = mmd_loss(latent_hat, std_norm) if latent_hat is not None else torch.tensor(0.).to(device)
+    latent_vz_loss     = vz_loss(latent_hat, std_norm) if latent_hat is not None else torch.tensor(0.).to(device)
 
-    return phy_loss, char_loss, aux_loss, mmd_loss, vz_loss
+    return phy_loss, char_loss, aux_loss, latent_mmd_loss, latent_vz_loss
 
 
 class PhyLoss(object):
@@ -210,7 +214,7 @@ class PhyLoss(object):
 
         # loss weights
         self.phy_w  = weights[0]
-        self.char_w = weights[1] if weights[1] is not None else 0.
+        self.char_w = weights[1]
         self.aux_w  = weights[2]
         self.mmd_w  = weights[3]
         self.vz_w   = weights[4]
@@ -236,6 +240,7 @@ class PhyLoss(object):
         self._append_minibatch_losses(total_loss, phy_loss, char_loss, aux_loss, mmd_loss, vz_loss)
 
         return total_loss
+
 
     def append_mean_batch_loss(self):
         # averages the batch loss arrays and return 

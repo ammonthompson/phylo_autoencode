@@ -41,11 +41,13 @@ class PhyloAutoencoder(object):
 
         self.nchars             = self.model.num_chars
         self.char_type          = self.model.char_type
+
+        self.latent_shape = (self.batch_size, self.model.latent_outwidth)
         
         # TODO: do a proper error handing at some point 
         # (should be passed as a parameter)
 
-        self.weights = (phy_loss_weight, char_weight, mmd_lambda, vz_lambda)
+        self.weights = (phy_loss_weight, char_weight, 1-phy_loss_weight, mmd_lambda, vz_lambda)
 
         self.train_loss  = utils.PhyLoss(self.weights, self.char_type, self.model.latent_layer_type)
         self.val_loss    = utils.PhyLoss(self.weights, self.char_type, self.model.latent_layer_type)
@@ -100,11 +102,6 @@ class PhyloAutoencoder(object):
         if data_loader == None:
             return None
 
-        if self.model.latent_layer_type == "GAUSS":
-            std_norm =  torch.randn(self.model.latent_outwidth).to(self.device)
-        else:
-            std_norm = None
-
         # perform step and return loss
         # loop through all batches of train or val data
         for batch in data_loader:
@@ -116,9 +113,12 @@ class PhyloAutoencoder(object):
                 mask_batch = None
             phy_batch = phy_batch.to(self.device)
             aux_batch = aux_batch.to(self.device)
+               
+            # target latent distribution sample
+            self.std_norm = torch.randn(self.latent_shape).to(self.device) if self.model.latent_layer_type == "GAUSS" else None
 
             # perform SGD step for batch
-            step_function(phy_batch, aux_batch, mask_batch, std_norm)
+            step_function(phy_batch, aux_batch, mask_batch, self.std_norm)
 
 
     
