@@ -178,6 +178,112 @@ def losses(pred, true, mask, char_type):
     return phy_loss, char_loss, aux_loss, mmd_loss, vz_loss
 
 
+class PhyLoss(object):
+    # holds component losses over epochs
+    # to be called for an individual batch
+    # methods:
+        # compute, stores, and returns component and total loss for val and train sets
+        # plots loss curves
+    def __init__(self, weights : torch.Tensor, mask = None, char_type = None):
+        # weights for all components
+        # initialize component loss vectors for train and validation losses
+        
+        # epoch losses are the average of the batch losses
+        # epoch losses
+        self.epoch_total_loss   = []
+        self.epoch_phy_loss     = []
+        self.epoch_char_loss    = []
+        self.epoch_aux_loss     = []
+        self.epoch_ntips_loss   = []
+        self.epoch_mmd_loss     = []
+        self.epoch_vz_loss      = []
+        # batch losses 
+        self.batch_total_loss   = []
+        self.batch_phy_loss     = []
+        self.batch_char_loss    = []
+        self.batch_aux_loss     = []
+        self.batch_ntips_loss   = []
+        self.batch_mmd_loss     = []
+        self.batch_vz_loss      = []
+
+        self.mask = mask
+        self.char_type = char_type
+
+        # loss weights
+        self.phy_w  = weights[0]
+        self.char_w = weights[1]
+        self.aux_w  = weights[2]
+        self.mmd_w  = weights[3]
+        self.vz_w   = weights[4]
+        
+
+    def compute_minibatch_loss(self, x : torch.Tensor, y : torch.Tensor):
+        # appends to the self.losses and returns the current batch loss
+        # x is a tuple (dictionary maybe?) of predictions for a batch
+        # y is a tuple of the true values for a batch
+        # both contain: 
+            # phy, char, mask, aux, ntips
+
+        phy_loss, char_loss, aux_loss, mmd_loss, vz_loss = losses(x, y, self.mask, self.char_type)
+
+        total_loss =    self.phy_w  * phy_loss  + \
+                        self.char_w * char_loss + \
+                        self.aux_w  * aux_loss  + \
+                        self.mmd_w  * mmd_loss  + \
+                        self.vz_w   * vz_loss
+        
+        self._append_minibatch_losses(total_loss, phy_loss, char_loss, aux_loss, mmd_loss, vz_loss)
+
+        return total_loss, phy_loss, char_loss, aux_loss, mmd_loss, vz_loss
+
+
+    def compute_epoch_loss(self):
+        # averages the batch loss arrays and returns 
+        total_loss = torch.mean(torch.stack(self.batch_total_loss)).item()
+        phy_loss   = torch.mean(torch.stack(self.batch_phy_loss)).item()
+        char_loss  = torch.mean(torch.stack(self.batch_char_loss)).item()
+        aux_loss   = torch.mean(torch.stack(self.batch_aux_loss)).item()
+        mmd_loss   = torch.mean(torch.stack(self.batch_mmd_loss)).item()
+        vz_loss    = torch.mean(torch.stack(self.batch_vz_loss)).item()
+
+        self._append_epoch_losses(total_loss, phy_loss, char_loss, aux_loss, mmd_loss, vz_loss)
+
+        # reset batch losses
+        self.batch_total_loss   = []
+        self.batch_phy_loss     = []
+        self.batch_char_loss    = []
+        self.batch_aux_loss     = []
+        self.batch_ntips_loss   = []
+        self.batch_mmd_loss     = []
+        self.batch_vz_loss      = []
+
+        return total_loss, phy_loss, char_loss, aux_loss, mmd_loss, vz_loss
+       
+
+    def get_epoch_losses(self):
+        # returns the self.losses
+        return self.epoch_total_loss[-1], self.epoch_phy_loss[-1], self.epoch_char_loss[-1], self.epoch_aux_loss[-1], self.epoch_mmd_loss[-1], self.epoch_vz_loss[-1]
+
+    def plot_epoch_loss(self, log :bool):
+        # creates the loss curves. Should be called after training is done
+        pass
+
+    def _append_minibatch_losses(self, total_loss, phy_loss, char_loss, aux_loss, mmd_loss, vz_loss):
+        self.batch_total_loss.append(total_loss)
+        self.batch_phy_loss.append(phy_loss)
+        self.batch_char_loss.append(char_loss)
+        self.batch_aux_loss.append(aux_loss)
+        self.batch_mmd_loss.append(mmd_loss)
+        self.batch_vz_loss.append(vz_loss)
+
+    def _append_epoch_losses(self, total_loss, phy_loss, char_loss, aux_loss, mmd_loss, vz_loss):
+        self.epoch_total_loss.append(total_loss)
+        self.epoch_phy_loss.append(phy_loss)
+        self.epoch_char_loss.append(char_loss)
+        self.epoch_aux_loss.append(aux_loss)
+        self.epoch_mmd_loss.append(mmd_loss)
+        self.epoch_vz_loss.append(vz_loss)
+
 
 # classes for MMD2 loss to encourage latent space to be be N(0,1) distributed
 class RBF(nn.Module):

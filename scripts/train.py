@@ -139,6 +139,7 @@ def main():
 
     # get formated tree data
     with h5py.File(data_fn, "r") as f:
+        aux_data_names = f['aux_data_names'][...][0] 
         num_tips_idx = np.where(f['aux_data_names'][...][0] == b'num_taxa')[0][0]
         # phy_data = torch.tensor(f['phy_data'][0:num_subset,...], dtype = torch.float32)
         aux_data = torch.tensor(f['aux_data'][0:num_subset,...], dtype = torch.float32)

@@ -73,10 +73,10 @@ class PhyloAutoencoder(object):
             # if self.model.latent_layer_type == "GAUSS":
             #     self.std_norm = torch.randn(self.latent_layer_shape).to(self.device)
             epoch_train_loss = self._mini_batch()
-            elapsed_time = time.time() - epoch_time
             with torch.no_grad():
                 if self.model.latent_layer_type == "GAUSS":
                     epoch_validation_loss, phy_loss, aux_loss, mmd_loss, vz_loss = self._mini_batch(validation=True)
+                    elapsed_time = time.time() - epoch_time
                     print(f"Epoch {epoch},  " +
                             f"Loss: {epoch_validation_loss:.4f},  " +
                             f"phy L: {phy_loss:.4f},  " +
@@ -87,6 +87,7 @@ class PhyloAutoencoder(object):
                             )
                 else:
                     epoch_validation_loss, phy_loss, aux_loss = self._mini_batch(validation=True)
+                    elapsed_time = time.time() - epoch_time
                     print(f"Epoch {epoch},  " +
                             f"Loss: {epoch_validation_loss:.4f},  " +
                             f"phy L: {phy_loss:.4f},  " +
@@ -137,7 +138,7 @@ class PhyloAutoencoder(object):
         if data_loader == None:
             return None
 
-        # track loss components for plotting and printing to screen
+        # track validation loss components for plotting and printing to screen
         mini_batch_losses       = []
         phy_mini_batch_losses   = []
         aux_mini_batch_losses   = []
@@ -160,7 +161,6 @@ class PhyloAutoencoder(object):
                 loss = step_function(phy_batch, aux_batch, mask_batch)
             elif self.model.latent_layer_type == "GAUSS" and validation:
                 # one step of SGD
-
                 loss, phy_loss, aux_loss, mmd_loss, vz_loss = step_function(phy_batch, aux_batch, mask_batch)
                 phy_mini_batch_losses.append(phy_loss)
                 aux_mini_batch_losses.append(aux_loss)

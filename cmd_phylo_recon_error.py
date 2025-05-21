@@ -115,7 +115,7 @@ def main():
 
     # this outputs a tensor of shape (num_smaple, num_channels, num_tips)
     pred_phy_data, pred_aux_data = tree_autoencoder.predict(norm_phy_data, norm_aux_data)
-
+    
     # flatten    
     pred_phy_data = pred_phy_data.reshape((pred_phy_data.shape[0], -1), order='F')
     pred_aux_data = pred_aux_data
@@ -126,9 +126,8 @@ def main():
     phy_flat_width = max_tips * num_channels
     num_unmask = ntips * num_channels
 
-    for t in range(phy_flat_width):
+    for t in range(pred_phy_data.shape[0]):
         mask[t,0:int(num_unmask[t])] = True
-
 
     # calculate errors    
     phy_abs_diff    = np.abs(phy_data - pred_phy_data) * mask
@@ -144,7 +143,6 @@ def main():
     phy_error_df = pd.DataFrame(phy_error, columns=['phy_rmse', 'phy_mae', 'phy_mse'])
 
     # save phy error results to single file
-    print(output + '_phy_data.cblv.csv')
     phy_df.to_csv(output + '_phy_data.cblv.csv', index=True, header = None)
     phy_error_df.to_csv(output + '_phy_error.csv', index_label = "tree_number", index=True)
 
