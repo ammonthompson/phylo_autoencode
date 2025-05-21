@@ -175,7 +175,7 @@ class AECNN(nn.Module):
             shared_latent_out      = self.latent_layer(reshaped_shared_latent)
             structured_decoded_x   = self.structured_decoder(shared_latent_out)
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out.flatten(start_dim=1))
-            return structured_decoded_x, unstructured_decoded_x
+            return structured_decoded_x, unstructured_decoded_x, None
         
         elif self.latent_layer_type == "GAUSS":
             shared_latent_out   = self.latent_layer(combined_latent)
@@ -192,7 +192,7 @@ class AECNN(nn.Module):
                                                                 self.reshaped_shared_latent_width)
             structured_decoded_x   = self.structured_decoder(reshaped_latent_out)
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
-            return structured_decoded_x, unstructured_decoded_x
+            return structured_decoded_x, unstructured_decoded_x, None
 
 
 # encoder classes

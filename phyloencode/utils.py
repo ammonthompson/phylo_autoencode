@@ -161,7 +161,7 @@ def aux_recon_loss(x, y):
     # return fun.l1_loss(x, y)
 
 # developing
-def losses(pred, true, mask, char_type):
+def losses(pred : torch.tensor, true : torch.tensor, mask : torch.tensor, char_type : str):
     # separate components
     phy_hat, char_hat, aux_hat, latent_hat = pred
     phy, char, aux, std_norm = true
@@ -172,8 +172,8 @@ def losses(pred, true, mask, char_type):
     aux_loss    = aux_recon_loss(aux_hat, aux)
 
     # latent loss
-    mmd_loss    = mmd_loss(latent_hat, std_norm)
-    vz_loss     = vz_loss(latent_hat, std_norm)
+    mmd_loss    = mmd_loss(latent_hat, std_norm) if latent_hat is not None else 0.
+    vz_loss     = vz_loss(latent_hat, std_norm) if latent_hat is not None else 0.
 
     return phy_loss, char_loss, aux_loss, mmd_loss, vz_loss
 
@@ -184,7 +184,7 @@ class PhyLoss(object):
     # methods:
         # compute, stores, and returns component and total loss for val and train sets
         # plots loss curves
-    def __init__(self, weights : torch.Tensor, mask = None, char_type = None):
+    def __init__(self, weights : torch.Tensor, char_type = None, latent_layer_Type = "GAUSS"):
         # weights for all components
         # initialize component loss vectors for train and validation losses
         
@@ -206,25 +206,26 @@ class PhyLoss(object):
         self.batch_mmd_loss     = []
         self.batch_vz_loss      = []
 
-        self.mask = mask
         self.char_type = char_type
 
         # loss weights
         self.phy_w  = weights[0]
-        self.char_w = weights[1]
+        self.char_w = weights[1] if weights[1] is not None else 0.
         self.aux_w  = weights[2]
         self.mmd_w  = weights[3]
         self.vz_w   = weights[4]
+
+        self.latent_layer_type = latent_layer_Type
         
 
-    def compute_minibatch_loss(self, x : torch.Tensor, y : torch.Tensor):
+    def minibatch_loss(self, x : torch.Tensor, y : torch.Tensor, mask : torch.Tensor):
         # appends to the self.losses and returns the current batch loss
         # x is a tuple (dictionary maybe?) of predictions for a batch
         # y is a tuple of the true values for a batch
         # both contain: 
             # phy, char, mask, aux, ntips
 
-        phy_loss, char_loss, aux_loss, mmd_loss, vz_loss = losses(x, y, self.mask, self.char_type)
+        phy_loss, char_loss, aux_loss, mmd_loss, vz_loss = losses(x, y, mask, self.char_type)
 
         total_loss =    self.phy_w  * phy_loss  + \
                         self.char_w * char_loss + \
@@ -234,19 +235,19 @@ class PhyLoss(object):
         
         self._append_minibatch_losses(total_loss, phy_loss, char_loss, aux_loss, mmd_loss, vz_loss)
 
-        return total_loss, phy_loss, char_loss, aux_loss, mmd_loss, vz_loss
+        return total_loss
 
+    def append_mean_batch_loss(self):
+        # averages the batch loss arrays and return 
+        mean_total_loss = torch.mean(torch.stack(self.batch_total_loss)).item()
+        mean_phy_loss   = torch.mean(torch.stack(self.batch_phy_loss)).item()
+        mean_char_loss  = torch.mean(torch.stack(self.batch_char_loss)).item()
+        mean_aux_loss   = torch.mean(torch.stack(self.batch_aux_loss)).item()
+        mean_mmd_loss   = torch.mean(torch.stack(self.batch_mmd_loss)).item()
+        mean_vz_loss    = torch.mean(torch.stack(self.batch_vz_loss)).item()
 
-    def compute_epoch_loss(self):
-        # averages the batch loss arrays and returns 
-        total_loss = torch.mean(torch.stack(self.batch_total_loss)).item()
-        phy_loss   = torch.mean(torch.stack(self.batch_phy_loss)).item()
-        char_loss  = torch.mean(torch.stack(self.batch_char_loss)).item()
-        aux_loss   = torch.mean(torch.stack(self.batch_aux_loss)).item()
-        mmd_loss   = torch.mean(torch.stack(self.batch_mmd_loss)).item()
-        vz_loss    = torch.mean(torch.stack(self.batch_vz_loss)).item()
-
-        self._append_epoch_losses(total_loss, phy_loss, char_loss, aux_loss, mmd_loss, vz_loss)
+        self._append_epoch_losses(mean_total_loss, mean_phy_loss, mean_char_loss, 
+                                  mean_aux_loss, mean_mmd_loss, mean_vz_loss)
 
         # reset batch losses
         self.batch_total_loss   = []
@@ -257,18 +258,20 @@ class PhyLoss(object):
         self.batch_mmd_loss     = []
         self.batch_vz_loss      = []
 
-        return total_loss, phy_loss, char_loss, aux_loss, mmd_loss, vz_loss
-       
+  
 
-    def get_epoch_losses(self):
-        # returns the self.losses
-        return self.epoch_total_loss[-1], self.epoch_phy_loss[-1], self.epoch_char_loss[-1], self.epoch_aux_loss[-1], self.epoch_mmd_loss[-1], self.epoch_vz_loss[-1]
+    def print_epoch_losses(self, elapsed_time):
+        print(  f"Epoch {len(self.epoch_total_loss)},  " +
+                f"Loss: {self.epoch_total_loss[-1]:.4f},  " +
+                f"phy L: {self.epoch_phy_loss[-1]:.4f},  " +
+                f"aux L: {self.epoch_aux_loss[-1]:.4f},  " +
+                f"MMD L: {self.epoch_mmd_loss[-1]:.4f},  " +
+                f"VZ L: {self.epoch_vz_loss[-1]:.4f},  " +
+                f"Run time: {elapsed_time:.3f} sec" )
 
-    def plot_epoch_loss(self, log :bool):
-        # creates the loss curves. Should be called after training is done
-        pass
-
-    def _append_minibatch_losses(self, total_loss, phy_loss, char_loss, aux_loss, mmd_loss, vz_loss):
+    # helpers
+    def _append_minibatch_losses(self, total_loss, phy_loss, 
+                                 char_loss, aux_loss, mmd_loss, vz_loss):
         self.batch_total_loss.append(total_loss)
         self.batch_phy_loss.append(phy_loss)
         self.batch_char_loss.append(char_loss)
@@ -276,7 +279,8 @@ class PhyLoss(object):
         self.batch_mmd_loss.append(mmd_loss)
         self.batch_vz_loss.append(vz_loss)
 
-    def _append_epoch_losses(self, total_loss, phy_loss, char_loss, aux_loss, mmd_loss, vz_loss):
+    def _append_epoch_losses(self, total_loss, phy_loss, 
+                             char_loss, aux_loss, mmd_loss, vz_loss):
         self.epoch_total_loss.append(total_loss)
         self.epoch_phy_loss.append(phy_loss)
         self.epoch_char_loss.append(char_loss)

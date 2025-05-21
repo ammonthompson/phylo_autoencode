@@ -16,7 +16,7 @@ from typing import List, Dict, Tuple, Optional, Union
 
 
 class PhyloAutoencoder(object):
-    def __init__(self, model, optimizer = optim.Adam, loss_func = torch.nn.MSELoss, 
+    def __init__(self, model, optimizer = optim.Adam, 
                  batch_size=128, phy_loss_weight=0.5, char_weight=0.5,
                  mmd_lambda=None, vz_lambda=None):
         '''
@@ -31,9 +31,7 @@ class PhyloAutoencoder(object):
         self.device             = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.batch_size         = batch_size
         self.optimizer          = optimizer
-        self.loss_func          = loss_func
-        self.phy_loss_weight    = phy_loss_weight
-        self.char_weight        = char_weight
+
         self.total_epochs       = 0
         self.train_loader       = None
         self.val_loader         = None
@@ -47,18 +45,10 @@ class PhyloAutoencoder(object):
         # TODO: do a proper error handing at some point 
         # (should be passed as a parameter)
 
-        self.losses     = []
-        self.val_losses = []
-        self.phy_losses = []
-        self.aux_losses = []
+        self.weights = (phy_loss_weight, char_weight, mmd_lambda, vz_lambda)
 
-        if model.latent_layer_type == "GAUSS":
-            self.mmd_lambda = mmd_lambda
-            self.vz_lambda = vz_lambda
-            self.latent_layer_shape = (self.batch_size, model.combined_latent_inwidth)
-            self.std_norm = torch.randn(self.latent_layer_shape).to(self.device)
-            self.mmd_losses = []
-            self.vz_losses = []
+        self.train_loss  = utils.PhyLoss(self.weights, self.char_type, self.model.latent_layer_type)
+        self.val_loss    = utils.PhyLoss(self.weights, self.char_type, self.model.latent_layer_type)
 
 
         # self.writer = None
@@ -69,44 +59,15 @@ class PhyloAutoencoder(object):
         for epoch in range(num_epochs):
             self.total_epochs += 1
             epoch_time = time.time()
-            # new std_norm for each epoch (shared by all batches)
-            # if self.model.latent_layer_type == "GAUSS":
-            #     self.std_norm = torch.randn(self.latent_layer_shape).to(self.device)
-            epoch_train_loss = self._mini_batch()
+
+            self._mini_batch()
+            self.train_loss.append_mean_batch_loss()
+
             with torch.no_grad():
-                if self.model.latent_layer_type == "GAUSS":
-                    epoch_validation_loss, phy_loss, aux_loss, mmd_loss, vz_loss = self._mini_batch(validation=True)
-                    elapsed_time = time.time() - epoch_time
-                    print(f"Epoch {epoch},  " +
-                            f"Loss: {epoch_validation_loss:.4f},  " +
-                            f"phy L: {phy_loss:.4f},  " +
-                            f"aux L: {aux_loss:.4f},  " +
-                            f"MMD L: {mmd_loss:.4f},  " +
-                            f"VZ L: {vz_loss:.4f},  " +
-                            f"Run time: {elapsed_time:.3f} sec"
-                            )
-                else:
-                    epoch_validation_loss, phy_loss, aux_loss = self._mini_batch(validation=True)
-                    elapsed_time = time.time() - epoch_time
-                    print(f"Epoch {epoch},  " +
-                            f"Loss: {epoch_validation_loss:.4f},  " +
-                            f"phy L: {phy_loss:.4f},  " +
-                            f"aux L: {aux_loss:.4f}, " + 
-                            f"Run time: {elapsed_time:.3f} sec"
-                            )
-
-            # append losses to list for plotting
-            self.losses.append(epoch_train_loss)
-            self.val_losses.append(epoch_validation_loss)
-
-            # append phy, aux, mmd, vz losses to list for component loss plots
-            self.phy_losses.append(phy_loss)
-            self.aux_losses.append(aux_loss)
-            if self.model.latent_layer_type == "GAUSS":
-                self.mmd_losses.append(mmd_loss)    
-                self.vz_losses.append(vz_loss)
-               
-
+                self._mini_batch(validation=True)             
+                self.val_loss.append_mean_batch_loss()       
+                elapsed_time = time.time() - epoch_time
+                self.val_loss.print_epoch_losses(elapsed_time)
 
             # TODO
         #     if self.writer:
@@ -119,6 +80,7 @@ class PhyloAutoencoder(object):
          
         # if self.writer:
         #     self.writer.flush()
+
         
     def _mini_batch(self, validation = False):
         # Performs a mini batch step for the model.
@@ -138,12 +100,10 @@ class PhyloAutoencoder(object):
         if data_loader == None:
             return None
 
-        # track validation loss components for plotting and printing to screen
-        mini_batch_losses       = []
-        phy_mini_batch_losses   = []
-        aux_mini_batch_losses   = []
-        mmd_mini_batch_losses   = []
-        vz_mini_batch_losses    = []
+        if self.model.latent_layer_type == "GAUSS":
+            std_norm =  torch.randn(self.model.latent_outwidth).to(self.device)
+        else:
+            std_norm = None
 
         # perform step and return loss
         # loop through all batches of train or val data
@@ -156,81 +116,23 @@ class PhyloAutoencoder(object):
                 mask_batch = None
             phy_batch = phy_batch.to(self.device)
             aux_batch = aux_batch.to(self.device)
-            if not validation:
-                # one step of SGD
-                loss = step_function(phy_batch, aux_batch, mask_batch)
-            elif self.model.latent_layer_type == "GAUSS" and validation:
-                # one step of SGD
-                loss, phy_loss, aux_loss, mmd_loss, vz_loss = step_function(phy_batch, aux_batch, mask_batch)
-                phy_mini_batch_losses.append(phy_loss)
-                aux_mini_batch_losses.append(aux_loss)
-                mmd_mini_batch_losses.append(mmd_loss)
-                vz_mini_batch_losses.append(vz_loss)
-            else:
-                # one step of SGD
-                loss, phy_loss, aux_loss = step_function(phy_batch, aux_batch, mask_batch)
-                phy_mini_batch_losses.append(phy_loss)
-                aux_mini_batch_losses.append(aux_loss)
 
-            mini_batch_losses.append(loss)
+            # perform SGD step for batch
+            step_function(phy_batch, aux_batch, mask_batch, std_norm)
 
-        # return the mean loss over all batches
-        mean_loss = torch.mean(torch.stack(mini_batch_losses))
-        if self.model.latent_layer_type == "GAUSS" and validation:
-            return (
-                mean_loss.item(),
-                torch.mean(torch.stack(phy_mini_batch_losses)).item(),
-                torch.mean(torch.stack(aux_mini_batch_losses)).item(),
-                torch.mean(torch.stack(mmd_mini_batch_losses)).item(),
-                torch.mean(torch.stack(vz_mini_batch_losses)).item(),
-            )
-        elif validation:
-            return (
-                mean_loss.item(),
-                torch.mean(torch.stack(phy_mini_batch_losses)).item(),
-                torch.mean(torch.stack(aux_mini_batch_losses)).item(),
-            )
-        else:
-            return mean_loss.item()
+
     
-    def train_step(self, phy: torch.Tensor, aux: torch.Tensor, mask: torch.Tensor = None):
+    def train_step(self, phy: torch.Tensor, aux: torch.Tensor, 
+                   mask: torch.Tensor = None, std_norm : torch.Tensor = None):
+        # batch train loss
         # set model to train mode
-        # only returns total loss. validation also returns each component's loss
         self.model.train()
 
-        # get model predictions and losses
-        if self.model.latent_layer_type == "GAUSS":
-            # get model predictions
-            phy_hat, aux_hat, latent = self.model((phy, aux))
+        phy_hat, aux_hat, latent = self.model((phy, aux))
+           
+        loss = self.train_loss.minibatch_loss((phy_hat, None, aux_hat, latent), 
+                                              (phy, None, aux, std_norm), mask)
 
-            # compute recon loss
-            phy_loss = self.loss_func(phy_hat, phy, 
-                                      self.nchars, self.char_type, 
-                                      self.char_weight, tip1_weight = 1.0,
-                                      mask = mask)
-            aux_loss = self.loss_func(aux_hat, aux)
-            recon_loss = self.phy_loss_weight * phy_loss + (1-self.phy_loss_weight) * aux_loss
-
-            # compute latent loss
-            std_norm = torch.randn(latent.shape).to(self.device)
-            mmd_loss = utils.mmd_loss(latent, std_norm)
-            if self.vz_lambda > 0.:
-                vz_loss  = utils.vz_loss(latent, std_norm)
-            else:
-                vz_loss = torch.tensor(0.0).to(self.device)
-            latent_loss = self.mmd_lambda * mmd_loss + self.vz_lambda * vz_loss
-            
-            # compute total loss
-            loss = recon_loss + latent_loss                        
-        else:
-            phy_hat, aux_hat = self.model((phy, aux))
-            phy_loss = self.loss_func(phy_hat, phy,
-                                       self.nchars, self.char_type, 
-                                       self.char_weight, tip1_weight = 1.0, 
-                                       mask = mask)
-            aux_loss = self.loss_func(aux_hat, aux)
-            loss = self.phy_loss_weight * phy_loss + (1-self.phy_loss_weight) * aux_loss
-            
         # compute gradient
         loss.backward()
 
@@ -240,58 +142,38 @@ class PhyloAutoencoder(object):
         # Clear the gradient for the next iteration, 
         # preventing accumulation from previous steps.
         self.optimizer.zero_grad()
-        return loss
+
         
-    def evaluate(self, phy: torch.Tensor, aux: torch.Tensor, mask: torch.Tensor = None):
+    def evaluate(self, phy: torch.Tensor, aux: torch.Tensor,
+                  mask: torch.Tensor = None, std_norm : torch.Tensor = None):
+        
+        # batch val loss
+        
         self.model.eval()
-        if self.model.latent_layer_type == "GAUSS":
-            # get model predictions
-            phy_hat, aux_hat, latent = self.model((phy, aux))
-            # compute recon loss
-            phy_loss    = self.loss_func(phy_hat, phy, 
-                                         self.nchars, self.char_type, 
-                                         self.char_weight, tip1_weight = 1.0,
-                                         mask = mask)
-            aux_loss    = self.loss_func(aux_hat, aux, mask = mask)
-            recon_loss  = self.phy_loss_weight * phy_loss + (1-self.phy_loss_weight) * aux_loss
-            
-            # compute latent loss
-            std_norm = torch.randn(latent.shape).to(self.device)
-            mmd_loss = utils.mmd_loss(latent, std_norm)
-            if self.vz_lambda > 0.0:
-                vz_loss  = utils.vz_loss(latent, std_norm)
-            else:
-                vz_loss = torch.tensor(0.0).to(self.device)
-            
-            latent_loss = self.mmd_lambda * mmd_loss + self.vz_lambda * vz_loss
-            # compute total loss
-            loss = recon_loss + latent_loss
-            return loss, phy_loss, aux_loss, mmd_loss, vz_loss
-        else:
-            phy_hat, aux_hat = self.model((phy, aux))
-            phy_loss = self.loss_func(phy_hat, phy, 
-                                      self.nchars, self.char_type, 
-                                      self.char_weight, tip1_weight = 1.0,
-                                      mask = mask)
-            aux_loss = self.loss_func(aux_hat, aux)                
-            loss = self.phy_loss_weight * phy_loss + (1-self.phy_loss_weight) * aux_loss
-            return loss, phy_loss, aux_loss
 
-        # return evaluate
+        phy_hat, aux_hat, latent = self.model((phy, aux))
 
-    def plot_losses(self, out_prefix = "AElossplot"):
+        self.val_loss.minibatch_loss((phy_hat, None, aux_hat, latent),
+                                     (phy, None, aux, std_norm), mask)
+
+
+    def plot_losses(self, out_prefix = "AElossplot", log = True):
+        # plot total losses
         fig = plt.figure(figsize=(11, 8))
-        plt.plot(np.log10(self.losses), label='Training Loss', c="b")
+        plt.plot(np.log10(self.train_loss.epoch_total_loss), label='Training Loss', c="b")
         if self.val_loader:
-            plt.plot(np.log10(self.val_losses), label='Validation Loss', c='r')
+            plt.plot(np.log10(self.val_loss.epoch_total_loss), label='Validation Loss', c='r')
         plt.xlabel('Epochs')
         plt.ylabel('log10 Loss')
         plt.legend()        
         plt.grid(True)
-        range_y = [min(np.log10(np.concat((self.losses, self.val_losses)))), 
-                   max(np.log10(np.concat((self.losses, self.val_losses))))]
+        range_y = [min(np.log10(np.concat((self.train_loss.epoch_total_loss, 
+                                           self.val_loss.epoch_total_loss)))), 
+                   max(np.log10(np.concat((self.train_loss.epoch_total_loss, 
+                                           self.val_loss.epoch_total_loss))))]
         plt.yticks(ticks = np.linspace(range_y[0], range_y[1], num = 20))
-        plt.xticks(ticks=np.arange(0, len(self.losses), step=len(self.losses) // 10))
+        plt.xticks(ticks=np.arange(0, len(self.train_loss.epoch_total_loss), 
+                                   step=len(self.train_loss.epoch_total_loss) // 10))
         plt.tight_layout()
         plt.savefig(out_prefix + ".loss.pdf", bbox_inches='tight')
         plt.close(fig)
@@ -301,11 +183,11 @@ class PhyloAutoencoder(object):
         num_subplots = 4 if self.model.latent_layer_type == "GAUSS" else 2
         fig, (axs1, axs2) = plt.subplots(num_subplots//2, 2, figsize=(11, 8), sharex=True)
         fig.subplots_adjust(hspace=0.4, wspace=0.4)
-        self.fill_in_loss_comp_fig(self.phy_losses, "phy", axs1[0])
-        self.fill_in_loss_comp_fig(self.aux_losses, "aux", axs1[1])
+        self.fill_in_loss_comp_fig(self.train_loss.epoch_phy_loss, "phy", axs1[0])
+        self.fill_in_loss_comp_fig(self.train_loss.epoch_aux_loss, "aux", axs1[1])
         if self.model.latent_layer_type == "GAUSS":
-            self.fill_in_loss_comp_fig(self.mmd_losses, "mmd", axs2[0])
-            self.fill_in_loss_comp_fig(self.vz_losses, "vz", axs2[1])
+            self.fill_in_loss_comp_fig(self.train_loss.epoch_mmd_loss, "mmd", axs2[0])
+            self.fill_in_loss_comp_fig(self.train_loss.epoch_vz_loss, "vz", axs2[1])
         plt.savefig(out_prefix + ".component_loss.pdf", bbox_inches='tight')
         plt.close(fig)
 
@@ -321,10 +203,7 @@ class PhyloAutoencoder(object):
         self.model.eval() 
         phy = phy.to(self.device)
         aux = aux.to(self.device)
-        if self.model.latent_layer_type == "GAUSS":
-            phy_pred, aux_pred, latent = self.model((phy, aux))
-        else:
-            phy_pred, aux_pred = self.model((phy, aux))
+        phy_pred, aux_pred, latent = self.model((phy, aux))
 
         if self.char_type == "categorical":
             # softmax the char data
