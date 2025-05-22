@@ -175,16 +175,13 @@ class AECNN(nn.Module):
             shared_latent_out      = self.latent_layer(reshaped_shared_latent)
             structured_decoded_x   = self.structured_decoder(shared_latent_out)
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out.flatten(start_dim=1))
-            return structured_decoded_x, unstructured_decoded_x, None
         
         elif self.latent_layer_type == "GAUSS":
             shared_latent_out   = self.latent_layer(combined_latent)
             reshaped_latent_out = shared_latent_out.view(-1, self.num_structured_latent_channels, 
                                                                self.reshaped_shared_latent_width) 
             structured_decoded_x   = self.structured_decoder(reshaped_latent_out)
-
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
-            return structured_decoded_x, unstructured_decoded_x, shared_latent_out
         
         elif self.latent_layer_type == "DENSE":
             shared_latent_out   = self.latent_layer(combined_latent)            
@@ -192,7 +189,20 @@ class AECNN(nn.Module):
                                                                 self.reshaped_shared_latent_width)
             structured_decoded_x   = self.structured_decoder(reshaped_latent_out)
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
-            return structured_decoded_x, unstructured_decoded_x, None
+
+        # separate the two type of structured decoded: tree and character data
+        if self.num_chars > 0:
+            phy_decoded_x = structured_decoded_x[:,:(structured_decoded_x.shape[1]-self.num_chars),:]
+            char_decoded_x = structured_decoded_x[:,(structured_decoded_x.shape[1]-self.num_chars):,:]
+        else:
+            phy_decoded_x = structured_decoded_x
+            char_decoded_x = None
+        # model should output the latent layer if layer type is "GAUSS"
+        if self.latent_layer_type != "GAUSS":
+            shared_latent_out = None
+
+
+        return phy_decoded_x, char_decoded_x, unstructured_decoded_x, shared_latent_out
 
 
 # encoder classes

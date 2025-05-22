@@ -41,6 +41,8 @@ class PhyloAutoencoder(object):
 
         self.nchars             = self.model.num_chars
         self.char_type          = self.model.char_type
+        self.phy_channels       = self.model.num_structured_input_channel
+        self.num_tree_chans        = self.phy_channels - self.nchars
 
         self.latent_shape = (self.batch_size, self.model.latent_outwidth)
         
@@ -67,9 +69,9 @@ class PhyloAutoencoder(object):
 
             with torch.no_grad():
                 self._mini_batch(validation=True)             
-                self.val_loss.append_mean_batch_loss()       
-                elapsed_time = time.time() - epoch_time
-                self.val_loss.print_epoch_losses(elapsed_time)
+                self.val_loss.append_mean_batch_loss()
+                # print epoch mean component losses to screen       
+                self.val_loss.print_epoch_losses(time.time() - epoch_time)
 
             # TODO
         #     if self.writer:
@@ -111,6 +113,7 @@ class PhyloAutoencoder(object):
             else:
                 phy_batch, aux_batch = batch
                 mask_batch = None
+
             phy_batch = phy_batch.to(self.device)
             aux_batch = aux_batch.to(self.device)
                
@@ -128,10 +131,26 @@ class PhyloAutoencoder(object):
         # set model to train mode
         self.model.train()
 
-        phy_hat, aux_hat, latent = self.model((phy, aux))
-           
-        loss = self.train_loss.minibatch_loss((phy_hat, None, aux_hat, latent), 
-                                              (phy, None, aux, std_norm), mask)
+        pred = self.model((phy, aux))
+
+        # divide phy into tree and character data
+        if self.nchars > 0:
+            tree = phy[:, :self.num_tree_chans, :]
+            char = phy[:, self.num_tree_chans:, :]
+            tree_mask = mask[:, :self.num_tree_chans, :] if mask is not None else None
+            char_mask = mask[:, self.num_tree_chans:, :] if mask is not None else None
+        else:
+            tree = phy
+            char = None
+            tree_mask = mask
+            char_mask = None
+
+        segmented_mask = (tree_mask, char_mask)
+          
+        true = (tree, char, aux, std_norm)
+
+        # compute and update loss fields in train_loss
+        loss = self.train_loss.minibatch_loss(pred, true, segmented_mask)
 
         # compute gradient
         loss.backward()
@@ -151,10 +170,26 @@ class PhyloAutoencoder(object):
         
         self.model.eval()
 
-        phy_hat, aux_hat, latent = self.model((phy, aux))
+        pred = self.model((phy, aux))
 
-        self.val_loss.minibatch_loss((phy_hat, None, aux_hat, latent),
-                                     (phy, None, aux, std_norm), mask)
+        # divide phy into tree and character data
+        if self.nchars > 0:
+            tree = phy[:, :self.num_tree_chans, :]
+            char = phy[:, self.num_tree_chans:, :]
+            tree_mask = mask[:, :self.num_tree_chans, :] if mask is not None else None
+            char_mask = mask[:, self.num_tree_chans:, :] if mask is not None else None
+        else:
+            tree = phy
+            char = None
+            tree_mask = mask
+            char_mask = None
+
+        segmented_mask = (tree_mask, char_mask)
+
+        true = (tree, char, aux, std_norm)
+
+        # compute and update loss fields in val_loss
+        self.val_loss.minibatch_loss(pred, true, segmented_mask)
 
 
     def plot_losses(self, out_prefix = "AElossplot", log = True):
@@ -183,15 +218,15 @@ class PhyloAutoencoder(object):
         num_subplots = 4 if self.model.latent_layer_type == "GAUSS" else 2
         fig, (axs1, axs2) = plt.subplots(num_subplots//2, 2, figsize=(11, 8), sharex=True)
         fig.subplots_adjust(hspace=0.4, wspace=0.4)
-        self.fill_in_loss_comp_fig(self.train_loss.epoch_phy_loss, "phy", axs1[0])
-        self.fill_in_loss_comp_fig(self.train_loss.epoch_aux_loss, "aux", axs1[1])
+        self._fill_in_loss_comp_fig(self.train_loss.epoch_phy_loss, "phy", axs1[0])
+        self._fill_in_loss_comp_fig(self.train_loss.epoch_aux_loss, "aux", axs1[1])
         if self.model.latent_layer_type == "GAUSS":
-            self.fill_in_loss_comp_fig(self.train_loss.epoch_mmd_loss, "mmd", axs2[0])
-            self.fill_in_loss_comp_fig(self.train_loss.epoch_vz_loss, "vz", axs2[1])
+            self._fill_in_loss_comp_fig(self.train_loss.epoch_mmd_loss, "mmd", axs2[0])
+            self._fill_in_loss_comp_fig(self.train_loss.epoch_vz_loss, "vz", axs2[1])
         plt.savefig(out_prefix + ".component_loss.pdf", bbox_inches='tight')
         plt.close(fig)
 
-    def fill_in_loss_comp_fig(self, val_losses, plot_label, ax):
+    def _fill_in_loss_comp_fig(self, val_losses, plot_label, ax):
         ax.plot(np.log10(val_losses), label=plot_label, c="b")
         ax.set_title(f"{plot_label} Loss")
         ax.set_xlabel('Epochs')

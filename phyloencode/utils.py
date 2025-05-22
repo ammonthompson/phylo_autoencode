@@ -132,6 +132,7 @@ def char_recon_loss(x, y, char_type = "categorical", mask = None):
         # Reshape to (batch_size * ntips, n_classes) for cross-entropy
         x = x.permute(0, 2, 1).reshape(-1, x.shape[1])  # (batch_size * ntips, n_classes)
         y = y.permute(0, 2, 1).reshape(-1, y.shape[1])  # (batch_size * ntips, n_classes)
+        mask = mask.permute(0, 2, 1).reshape(-1, mask.shape[1])
 
         # Convert one-hot to class indices
         y = y.argmax(dim=1)  # shape (N,)
@@ -142,10 +143,10 @@ def char_recon_loss(x, y, char_type = "categorical", mask = None):
 
     if mask is not None:
         # Apply the mask to the loss
-        char_loss = char_loss * mask
-        char_loss = char_loss.mean()
+        char_loss = char_loss * mask[:,0] # match dims (all columns are the same in mask)
 
-    return char_loss
+    return char_loss.mean()
+
 
 def aux_recon_loss(x, y):
     """
@@ -167,17 +168,18 @@ def losses(pred : torch.tensor, true : torch.tensor, mask : torch.tensor, char_t
     # separate components
     phy_hat, char_hat, aux_hat, latent_hat = pred
     phy, char, aux, std_norm = true
+    tree_mask, char_mask = mask
 
     device = phy_hat.device
 
     # recon loss
-    phy_loss    = phy_recon_loss(phy_hat, phy, mask = mask)
-    char_loss   = char_recon_loss(char_hat, char, char_type, mask) if char is not None else torch.tensor(0.).to(device)
+    phy_loss    = phy_recon_loss(phy_hat, phy, mask = tree_mask)
+    char_loss   = char_recon_loss(char_hat, char, char_type, char_mask) if char is not None else torch.tensor(0.).to(device)
     aux_loss    = aux_recon_loss(aux_hat, aux)
 
     # latent loss
     latent_mmd_loss    = mmd_loss(latent_hat, std_norm) if latent_hat is not None else torch.tensor(0.).to(device)
-    latent_vz_loss     = vz_loss(latent_hat, std_norm) if latent_hat is not None else torch.tensor(0.).to(device)
+    latent_vz_loss     = vz_loss(latent_hat, std_norm)  if latent_hat is not None else torch.tensor(0.).to(device)
 
     return phy_loss, char_loss, aux_loss, latent_mmd_loss, latent_vz_loss
 
@@ -209,9 +211,6 @@ class PhyLoss(object):
         self.batch_ntips_loss   = []
         self.batch_mmd_loss     = []
         self.batch_vz_loss      = []
-
-        self.char_type = char_type
-
         # loss weights
         self.phy_w  = weights[0]
         self.char_w = weights[1]
@@ -219,6 +218,7 @@ class PhyLoss(object):
         self.mmd_w  = weights[3]
         self.vz_w   = weights[4]
 
+        self.char_type = char_type
         self.latent_layer_type = latent_layer_Type
         
 
@@ -253,7 +253,7 @@ class PhyLoss(object):
 
         self._append_epoch_losses(mean_total_loss, mean_phy_loss, mean_char_loss, 
                                   mean_aux_loss, mean_mmd_loss, mean_vz_loss)
-
+        
         # reset batch losses
         self.batch_total_loss   = []
         self.batch_phy_loss     = []
@@ -269,6 +269,7 @@ class PhyLoss(object):
         print(  f"Epoch {len(self.epoch_total_loss)},  " +
                 f"Loss: {self.epoch_total_loss[-1]:.4f},  " +
                 f"phy L: {self.epoch_phy_loss[-1]:.4f},  " +
+                f"char L: {self.epoch_char_loss[-1]:.4f},  " +
                 f"aux L: {self.epoch_aux_loss[-1]:.4f},  " +
                 f"MMD L: {self.epoch_mmd_loss[-1]:.4f},  " +
                 f"VZ L: {self.epoch_vz_loss[-1]:.4f},  " +
