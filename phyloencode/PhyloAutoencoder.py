@@ -40,22 +40,18 @@ class PhyloAutoencoder(object):
         self.model.to(self.device)
 
         self.nchars             = self.model.num_chars
+        self.char_weight        = char_weight if self.nchars > 0 else torch.tensor(0.)
         self.char_type          = self.model.char_type
         self.phy_channels       = self.model.num_structured_input_channel
-        self.num_tree_chans        = self.phy_channels - self.nchars
+        self.num_tree_chans     = self.phy_channels - self.nchars
 
         self.latent_shape = (self.batch_size, self.model.latent_outwidth)
-        
-        # TODO: do a proper error handing at some point 
-        # (should be passed as a parameter)
 
-        self.weights = (phy_loss_weight, char_weight, 1-phy_loss_weight, mmd_lambda, vz_lambda)
+        self.weights = (phy_loss_weight, self.char_weight, 1-phy_loss_weight, mmd_lambda, vz_lambda)
 
         self.train_loss  = utils.PhyLoss(self.weights, self.char_type, self.model.latent_layer_type)
         self.val_loss    = utils.PhyLoss(self.weights, self.char_type, self.model.latent_layer_type)
 
-
-        # self.writer = None
 
     def train(self, num_epochs, seed = 1):
         self.set_seed(seed)
@@ -73,17 +69,6 @@ class PhyloAutoencoder(object):
                 # print epoch mean component losses to screen       
                 self.val_loss.print_epoch_losses(time.time() - epoch_time)
 
-            # TODO
-        #     if self.writer:
-        #         scalars = {'training':epoch_train_loss}
-        #         if epoch_validation_loss != None:
-        #             scalars.update({'validation':epoch_validation_loss})
-
-        #         self.writer.add_scalars(main_tag='loss', tag_scaler_dict = scalars, 
-        #                                 global_step = epoch)                
-         
-        # if self.writer:
-        #     self.writer.flush()
 
         
     def _mini_batch(self, validation = False):
@@ -133,17 +118,8 @@ class PhyloAutoencoder(object):
 
         pred = self.model((phy, aux))
 
-        # divide phy into tree and character data
-        if self.nchars > 0:
-            tree = phy[:, :self.num_tree_chans, :]
-            char = phy[:, self.num_tree_chans:, :]
-            tree_mask = mask[:, :self.num_tree_chans, :] if mask is not None else None
-            char_mask = mask[:, self.num_tree_chans:, :] if mask is not None else None
-        else:
-            tree = phy
-            char = None
-            tree_mask = mask
-            char_mask = None
+        # divide phy and mask into tree and character data
+        tree, char, tree_mask, char_mask = self._split_tree_char(phy, mask)
 
         segmented_mask = (tree_mask, char_mask)
           
@@ -173,6 +149,17 @@ class PhyloAutoencoder(object):
         pred = self.model((phy, aux))
 
         # divide phy into tree and character data
+        tree, char, tree_mask, char_mask = self._split_tree_char(phy, mask)
+
+        segmented_mask = (tree_mask, char_mask)
+
+        true = (tree, char, aux, std_norm)
+
+        # compute and update loss fields in val_loss
+        self.val_loss.minibatch_loss(pred, true, segmented_mask)
+
+    def _split_tree_char(self, phy, mask):
+        # divide phy into tree and character data
         if self.nchars > 0:
             tree = phy[:, :self.num_tree_chans, :]
             char = phy[:, self.num_tree_chans:, :]
@@ -184,13 +171,7 @@ class PhyloAutoencoder(object):
             tree_mask = mask
             char_mask = None
 
-        segmented_mask = (tree_mask, char_mask)
-
-        true = (tree, char, aux, std_norm)
-
-        # compute and update loss fields in val_loss
-        self.val_loss.minibatch_loss(pred, true, segmented_mask)
-
+        return tree, char, tree_mask, char_mask
 
     def plot_losses(self, out_prefix = "AElossplot", log = True):
         # plot total losses
@@ -215,14 +196,17 @@ class PhyloAutoencoder(object):
 
         # plot each loss separately (only validation losses are recorded). 
         # create subplots for each loss component               
-        num_subplots = 4 if self.model.latent_layer_type == "GAUSS" else 2
-        fig, (axs1, axs2) = plt.subplots(num_subplots//2, 2, figsize=(11, 8), sharex=True)
+        num_subplots = 6 if self.model.latent_layer_type == "GAUSS" else 4
+        fig, axs = plt.subplots(num_subplots//2, 2, figsize=(11, 8), sharex=True)
+        # axs = axs.flatten()
         fig.subplots_adjust(hspace=0.4, wspace=0.4)
-        self._fill_in_loss_comp_fig(self.train_loss.epoch_phy_loss, "phy", axs1[0])
-        self._fill_in_loss_comp_fig(self.train_loss.epoch_aux_loss, "aux", axs1[1])
+        self._fill_in_loss_comp_fig(self.val_loss.epoch_total_loss, "combined", axs[0,0])
+        self._fill_in_loss_comp_fig(self.val_loss.epoch_phy_loss, "phy", axs[0,1])
+        self._fill_in_loss_comp_fig(self.val_loss.epoch_char_loss, "char", axs[1,1])
+        self._fill_in_loss_comp_fig(self.val_loss.epoch_aux_loss, "aux", axs[1,0])
         if self.model.latent_layer_type == "GAUSS":
-            self._fill_in_loss_comp_fig(self.train_loss.epoch_mmd_loss, "mmd", axs2[0])
-            self._fill_in_loss_comp_fig(self.train_loss.epoch_vz_loss, "vz", axs2[1])
+            self._fill_in_loss_comp_fig(self.val_loss.epoch_mmd_loss, "mmd", axs[2,0])
+            self._fill_in_loss_comp_fig(self.val_loss.epoch_vz_loss, "vz", axs[2,1])
         plt.savefig(out_prefix + ".component_loss.pdf", bbox_inches='tight')
         plt.close(fig)
 
@@ -238,12 +222,15 @@ class PhyloAutoencoder(object):
         self.model.eval() 
         phy = phy.to(self.device)
         aux = aux.to(self.device)
-        phy_pred, aux_pred, latent = self.model((phy, aux))
+        tree_pred, char_pred, aux_pred, latent = self.model((phy, aux))
 
-        if self.char_type == "categorical":
+        if self.char_type == "categorical" and char_pred is not None:
             # softmax the char data
-            char_start_idx = phy_pred.shape[1] - self.nchars
-            phy_pred[:,char_start_idx:,:] = torch.softmax(phy_pred[:,char_start_idx:,:], dim = 1)
+            # char_start_idx = phy_pred.shape[1] - self.nchars
+            # phy_pred[:,char_start_idx:,:] = torch.softmax(phy_pred[:,char_start_idx:,:], dim = 1)
+
+            char_sftmx = torch.softmax(char_pred, dim = 1)
+            phy_pred = torch.cat((tree_pred, char_sftmx), dim = 1)
 
         self.model.train()
         return phy_pred.detach().cpu().numpy(), aux_pred.detach().cpu().numpy()

@@ -191,6 +191,7 @@ class AECNN(nn.Module):
             unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
 
         # separate the two type of structured decoded: tree and character data
+        # maybe this should be done somewhere more downstream
         if self.num_chars > 0:
             phy_decoded_x = structured_decoded_x[:,:(structured_decoded_x.shape[1]-self.num_chars),:]
             char_decoded_x = structured_decoded_x[:,(structured_decoded_x.shape[1]-self.num_chars):,:]
@@ -200,7 +201,6 @@ class AECNN(nn.Module):
         # model should output the latent layer if layer type is "GAUSS"
         if self.latent_layer_type != "GAUSS":
             shared_latent_out = None
-
 
         return phy_decoded_x, char_decoded_x, unstructured_decoded_x, shared_latent_out
 

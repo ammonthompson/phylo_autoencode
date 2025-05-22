@@ -132,7 +132,6 @@ def char_recon_loss(x, y, char_type = "categorical", mask = None):
         # Reshape to (batch_size * ntips, n_classes) for cross-entropy
         x = x.permute(0, 2, 1).reshape(-1, x.shape[1])  # (batch_size * ntips, n_classes)
         y = y.permute(0, 2, 1).reshape(-1, y.shape[1])  # (batch_size * ntips, n_classes)
-        mask = mask.permute(0, 2, 1).reshape(-1, mask.shape[1])
 
         # Convert one-hot to class indices
         y = y.argmax(dim=1)  # shape (N,)
@@ -143,6 +142,7 @@ def char_recon_loss(x, y, char_type = "categorical", mask = None):
 
     if mask is not None:
         # Apply the mask to the loss
+        mask = mask.permute(0, 2, 1).reshape(-1, mask.shape[1])
         char_loss = char_loss * mask[:,0] # match dims (all columns are the same in mask)
 
     return char_loss.mean()
@@ -212,17 +212,13 @@ class PhyLoss(object):
         self.batch_mmd_loss     = []
         self.batch_vz_loss      = []
         # loss weights
-        self.phy_w  = weights[0]
-        self.char_w = weights[1]
-        self.aux_w  = weights[2]
-        self.mmd_w  = weights[3]
-        self.vz_w   = weights[4]
+        self.phy_w, self.char_w, self.aux_w, self.mmd_w, self.vz_w  = weights
 
         self.char_type = char_type
         self.latent_layer_type = latent_layer_Type
         
 
-    def minibatch_loss(self, x : torch.Tensor, y : torch.Tensor, mask : torch.Tensor):
+    def minibatch_loss(self, x : Tuple, y : Tuple, mask : Tuple):
         # appends to the self.losses and returns the current batch loss
         # x is a tuple (dictionary maybe?) of predictions for a batch
         # y is a tuple of the true values for a batch
@@ -386,7 +382,10 @@ class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
     # ignores the categorical data
     def __init__(self, num_chars, num_chans, num_tips):
         super().__init__()
-        self.cblv_scaler = StandardScaler()
+
+        # self.cblv_scaler = StandardScaler()
+        self.cblv_scaler = PositiveStandardScaler()
+
         self.num_chars = num_chars
         self.num_chans = num_chans
         self.num_tips   = num_tips
@@ -637,7 +636,6 @@ class LogStandardScaler(BaseEstimator, TransformerMixin):
 
         # Reverse the shift
         return X_exp - self.min_positive_values
-    
 
 class PositiveStandardScaler(BaseEstimator, TransformerMixin):
     def __init__(self):
