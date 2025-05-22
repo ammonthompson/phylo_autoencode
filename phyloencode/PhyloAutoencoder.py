@@ -231,6 +231,8 @@ class PhyloAutoencoder(object):
 
             char_sftmx = torch.softmax(char_pred, dim = 1)
             phy_pred = torch.cat((tree_pred, char_sftmx), dim = 1)
+        else:
+            phy_pred = tree_pred
 
         self.model.train()
         return phy_pred.detach().cpu().numpy(), aux_pred.detach().cpu().numpy()

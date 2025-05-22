@@ -17,7 +17,7 @@ from phyloencode.PhyloAutoencoder import PhyloAutoencoder
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--trn_data",         required = True,  help = "Training data in hdf5 format.")
-    parser.add_argument("-o", "--out_prefix",       required = True,  help = "Output prefix.")
+    parser.add_argument("-o", "--out_prefix",       required = False,  help = "Output prefix.")
     parser.add_argument("-cfg", "--config",          required = False, help = "Configuration file. Settings dictionary. Default None.")
     parser.add_argument("-s", "--seed",             required = False, help = "Random seed. Default random.")
     parser.add_argument("-nw", "--num_workers",      required = False, help = "Number of workers. Default 0")
@@ -39,7 +39,7 @@ def main():
 
     args = parser.parse_args()
     data_fn = args.trn_data
-    out_prefix = args.out_prefix
+    out_prefix = "out" if args.out_prefix is None else args.out_prefix
 
     # not used. dataset too small
     # num_cpus = multiprocessing.cpu_count()
@@ -102,6 +102,8 @@ def main():
         config_fn = args.config
         config = ph.utils.read_config(config_fn)
         # config = pd.read_json(config_fn, orient = "index").to_dict(orient = "records")[0]
+        if "out_prefix"     in config:
+            out_prefix      = config['out_prefix']
         if "num_subset"     in config:
             num_subset      = config["num_subset"]
         if "num_epochs"     in config:
@@ -137,6 +139,8 @@ def main():
         if "char_type"      in config:
             char_type       = config["char_type"]
 
+    
+
     # get formated tree data
     with h5py.File(data_fn, "r") as f:
         aux_data_names = f['aux_data_names'][...][0] 
@@ -148,7 +152,7 @@ def main():
         phy_data = np.array(f['phy_data'][0:num_subset,...], dtype = np.float32)
         phy_data = phy_data.reshape((phy_data.shape[0], phy_data.shape[1]//max_tips, max_tips), order = "F")
         phy_data = phy_data[:,0:nchannels,:] 
-        # phy_data = phy_data[:,0:nchannels,0:100]  # TESTING
+        # phy_data = phy_data[:,[0,1,4,5,6],:] 
         phy_data = phy_data.reshape((phy_data.shape[0],-1), order = "F")
         phy_data = torch.tensor(phy_data, dtype = torch.float32)
         # aux_data = torch.tensor(f['aux_data'][0:num_subset, num_tips_idx], dtype = torch.float32).view(-1,1)
@@ -161,7 +165,7 @@ def main():
         test_phy_data = np.array(f['phy_data'][num_subset:(num_subset + 500),...], dtype = np.float32)
         test_phy_data = test_phy_data.reshape((test_phy_data.shape[0], test_phy_data.shape[1]//max_tips, max_tips), order = "F")
         test_phy_data = test_phy_data[:,0:nchannels,:]
-        # test_phy_data = test_phy_data[:,0:nchannels,0:100]  # TESTING
+        # test_phy_data = test_phy_data[:,[0,1,4,5,6],:]
         test_phy_data = test_phy_data.reshape((test_phy_data.shape[0],-1), order = "F")
         test_phy_data = torch.tensor(test_phy_data, dtype = torch.float32)
         # test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500), num_tips_idx], dtype = torch.float32).view(-1,1)

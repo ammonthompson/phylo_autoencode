@@ -101,6 +101,21 @@ with PdfPages(args.outfile) as pdf:
     plt.close()
     
 
+    # Mahalanobis distance
+    # If x is n iid N(0,1) rv's then xTx ~ chi-square(df = n) 
+    df = encoded_dat.shape[1]
+    mahalanobis = np.sum(encoded_dat**2, axis=1)
+    x = np.linspace(np.min(mahalanobis), np.max(mahalanobis),  num = 100)
+    y = stats.chi2.pdf(x, df)
+    plt.figure()
+    plt.hist(mahalanobis, bins = 50, density = True, color = "blue", )
+    plt.plot(x, y, linestyle = "-", color = "red")
+    plt.title("Distribution of Mahalanobis distance")
+    plt.xlabel("Mahal. dist.")
+    plt.ylabel("Density")
+    pdf.savefig()
+    plt.close()
+
 
     ###########
     # qqplots #
