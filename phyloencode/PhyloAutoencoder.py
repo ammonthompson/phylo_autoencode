@@ -224,13 +224,12 @@ class PhyloAutoencoder(object):
         aux = aux.to(self.device)
         tree_pred, char_pred, aux_pred, latent = self.model((phy, aux))
 
-        if self.char_type == "categorical" and char_pred is not None:
-            # softmax the char data
-            # char_start_idx = phy_pred.shape[1] - self.nchars
-            # phy_pred[:,char_start_idx:,:] = torch.softmax(phy_pred[:,char_start_idx:,:], dim = 1)
-
-            char_sftmx = torch.softmax(char_pred, dim = 1)
-            phy_pred = torch.cat((tree_pred, char_sftmx), dim = 1)
+        if char_pred is not None:
+            if self.char_type == "categorical":
+                char_sftmx = torch.softmax(char_pred, dim = 1)
+                phy_pred = torch.cat((tree_pred, char_sftmx), dim = 1)
+            else:
+                phy_pred =  torch.cat((tree_pred, char_pred), dim = 1)
         else:
             phy_pred = tree_pred
 
@@ -319,8 +318,12 @@ class PhyloAutoencoder(object):
     def latent_decode(self, encoded_tree: torch.Tensor):
         self.model.eval()
         encoded_tree = encoded_tree.to(self.device)
-        decoded_tree = self.model.structured_decoder(encoded_tree)
-        decoded_aux  = self.model.unstructured_decoder(encoded_tree.flatten(start_dim=1))
+        decoded_latent_layer = self.model.latent_layer_decoder(encoded_tree)
+        # reshape
+        reshaped_decoded_latent_layer = decoded_latent_layer.view(-1, self.model.num_structured_latent_channels, 
+                                                                        self.model.reshaped_shared_latent_width) 
+        decoded_tree = self.model.structured_decoder(reshaped_decoded_latent_layer)
+        decoded_aux  = self.model.unstructured_decoder(decoded_latent_layer.flatten(start_dim=1))
         if self.char_type == "categorical":
             # softmax the char data
             char_start_idx = decoded_tree.shape[1] - self.nchars

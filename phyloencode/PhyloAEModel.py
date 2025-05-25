@@ -21,7 +21,8 @@ class AECNN(nn.Module):
                  stride = [2,2],
                  kernel = [3,3],
                  out_channels = [16, 32],
-                 latent_layer_type = "CNN"     # CNN, DENSE, GAUSS
+                 latent_layer_type = "CNN",     # CNN, DENSE, GAUSS
+                 out_prefix = "out",
                  ):
         
         # assumptions:
@@ -107,9 +108,6 @@ class AECNN(nn.Module):
 
         # Calculate final structured output width after encoder
         # get dims for latent shared concatenated layer
-        # self.struct_outshape = utils.conv1d_sequential_outshape(self.structured_encoder.cnn_layers, 
-        #                                                         self.num_structured_input_channel, 
-        #                                                         self.structured_input_width)
         self.struct_outshape = utils.get_outshape(self.structured_encoder.cnn_layers, 
                                                   self.num_structured_input_channel, 
                                                   self.structured_input_width)
@@ -123,16 +121,19 @@ class AECNN(nn.Module):
             self.latent_layer = LatentCNN(self.struct_outshape, kernel_size = self.layer_params['kernel'][-1])
             self.reshaped_shared_latent_width = self.combined_latent_inwidth // self.struct_outshape[1]
             self.latent_outwidth = self.combined_latent_inwidth
+            self.latent_layer_decoder = LatentCNNDecoder(self.struct_outshape, kernel_size = self.layer_params['kernel'][-1])
 
         elif self.latent_layer_type == "GAUSS":
             self.latent_layer = LatentGauss(self.combined_latent_inwidth, self.flat_struct_outwidth)
             self.reshaped_shared_latent_width = self.struct_outshape[2]
             self.latent_outwidth = self.flat_struct_outwidth
+            self.latent_layer_decoder = LatentDenseDecoder(self.latent_outwidth, self.latent_outwidth)
 
         elif self.latent_layer_type == "DENSE":
             self.latent_layer = LatentDense(self.combined_latent_inwidth, self.flat_struct_outwidth)
             self.reshaped_shared_latent_width = self.struct_outshape[2]
             self.latent_outwidth = self.flat_struct_outwidth
+            self.latent_layer_decoder = LatentDenseDecoder(self.latent_outwidth, self.latent_outwidth)
 
         else:
             raise ValueError("""Must set latent_layer_type to either CNN, GAUSS or DENSE""")
@@ -148,7 +149,15 @@ class AECNN(nn.Module):
                                              num_chars            = self.num_chars,
                                              char_type            = self.char_type)
         
-    
+
+        with open(out_prefix + ".network.txt", "w") as f:      
+            f.write(str(self.structured_encoder))
+            f.write(str(self.latent_layer))
+            f.write(str(self.latent_layer_decoder))
+            f.write(str(self.structured_decoder))
+        
+ 
+
 
     def forward(self, data: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
 
@@ -165,7 +174,6 @@ class AECNN(nn.Module):
         # TODO: THe latent Classes should be able to handle the reshaping of the data
         # Combine encodings and reshape depending on the latent layer type
         flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)
-        # combined_latent           = torch.cat((flat_structured_encoded_x, unstructured_encoded_x), dim=1)
         combined_latent           = torch.cat((flat_structured_encoded_x, unstructured_encoded_x), dim=1)  # aux latent last
 
         
@@ -178,10 +186,14 @@ class AECNN(nn.Module):
         
         elif self.latent_layer_type == "GAUSS":
             shared_latent_out   = self.latent_layer(combined_latent)
-            reshaped_latent_out = shared_latent_out.view(-1, self.num_structured_latent_channels, 
-                                                               self.reshaped_shared_latent_width) 
-            structured_decoded_x   = self.structured_decoder(reshaped_latent_out)
-            unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
+           
+            # testings
+            decoded_shared_latent_out = self.latent_layer_decoder(shared_latent_out)
+
+            reshaped_decoded_shared_latent_out = decoded_shared_latent_out.view(-1, self.num_structured_latent_channels, 
+                                                                                    self.reshaped_shared_latent_width) 
+            structured_decoded_x   = self.structured_decoder(reshaped_decoded_shared_latent_out)
+            unstructured_decoded_x = self.unstructured_decoder(decoded_shared_latent_out)
         
         elif self.latent_layer_type == "DENSE":
             shared_latent_out   = self.latent_layer(combined_latent)            
@@ -235,18 +247,16 @@ class CnnEncoder(nn.Module):
                                              padding      = 1))
         
         conv_out_shape = utils.get_outshape(self.cnn_layers, data_channels, data_width)
-        
         self.conv_out_width = [conv_out_shape[2]]
         print(conv_out_shape)
 
         # experimenting
-        self.cnn_layers.add_module("cnn_batchnorm_0", nn.BatchNorm1d(out_channels[0]))
+        self.cnn_layers.add_module("norm_0", nn.BatchNorm1d(out_channels[0]))
+        # self.cnn_layers.add_module("act_0", SoftPower(0.1, 3.))
 
         # add more layers if depth greater than 1.
         if len(out_channels) > 1:
             self.cnn_layers.add_module("conv_ReLU_0", nn.ReLU())
-            # self.cnn_layers.add_module("conv_GELU_0", nn.GELU())
-            # self.cnn_layers.add_module("conv_leakyrelu_0", nn.LeakyReLU(0.2))
             
             for i in range(1, nl):
                 self.cnn_layers.add_module("conv1d_" + str(i), 
@@ -257,17 +267,15 @@ class CnnEncoder(nn.Module):
                                                       padding      = 1))
                 
                 conv_out_shape = utils.get_outshape(self.cnn_layers, data_channels, data_width)
-                self.conv_out_width.append(conv_out_shape[2])                
-                
+                self.conv_out_width.append(conv_out_shape[2])  # bookkeeping           
                 print(conv_out_shape)
+                self.cnn_layers.add_module("norm_" + str(i), nn.BatchNorm1d(out_channels[i]))
 
-                self.cnn_layers.add_module("cnn_batchnorm_" + str(i),
-                                            nn.BatchNorm1d(out_channels[i])) # experimenting
+                # self.cnn_layers.add_module("softPower" + str(i), SoftPower(0.1, 3.))
 
                 if i < (nl-1):
                     self.cnn_layers.add_module("conv_ReLU_" + str(i), nn.ReLU())
-                    # self.cnn_layers.add_module("conv_GELU_" + str(i), nn.GELU())
-                    # self.cnn_layers.add_module("conv_leakyrelu_" + str(i), nn.LeakyReLU(0.2))
+
 
     def forward(self, x):
         return self.cnn_layers(x)
@@ -317,16 +325,18 @@ class CnnDecoder(nn.Module):
         else:
             pass
 
+
+        ########################
+        # build decoder layers #
+        ########################
+
         # get correct padding and output_padding for first decoder layer
         w_in = latent_width
         new_target_width = encoder_layer_widths[-2]
         npad, noutpad = self._get_paddings(new_target_width, w_in, stride[-1], kernel[-1])
         print((1, out_channels[nl-1], latent_width))
-
-        ########################
-        # build decoder layers #
-        ########################
-        self.tcnn_layers = nn.Sequential()        
+        
+        self.tcnn_layers = nn.Sequential() 
         self.tcnn_layers.add_module("trans_conv1d_0", 
                                     nn.ConvTranspose1d(
                                         in_channels     = out_channels[nl-1], 
@@ -337,10 +347,9 @@ class CnnDecoder(nn.Module):
                                         output_padding  = noutpad 
                                         ))
  
-        self.tcnn_layers.add_module("tconv_ReLU_0", nn.ReLU())
-
         outshape = utils.get_outshape(self.tcnn_layers,  num_cnn_latent_channels, latent_width)
         print(outshape)
+        self.tcnn_layers.add_module("tconv_ReLU_0", nn.ReLU())        
 
         for i in range(nl-2, 0, -1):
             outshape = utils.get_outshape(self.tcnn_layers, num_cnn_latent_channels, latent_width)
@@ -357,7 +366,8 @@ class CnnDecoder(nn.Module):
                                             output_padding  = noutpad
                                             ))            
             print(utils.get_outshape(self.tcnn_layers, num_cnn_latent_channels, latent_width))
-            self.tcnn_layers.add_module("tconv_ReLU_" + str(i), nn.ReLU())        
+
+            self.tcnn_layers.add_module("tconv_ReLU_" + str(i), nn.ReLU())
 
         # final decoder layer
         # get correct padding and output_padding for final decoder layer
@@ -380,8 +390,6 @@ class CnnDecoder(nn.Module):
         # self.tcnn_layers.add_module("tconv_sigmoid_out", nn.Sigmoid())
         # self.tcnn_layers.add_module("tconv_softmax_out", nn.Softmax(dim=1))
         # self.tcnn_layers.add_module("tconv_Tanh_out", nn.Tanh())
-
-
 
         # print out shape
         print(utils.get_outshape(self.tcnn_layers, num_cnn_latent_channels, latent_width))
@@ -431,8 +439,10 @@ class LatentCNN(nn.Module):
         super().__init__()
         odd_kernel = kernel_size - kernel_size % 2 + 1
         self.shared_layer = nn.Sequential( # preserve input shape
-            nn.Conv1d(in_cnn_shape[1], in_cnn_shape[1], 
-                      stride = 1, kernel_size = odd_kernel, 
+            nn.Conv1d(in_cnn_shape[1], 
+                      in_cnn_shape[1], 
+                      stride = 1, 
+                      kernel_size = odd_kernel, 
                       padding = (odd_kernel-1)//2)
         )
     
@@ -457,9 +467,59 @@ class LatentGauss(nn.Module):
         # Shared Latent Layer
         self.shared_layer = nn.Sequential(
             nn.Linear(in_width, out_width),
+            # nn.BatchNorm1d(out_width),
+            nn.ELU(),
+#   # Bottleneck: the bottleneck not because of dimensionality reduction
+#   # but by distribution contstraint: N(0,1)
+            nn.Linear(out_width, out_width),
         )
         print((1, out_width))
     
     def forward(self, x):
         return self.shared_layer(x)
+    
+    def __iter__(self):
+        return iter(self.shared_layer)
+    
+class LatentDenseDecoder(nn.Module): # same as LatentGauss
+    def __init__(self, in_width: int, out_width: int):
+        super().__init__()
+        self.shared_layer = nn.Sequential(
+            # nn.Identity(),
+            # nn.Linear(in_width, out_width),
+            nn.BatchNorm1d(in_width),
+            # nn.ELU(),
+            # SoftPower(0.1, 3),
+            nn.Linear(in_width, out_width),
+        )
+        print((1, out_width))
+    
+    def forward(self, x):
+        return self.shared_layer(x)
+    
+    def __iter__(self):
+        return iter(self.shared_layer)
+    
+class LatentCNNDecoder(nn.Module):
+    def __init__(self, in_cnn_shape: Tuple[int, int], kernel_size = 9):
+        super().__init__()
+        odd_kernel = kernel_size - kernel_size % 2 + 1
+        self.shared_layer = nn.Sequential( # preserve input shape
+            nn.Conv1d(in_cnn_shape[1], 
+                      in_cnn_shape[1], 
+                      stride = 1, 
+                      kernel_size = odd_kernel, 
+                      padding = (odd_kernel-1)//2)
+        )
+    
+    def forward(self, x):
+        return self.shared_layer(x)
 
+class SoftPower(nn.Module):
+    def __init__(self, alpha = 1., power = 2):
+        super().__init__()
+        self.alpha = alpha
+        self.power = power
+    
+    def forward(self, x):
+        return x + self.alpha * x**self.power

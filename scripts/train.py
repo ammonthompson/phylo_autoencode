@@ -200,6 +200,7 @@ def main():
                                       latent_layer_type             = latent_model_type,
                                       num_chars                     = nchars,
                                       char_type                     = char_type,
+                                      out_prefix                    = out_prefix
                                       )
 
     # create Trainer
@@ -209,7 +210,7 @@ def main():
                                         phy_loss_weight = phy_loss_weight,
                                         char_weight     = char_weight,
                                         mmd_lambda      = mmd_lambda,
-                                        vz_lambda       = vz_lambda
+                                        vz_lambda       = vz_lambda,
                                         )
     
     # Load data loaders and Train model

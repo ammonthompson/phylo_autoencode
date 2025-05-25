@@ -57,8 +57,7 @@ def main ():
     aux_normalizer = joblib.load(aux_normalizer_fn)
 
     tree_autoencoder = PhyloAutoencoder(model     = ae_model, 
-                                        optimizer = torch.optim.Adam(ae_model.parameters()), 
-                                        loss_func = torch.nn.MSELoss())
+                                        optimizer = torch.optim.Adam(ae_model.parameters()))
 
     # import test data
     # test if file type is hdf5
