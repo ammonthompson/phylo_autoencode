@@ -67,7 +67,7 @@ class PhyloAutoencoder(object):
                 self._mini_batch(validation=True)             
                 self.val_loss.append_mean_batch_loss()
                 # print epoch mean component losses to screen       
-                self.val_loss.print_epoch_losses(time.time() - epoch_time)
+                self.val_loss.print_epoch_losses(elapsed_time = time.time() - epoch_time)
 
 
         

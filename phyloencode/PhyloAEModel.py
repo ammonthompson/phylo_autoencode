@@ -21,6 +21,7 @@ class AECNN(nn.Module):
                  stride = [2,2],
                  kernel = [3,3],
                  out_channels = [16, 32],
+                 latent_output_dim = None, # if None, then controled by structured latent channels
                  latent_layer_type = "CNN",     # CNN, DENSE, GAUSS
                  out_prefix = "out",
                  ):
@@ -67,6 +68,8 @@ class AECNN(nn.Module):
                             "stride"      : stride}
                 
         self.latent_layer_type = latent_layer_type
+        self.latent_layer_dim = latent_output_dim
+        
 
         # input dimensions
         self.num_structured_input_channel = num_structured_input_channel
@@ -120,25 +123,29 @@ class AECNN(nn.Module):
         if self.latent_layer_type == "CNN":
             self.latent_layer = LatentCNN(self.struct_outshape, kernel_size = self.layer_params['kernel'][-1])
             self.reshaped_shared_latent_width = self.combined_latent_inwidth // self.struct_outshape[1]
+            if self.latent_layer_dim is not None:
+                raise Warning("""latent_layer_dim is set but not used.
+                                Latent layer type is CNN, so reshaped_shared_latent_width is set to 
+                                combined_latent_inwidth // num_structured_latent_channels""")
             self.latent_outwidth = self.combined_latent_inwidth
             self.latent_layer_decoder = LatentCNNDecoder(self.struct_outshape, kernel_size = self.layer_params['kernel'][-1])
 
         elif self.latent_layer_type == "GAUSS":
-            self.latent_layer = LatentGauss(self.combined_latent_inwidth, self.flat_struct_outwidth)
             self.reshaped_shared_latent_width = self.struct_outshape[2]
-            self.latent_outwidth = self.flat_struct_outwidth
-            self.latent_layer_decoder = LatentDenseDecoder(self.latent_outwidth, self.latent_outwidth)
+            self.latent_outwidth = self.flat_struct_outwidth if self.latent_layer_dim is None else self.latent_layer_dim
+            self.latent_layer = LatentGauss(self.combined_latent_inwidth, self.latent_outwidth)
+            self.latent_layer_decoder = LatentDenseDecoder(self.latent_outwidth, self.flat_struct_outwidth)
 
         elif self.latent_layer_type == "DENSE":
-            self.latent_layer = LatentDense(self.combined_latent_inwidth, self.flat_struct_outwidth)
             self.reshaped_shared_latent_width = self.struct_outshape[2]
-            self.latent_outwidth = self.flat_struct_outwidth
-            self.latent_layer_decoder = LatentDenseDecoder(self.latent_outwidth, self.latent_outwidth)
+            self.latent_outwidth = self.flat_struct_outwidth if self.latent_layer_dim is None else self.latent_layer_dim
+            self.latent_layer = LatentDense(self.combined_latent_inwidth, self.latent_outwidth)
+            self.latent_layer_decoder = LatentDenseDecoder(self.latent_outwidth, self.flat_struct_outwidth)
 
         else:
             raise ValueError("""Must set latent_layer_type to either CNN, GAUSS or DENSE""")
 
-        self.unstructured_decoder = DenseDecoder(self.latent_outwidth, self.unstructured_input_width)
+        self.unstructured_decoder = DenseDecoder(self.flat_struct_outwidth, self.unstructured_input_width)
 
         # Structured Decoder
         self.structured_decoder = CnnDecoder(encoder_layer_widths = self.structured_encoder.conv_out_width,
@@ -150,11 +157,16 @@ class AECNN(nn.Module):
                                              char_type            = self.char_type)
         
 
-        with open(out_prefix + ".network.txt", "w") as f:      
-            f.write(str(self.structured_encoder))
-            f.write(str(self.latent_layer))
-            f.write(str(self.latent_layer_decoder))
-            f.write(str(self.structured_decoder))
+        with open(out_prefix + ".network.txt", "w") as f:  
+            f.write("PHYLOGENETIC ENCODER AND DECODER:\n")    
+            f.write(str(self.structured_encoder) + "\n")
+            f.write(str(self.latent_layer) + "\n")
+            f.write(str(self.latent_layer_decoder) + "\n")
+            f.write(str(self.structured_decoder) + "\n")
+            f.write("\n\nAUXILLIARY ENCODER AND DECODER:\n")
+            f.write(str(self.unstructured_encoder) + "\n")
+            f.write("\nSee latent layers above.\n")
+            f.write(str(self.unstructured_decoder))
         
  
 

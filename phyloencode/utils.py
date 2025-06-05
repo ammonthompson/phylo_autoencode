@@ -163,7 +163,6 @@ def aux_recon_loss(x, y):
     return fun.mse_loss(x, y)
     # return fun.l1_loss(x, y)
 
-# developing
 def losses(pred : torch.tensor, true : torch.tensor, mask : torch.tensor, char_type : str):
     # separate components
     phy_hat, char_hat, aux_hat, latent_hat = pred
