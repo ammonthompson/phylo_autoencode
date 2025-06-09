@@ -49,12 +49,12 @@ def plot_distributions(df_1, df_2, percent_variance = None,
         # bar plot of percent variance explained
         if np.sum(percent_variance is not None) > 0:
             # hivar = percent_variance[0:sum([v > 1 for v in percent_variance ])]
-            hivar = np.array(percent_variance)[np.cumsum(percent_variance) < 100]
+            hivar = np.array(percent_variance)[np.cumsum(percent_variance) <= 100]
             total_variance = np.round(sum(hivar),  decimals=1)
             plt.figure()
-            plt.bar([x for x in range(len(hivar))], hivar)
+            plt.bar([x+1 for x in range(len(hivar))], hivar)
             if ref_percent_variance_explained is not None:
-                plt.plot(ref_percent_variance_explained, color="red", label="Reference")
+                plt.plot([x+1 for x in range(len(hivar))], ref_percent_variance_explained, color="red", label="Reference")
                 plt.legend()
             plt.title(str(total_variance) + "% of PCA variance explained")
             plt.xlabel("Component")

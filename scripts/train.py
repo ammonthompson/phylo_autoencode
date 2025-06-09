@@ -30,6 +30,7 @@ def main():
     parser.add_argument("-ns", "--num_subset",       required = False, help = "subset of data used for training/testing. Default 10000")
     parser.add_argument("-nchans", "--num_channels",     required = False, help = "number of data channels. Default 9")
     parser.add_argument("-nchars", "--num_chars",     required = False, help = "number of characters. Default 5")
+    parser.add_argument("-ld", "--latent_output_dim", required = False, help = "latent output dimension. Default None (determined by structured encoder output shape)")
     parser.add_argument("-l", "--latent_model_type", required = False, help = "latent model type (GAUSS, DENSE, or CNN). Default GAUSS")
     parser.add_argument("-cw", "--char_weight",     required = False, help = "how much weight to give to char loss. Default 0.0")
     parser.add_argument("-k", "--kernel",           required = False, help = "kernel size. Default 3,5,5")
@@ -59,6 +60,7 @@ def main():
     phy_loss_weight = 0.9
     char_weight = 0.1
     latent_model_type = "GAUSS"
+    latent_output_dim = None # if None, will be determined by structured encoder output shape
     stride          = [2,4,8]
     kernel          = [3,5,9]
     out_channels    = [16,64,128]
@@ -88,6 +90,8 @@ def main():
         char_weight = float(args.char_weight)
     if args.latent_model_type is not None:
         latent_model_type = args.latent_model_type
+    if args.latent_output_dim is not None:
+        latent_output_dim = int(args.latent_output_dim)
     if args.kernel is not None:
         kernel      = [int(i) for i in args.kernel.split(",")]
     if args.stride is not None:
@@ -126,6 +130,8 @@ def main():
             char_weight     = config["char_weight"]
         if "latent_model_type" in config:
             latent_model_type = config["latent_model_type"]
+        if "latent_output_dim" in config:
+            latent_output_dim = config["latent_output_dim"]
         if "kernel"         in config:
             kernel          = config["kernel"]
         if "stride"         in config:      
@@ -144,28 +150,24 @@ def main():
     # get formated tree data
     with h5py.File(data_fn, "r") as f:
         aux_data_names = f['aux_data_names'][...][0] 
-        num_tips_idx = np.where(f['aux_data_names'][...][0] == b'num_taxa')[0][0]
-        # phy_data = torch.tensor(f['phy_data'][0:num_subset,...], dtype = torch.float32)
+        num_tips_idx = np.where(aux_data_names == b'num_taxa')[0][0]
         aux_data = torch.tensor(f['aux_data'][0:num_subset,...], dtype = torch.float32)
         if len(aux_data.shape) != 2: # i.e. is an array but should be a matrix with 1 column
             aux_data = aux_data.reshape((aux_data.shape[0], 1))
         phy_data = np.array(f['phy_data'][0:num_subset,...], dtype = np.float32)
         phy_data = phy_data.reshape((phy_data.shape[0], phy_data.shape[1]//max_tips, max_tips), order = "F")
         phy_data = phy_data[:,0:nchannels,:] 
-        # phy_data = phy_data[:,[0,1,4,5,6],:] 
         phy_data = phy_data.reshape((phy_data.shape[0],-1), order = "F")
         phy_data = torch.tensor(phy_data, dtype = torch.float32)
         # aux_data = torch.tensor(f['aux_data'][0:num_subset, num_tips_idx], dtype = torch.float32).view(-1,1)
         num_tips = torch.tensor(f['aux_data'][0:num_subset,num_tips_idx], dtype = torch.float32).view(-1,1)
         
-        # test_phy_data = torch.tensor(f['phy_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
         test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500),...], dtype = torch.float32)
         if len(test_aux_data.shape) != 2: # i.e. is an array but should be a matrix with 1 column
             test_aux_data = test_aux_data.reshape((test_aux_data.shape[0], 1))
         test_phy_data = np.array(f['phy_data'][num_subset:(num_subset + 500),...], dtype = np.float32)
         test_phy_data = test_phy_data.reshape((test_phy_data.shape[0], test_phy_data.shape[1]//max_tips, max_tips), order = "F")
         test_phy_data = test_phy_data[:,0:nchannels,:]
-        # test_phy_data = test_phy_data[:,[0,1,4,5,6],:]
         test_phy_data = test_phy_data.reshape((test_phy_data.shape[0],-1), order = "F")
         test_phy_data = torch.tensor(test_phy_data, dtype = torch.float32)
         # test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500), num_tips_idx], dtype = torch.float32).view(-1,1)
@@ -183,13 +185,7 @@ def main():
                                        nchannels   = nchannels, 
                                        nchars      = nchars,
                                        num_tips    = num_tips)
-    
-    
-    # create data loaders
-    trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = batch_size, 
-                                                     shuffle     = True, 
-                                                     num_workers = nworkers)
-
+        
     # create model
     ae_model  = ph.PhyloAEModel.AECNN(num_structured_input_channel  = ae_data.nchannels, 
                                       structured_input_width        = ae_data.phy_width,
@@ -197,6 +193,7 @@ def main():
                                       stride                        = stride,
                                       kernel                        = kernel,
                                       out_channels                  = out_channels,
+                                      latent_output_dim             = latent_output_dim,
                                       latent_layer_type             = latent_model_type,
                                       num_chars                     = nchars,
                                       char_type                     = char_type,
@@ -212,6 +209,10 @@ def main():
                                         mmd_lambda      = mmd_lambda,
                                         vz_lambda       = vz_lambda,
                                         )
+    
+
+    # create data loaders
+    trn_loader, val_loader = ae_data.get_dataloaders(batch_size, shuffle = True, num_workers = nworkers)
     
     # Load data loaders and Train model
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)

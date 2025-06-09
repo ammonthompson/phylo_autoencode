@@ -9,6 +9,7 @@ from torch.utils.data import Dataset, DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from phyloencode import utils
+from phyloencode.PhyLoss import PhyLoss
 # from sklearn.linear_model import LinearRegression
 import time
 import os
@@ -49,8 +50,10 @@ class PhyloAutoencoder(object):
 
         self.weights = (phy_loss_weight, self.char_weight, 1-phy_loss_weight, mmd_lambda, vz_lambda)
 
-        self.train_loss  = utils.PhyLoss(self.weights, self.char_type, self.model.latent_layer_type)
-        self.val_loss    = utils.PhyLoss(self.weights, self.char_type, self.model.latent_layer_type)
+
+        self.train_loss  = PhyLoss(self.weights, self.char_type, self.model.latent_layer_type)
+        self.val_loss    = PhyLoss(self.weights, self.char_type, self.model.latent_layer_type)
+
 
 
     def train(self, num_epochs, seed = 1):
@@ -60,7 +63,7 @@ class PhyloAutoencoder(object):
             self.total_epochs += 1
             epoch_time = time.time()
 
-            self._mini_batch()
+            self._mini_batch(validation=False)
             self.train_loss.append_mean_batch_loss()
 
             with torch.no_grad():
@@ -157,6 +160,7 @@ class PhyloAutoencoder(object):
 
         # compute and update loss fields in val_loss
         self.val_loss.minibatch_loss(pred, true, segmented_mask)
+
 
     def _split_tree_char(self, phy, mask):
         # divide phy into tree and character data

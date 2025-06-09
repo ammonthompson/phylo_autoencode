@@ -66,10 +66,10 @@ def main():
         if args.cblv is not None and args.aux is not None:
             file_exists(args.cblv)
             file_exists(args.aux)
-            cblv_data   = pd.read_csv(args.cblv, header=None).values
+            # cblv_data   = pd.read_csv(args.cblv, header=None).values
             aux_data    = pd.read_csv(args.aux, header=None).values
-            labels      = np.array([0] * len(cblv_data))
-            label_names = np.array([0] * len(cblv_data))
+            # labels      = np.array([0] * len(cblv_data))
+            # label_names = np.array([0] * len(cblv_data))
             ntips_idx   = np.where(aux_data.keys() == 'num_taxa')[0]
             ntips       = aux_data.iloc['num_taxa'].to_numpy()
         else:
@@ -84,9 +84,9 @@ def main():
         with h5py.File(args.data, 'r') as f:
             phy_data    = f['phy_data'][:]
             aux_data    = f['aux_data'][:]
-            aux_data_names = f['aux_data_names'][:][0]
-            labels      = f['labels'][:]
-            label_names = f['label_names'][:][0]
+            # aux_data_names = f['aux_data_names'][:][0]
+            # labels      = f['labels'][:]
+            # label_names = f['label_names'][:][0]
             # get the num tips
             ntips_idx = np.where(f['aux_data_names'][...][0] == b'num_taxa')[0][0]
             ntips = aux_data[:, ntips_idx]
@@ -123,7 +123,7 @@ def main():
     pred_aux_data = aux_normilzer.inverse_transform(pred_aux_data)
 
     mask = np.zeros(phy_data.shape, dtype=bool)
-    phy_flat_width = max_tips * num_channels
+    # phy_flat_width = max_tips * num_channels
     num_unmask = ntips * num_channels
 
     for t in range(pred_phy_data.shape[0]):
