@@ -49,8 +49,10 @@ def plot_distributions(df_1, df_2, percent_variance = None,
         # bar plot of percent variance explained
         if np.sum(percent_variance is not None) > 0:
             # hivar = percent_variance[0:sum([v > 1 for v in percent_variance ])]
-            hivar = np.array(percent_variance)[np.cumsum(percent_variance) <= 100]
+            # hivar = np.array(percent_variance)[np.round(np.cumsum(percent_variance), decimals=4) <= 100.]
+            hivar  = np.array(percent_variance)
             total_variance = np.round(sum(hivar),  decimals=1)
+
             plt.figure()
             plt.bar([x+1 for x in range(len(hivar))], hivar)
             if ref_percent_variance_explained is not None:
@@ -205,7 +207,7 @@ if __name__ == "__main__":
         ref_pincomp = refpca.fit_transform(ref_data)
         ref_explained_variance_ratio = refpca.explained_variance_ratio_ * 100
         
-
+        # PCA on the first file
         pca = PCA(n_components=df_1.shape[1])
         principal_components_1 = pca.fit_transform(scaled_data_1)
 
@@ -241,10 +243,11 @@ if __name__ == "__main__":
                 pc_df_2.to_csv(out_prefix + ".test_trees.pca.csv", index=False)
 
         else:
-            sclaed_data_2 = None
+            scaled_data_2 = None
             principal_components_2 = None
             pc_df_2 = None
 
+ 
         plot_distributions(pc_df_1, pc_df_2, explained_variance_ratio, 
                            ref_explained_variance_ratio, out_prefix + "_pca_plots.pdf")
 

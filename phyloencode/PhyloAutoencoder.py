@@ -19,7 +19,7 @@ from typing import List, Dict, Tuple, Optional, Union
 class PhyloAutoencoder(object):
     def __init__(self, model, optimizer = optim.Adam, 
                  batch_size=128, phy_loss_weight=0.5, char_weight=0.5,
-                 mmd_lambda=None, vz_lambda=None):
+                 mmd_lambda=1., vz_lambda=1., rdp_lambda=1.,):
         '''
             model is an object from torch.model
             optimizer is an object from torch.optim
@@ -47,12 +47,17 @@ class PhyloAutoencoder(object):
         self.num_tree_chans     = self.phy_channels - self.nchars
 
         self.latent_shape = (self.batch_size, self.model.latent_outwidth)
+        
 
-        self.weights = (phy_loss_weight, self.char_weight, 1-phy_loss_weight, mmd_lambda, vz_lambda)
+        self.weights = (phy_loss_weight, self.char_weight, 1-phy_loss_weight, mmd_lambda, vz_lambda, rdp_lambda)
 
+        # random matrix for rdp loss
+        K = self.latent_shape[1]
+        D = self.model.structured_input_width * self.phy_channels
+        rand_matrix = (torch.randn(K, D) / (K**0.5)).to(self.device)
 
-        self.train_loss  = PhyLoss(self.weights, self.char_type, self.model.latent_layer_type)
-        self.val_loss    = PhyLoss(self.weights, self.char_type, self.model.latent_layer_type)
+        self.train_loss  = PhyLoss(self.weights, rand_matrix, self.char_type, self.model.latent_layer_type)
+        self.val_loss    = PhyLoss(self.weights, rand_matrix, self.char_type, self.model.latent_layer_type)
 
 
 

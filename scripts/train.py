@@ -25,6 +25,7 @@ def main():
     parser.add_argument("-b", "--batch_size",       required = False, help = "Batch size. Default 128")
     parser.add_argument("-mmd", "--mmd_lambda",       required = False, help = "MMD lambda (>= 0). Default 1.0")
     parser.add_argument("-vz", "--vz_lambda",        required = False, help = "VZ lambda (>= 0). Default 1.0")
+    parser.add_argument("-rdp", "--rdp_lambda",     required = False, help = "RDP loss weight (in [0,1]). Default 1.0")
     parser.add_argument("-mt", "--max_tips",         required = False, help = "maximum number of tips.   Default 1000")
     parser.add_argument("-w", "--phy_loss_weight",  required = False, help = "Phylogenetic loss weight (in [0,1]) . Default 0.9")
     parser.add_argument("-ns", "--num_subset",       required = False, help = "subset of data used for training/testing. Default 10000")
@@ -84,6 +85,8 @@ def main():
         mmd_lambda  = float(args.mmd_lambda)
     if args.vz_lambda is not None:
         vz_lambda   = float(args.vz_lambda)
+    if args.rdp_lambda is not None:
+        rdp_lambda  = float(args.rdp_lambda)
     if args.phy_loss_weight is not None:
         phy_loss_weight = float(args.phy_loss_weight)
     if args.char_weight is not None:
@@ -124,6 +127,8 @@ def main():
             mmd_lambda      = config["mmd_lambda"]
         if "vz_lambda"      in config:
             vz_lambda       = config["vz_lambda"]
+        if "rdp_lambda"     in config:
+            rdp_lambda      = config["rdp_lambda"]
         if "phy_loss_weight" in config:
             phy_loss_weight = config["phy_loss_weight"]
         if "char_weight"    in config:
@@ -208,6 +213,7 @@ def main():
                                         char_weight     = char_weight,
                                         mmd_lambda      = mmd_lambda,
                                         vz_lambda       = vz_lambda,
+                                        rdp_lambda      = rdp_lambda
                                         )
     
 
@@ -217,6 +223,7 @@ def main():
     # Load data loaders and Train model
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
     tree_autoencoder.train(num_epochs = num_epochs, seed = rand_seed)
+
     # save model and normalizers
     tree_autoencoder.save_model(out_prefix + ".ae_trained.pt")
     ae_data.save_normalizers(out_prefix)
@@ -228,7 +235,6 @@ def main():
     latent_dat = tree_autoencoder.tree_encode(rand_train_phy, rand_train_aux)
     latent_dat_df = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), columns = None, index = None)
     latent_dat_df.to_csv(out_prefix + ".traindat_latent.csv", header = False, index = False)
-
     tree_autoencoder.plot_losses(out_prefix)
 
     #############################
