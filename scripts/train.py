@@ -250,7 +250,11 @@ def main():
     phydat = torch.Tensor(phydat)
     auxdat = torch.Tensor(auxdat)
 
-    # make predictions for test data
+    # make predictions for test data (latent and reconstructed)
+    test_latent_dat = tree_autoencoder.tree_encode(phydat, auxdat)
+    latent_testdat_df = pd.DataFrame(test_latent_dat.numpy(), columns = None, index = None)
+    latent_testdat_df.to_csv(out_prefix + ".testdat_latent.csv", header = False, index = False)
+
     phy_pred, auxpred = tree_autoencoder.predict(phydat, auxdat)
 
     # transform and flatten predicted data
