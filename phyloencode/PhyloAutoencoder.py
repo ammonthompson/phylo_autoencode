@@ -56,6 +56,7 @@ class PhyloAutoencoder(object):
         D = self.model.structured_input_width * self.phy_channels
         rand_matrix = (torch.randn(K, D) / (K**0.5)).to(self.device)
 
+        # set loss functions
         self.train_loss  = PhyLoss(self.weights, rand_matrix, self.char_type, self.model.latent_layer_type)
         self.val_loss    = PhyLoss(self.weights, rand_matrix, self.char_type, self.model.latent_layer_type)
 
