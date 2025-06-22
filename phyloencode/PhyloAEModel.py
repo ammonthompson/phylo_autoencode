@@ -256,7 +256,7 @@ class CnnEncoder(nn.Module):
                                              out_channels = out_channels[0], 
                                              kernel_size  = kernel[0], 
                                              stride       = stride[0], 
-                                             padding      = 1))
+                                             padding      = kernel[0]// 2 + 1))  # padding = kernel_size // 2 for same padding
         
         conv_out_shape = utils.get_outshape(self.cnn_layers, data_channels, data_width)
         self.conv_out_width = [conv_out_shape[2]]
@@ -276,7 +276,7 @@ class CnnEncoder(nn.Module):
                                                       out_channels = out_channels[i], 
                                                       kernel_size  = kernel[i], 
                                                       stride       = stride[i], 
-                                                      padding      = 1))
+                                                      padding      = kernel[i]// 2 + 1))
                 
                 conv_out_shape = utils.get_outshape(self.cnn_layers, data_channels, data_width)
                 self.conv_out_width.append(conv_out_shape[2])  # bookkeeping           
@@ -480,7 +480,7 @@ class LatentGauss(nn.Module):
         self.shared_layer = nn.Sequential(
             nn.Linear(in_width, out_width),
             # nn.BatchNorm1d(out_width),
-            nn.ELU(),
+            nn.ReLU(),
 #   # Bottleneck: the bottleneck not because of dimensionality reduction
 #   # but by distribution contstraint: N(0,1)
             nn.Linear(out_width, out_width),

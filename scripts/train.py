@@ -172,7 +172,7 @@ def main():
         test_phy_data = torch.tensor(test_phy_data, dtype = torch.float32)
         # test_aux_data = torch.tensor(f['aux_data'][num_subset:(num_subset + 500), num_tips_idx], dtype = torch.float32).view(-1,1)
 
-    
+
     # checking how much aux_data is helping encode tree patterns
     # rand_idx = torch.randperm(aux_data.shape[0])
     # aux_data = aux_data[rand_idx]
