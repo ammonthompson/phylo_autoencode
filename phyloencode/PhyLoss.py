@@ -232,7 +232,7 @@ class PhyLoss(object):
         else:
             tree_loss = fun.mse_loss(x, y) 
 
-        tip1_loss = fun.mse_loss(x[:,0:2,0], y[:,0:2,0]) 
+        tip1_loss = 0.1 * fun.mse_loss(x[:,0:2,0], y[:,0:2,0]) 
 
         return tree_loss + tip1_loss
 

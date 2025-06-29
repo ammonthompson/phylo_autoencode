@@ -22,9 +22,9 @@ pip install .
 ---
 
 ## Training
-To train the autoencoder, ensure your **phylogenetic and auxiliary data** are in **HDF5 format**. In the scripts directory is an example script called train.py.
+To train the autoencoder, ensure your **phylogenetic and auxiliary data** are in **HDF5 format**. In the scripts directory is an example script called train.py. There is also an example config file for network settings.
 
-- **Example script:** `scripts/train.py --trn_data train_data.hdf5 --out_prefix my_prefix`  
+- **Example script:** `scripts/train.py --trn_data train_data.hdf5 --config scripts/ph_config.py`  
 
 ---
 

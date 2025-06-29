@@ -54,13 +54,13 @@ class AECNN(nn.Module):
             raise ValueError(f"Expected kernel array length of {nl}, but got {len(kernel)}.")
 
         # Ensure stride values are greater than 1
-        if np.min(stride) <= 1:
-            raise ValueError("All stride values must be greater than 1.")
+        # if np.min(stride) <= 1:
+        #     raise ValueError("All stride values must be greater than 1.")
 
         # Ensure kernel values are greater than stride values
-        stride_arr, kernel_arr = np.array(stride), np.array(kernel)
-        if np.min(kernel_arr - stride_arr) <= 0:
-            raise ValueError("Each kernel value must be greater than the corresponding stride value.")
+        # stride_arr, kernel_arr = np.array(stride), np.array(kernel)
+        # if np.min(kernel_arr - stride_arr) <= 0:
+        #     raise ValueError("Each kernel value must be greater than the corresponding stride value.")
 
         # convolution layers parameters
         self.layer_params = {"out_channels": out_channels,
@@ -256,8 +256,8 @@ class CnnEncoder(nn.Module):
                                              out_channels = out_channels[0], 
                                              kernel_size  = kernel[0], 
                                              stride       = stride[0], 
-                                             padding      = kernel[0]// 2 + 1))  # padding = kernel_size // 2 for same padding
-        
+                                             padding      = kernel[0]// 2))  # padding = kernel_size // 2 for same padding
+                                        
         conv_out_shape = utils.get_outshape(self.cnn_layers, data_channels, data_width)
         self.conv_out_width = [conv_out_shape[2]]
         print(conv_out_shape)
@@ -276,7 +276,7 @@ class CnnEncoder(nn.Module):
                                                       out_channels = out_channels[i], 
                                                       kernel_size  = kernel[i], 
                                                       stride       = stride[i], 
-                                                      padding      = kernel[i]// 2 + 1))
+                                                      padding      = kernel[i]// 2))                                                     
                 
                 conv_out_shape = utils.get_outshape(self.cnn_layers, data_channels, data_width)
                 self.conv_out_width.append(conv_out_shape[2])  # bookkeeping           
@@ -444,7 +444,7 @@ class CnnDecoder(nn.Module):
         return pad, outpad
     
 # Latent layer classes
-# TODO: Should probably remove LatentDense and LatentCNN and just use LatentGauss
+# TODO: Should probably remove LatentGauss and LatentCNN and just use LatentDense
 class LatentCNN(nn.Module):
     def __init__(self, in_cnn_shape: Tuple[int, int], kernel_size = 9):
         # creates a tensor with shape (in_cnn_shape[1], in_cnn_shape[2] + 1)
@@ -481,8 +481,6 @@ class LatentGauss(nn.Module):
             nn.Linear(in_width, out_width),
             # nn.BatchNorm1d(out_width),
             nn.ReLU(),
-#   # Bottleneck: the bottleneck not because of dimensionality reduction
-#   # but by distribution contstraint: N(0,1)
             nn.Linear(out_width, out_width),
         )
         print((1, out_width))
@@ -535,3 +533,20 @@ class SoftPower(nn.Module):
     
     def forward(self, x):
         return x + self.alpha * x**self.power
+
+class SamePadConv1d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride):
+        super().__init__()
+        self.k = kernel_size
+        self.s = stride
+        self.conv = nn.Conv1d( in_channels , out_channels, kernel_size=kernel_size, stride=stride, padding=0)
+
+    def forward(self, x):
+        input_len = x.shape[-1]
+        out_len = (input_len + self.s - 1) // self.s  # ceil division
+        print(out_len)
+        total_pad = max((out_len - 1) * self.s + self.k - input_len, 0)
+        pad_left = total_pad // 2
+        pad_right = total_pad - pad_left
+        x = nn.functional.pad(x, (pad_left, pad_right))
+        return self.conv(x)

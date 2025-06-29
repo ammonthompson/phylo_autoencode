@@ -48,6 +48,7 @@ class PhyloAutoencoder(object):
 
         self.latent_shape = (self.batch_size, self.model.latent_outwidth)
 
+        # TODO: create an aux_weight, change everything to "lambda" or "weight" for consistency
         self.weights = (phy_loss_weight, self.char_weight, 1-phy_loss_weight, mmd_lambda, vz_lambda)
 
 
@@ -79,7 +80,6 @@ class PhyloAutoencoder(object):
         # loops through the data loader and performs a step for each batch
         # Uses self.step_function to perform SGD step for each batch
         # returns the mean loss from the mini batch steps
-        # If validation = True, then returns phy, aux, and mmd loss.
 
         # set data loader and step function
         if validation:
@@ -119,14 +119,12 @@ class PhyloAutoencoder(object):
         # set model to train mode
         self.model.train()
 
-        pred = self.model((phy, aux))
-
         # divide phy and mask into tree and character data
         tree, char, tree_mask, char_mask = self._split_tree_char(phy, mask)
 
-        segmented_mask = (tree_mask, char_mask)
-          
+        segmented_mask = (tree_mask, char_mask)          
         true = (tree, char, aux, std_norm)
+        pred = self.model((phy, aux))
 
         # compute and update loss fields in train_loss
         loss = self.train_loss.minibatch_loss(pred, true, segmented_mask)
@@ -145,18 +143,15 @@ class PhyloAutoencoder(object):
     def evaluate(self, phy: torch.Tensor, aux: torch.Tensor,
                   mask: torch.Tensor = None, std_norm : torch.Tensor = None):
         
-        # batch val loss
-        
+        # batch val loss        
         self.model.eval()
-
-        pred = self.model((phy, aux))
 
         # divide phy into tree and character data
         tree, char, tree_mask, char_mask = self._split_tree_char(phy, mask)
 
         segmented_mask = (tree_mask, char_mask)
-
         true = (tree, char, aux, std_norm)
+        pred = self.model((phy, aux))
 
         # compute and update loss fields in val_loss
         self.val_loss.minibatch_loss(pred, true, segmented_mask)
