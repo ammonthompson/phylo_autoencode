@@ -284,7 +284,17 @@ class PhyLoss(object):
         return fun.mse_loss(x, y)
         # return fun.l1_loss(x, y)
 
-
+    def set_weights(self, weights : torch.Tensor):
+        """
+        Set the weights for the loss components. 
+        Args:
+            weights (torch.Tensor): A tensor containing the new weights for phy, char, aux, mmd, and vz losses.
+        """
+        self.phy_w  = weights['phy_weight']  if 'phy_weight'  in weights else self.phy_w
+        self.char_w = weights['char_weight'] if 'char_weight' in weights else self.char_w
+        self.aux_w  = weights['aux_weight']  if 'aux_weight'  in weights else self.aux_w
+        self.mmd_w  = weights['mmd_weight']  if 'mmd_weight'  in weights else self.mmd_w
+        self.vz_w   = weights['vz_weight']   if 'vz_weight'   in weights else self.vz_w
 
 # classes for MMD2 loss
 # Encourage latent space to be be N(0,1) distributed

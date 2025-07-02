@@ -64,6 +64,27 @@ class PhyloAutoencoder(object):
             self.total_epochs += 1
             epoch_time = time.time()
 
+
+            # TESTING ###########
+            # if self.model.latent_layer_type == "GAUSS":
+            #     if epoch < 100:
+            #         # mmd_w = self.weights[3] * (self.total_epochs / 100)
+            #         # vz_w  = self.weights[4] * (self.total_epochs / 100)
+            #         mmd_w = 0.
+            #         vz_w  = 0.
+            #     elif epoch < 200:
+            #         mmd_w = self.weights[3] * ((epoch-100) / 100)
+            #         vz_w  = self.weights[4] * ((epoch-100) / 100)
+            #     else:
+            #         mmd_w = self.weights[3]
+            #         vz_w  = self.weights[4]
+            #     self.train_loss.set_weights({'mmd_weight': mmd_w, 'vz_weight': vz_w})
+            #     self.val_loss.set_weights({'mmd_weight': mmd_w, 'vz_weight': vz_w})
+
+            # END TESTING ###########
+
+
+            # perform a mini batch step for the model
             self._mini_batch(validation=False)
             self.train_loss.append_mean_batch_loss()
 

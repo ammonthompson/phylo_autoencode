@@ -28,18 +28,7 @@ def create_MVN_dataset(template_fn, means, variance, num_samples=1000, output_fi
     Sigma = variance * np.eye(data_dim)  # scaled Identity covariance matrix
 
     # Generate multivariate normal samples
-    # zero_mode_mvn_samples = np.random.multivariate_normal(mean=np.zeros(data_dim), cov=Sigma, size=num_samples//2)
-    # in_mode_mvn_samples = np.random.multivariate_normal(mean=second_mode, cov=Sigma, size=num_samples//2)
-
-    # mode1_samples = np.random.multivariate_normal(mean=mode1_means, cov=Sigma, size=num_samples//2)
-    # mode2_samples = np.random.multivariate_normal(mean=mode2_means, cov=Sigma, size=num_samples//2)
-    # phy_mvn_samples = np.concatenate((mode1_samples, mode2_samples), axis=0)
     phy_mvn_samples = np.random.multivariate_normal(mean=means, cov=Sigma, size=num_samples)
-
-
-    # shuffled_indices = np.random.permutation(num_samples)
-    # phy_mvn_samples = phy_mvn_samples[shuffled_indices]
-
     aux_mvn_samples = np.random.normal(loc=0.0, scale=1.0, size=(num_samples, aux_colnames.shape[1]))
     num_taxa_idx = np.where(aux_colnames[0] == b'num_taxa')[0][0]  # Find the index of 'num_taxa'
     aux_mvn_samples[:, num_taxa_idx] = np.repeat(50, num_samples)  # Set 'num_taxa' to 50 for all samples
