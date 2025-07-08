@@ -202,7 +202,7 @@ def main():
 
     # create Trainer
     tree_autoencoder = PhyloAutoencoder(model           = ae_model, 
-                                        optimizer       = torch.optim.Adam(ae_model.parameters()), 
+                                        optimizer       = torch.optim.Adam, 
                                         batch_size      = batch_size,
                                         phy_loss_weight = phy_loss_weight,
                                         char_weight     = char_weight,

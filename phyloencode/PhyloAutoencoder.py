@@ -22,8 +22,9 @@ class PhyloAutoencoder(object):
                  mmd_lambda=None, vz_lambda=None):
         '''
             model is an object from torch.model
+            batch_size is an int
+            char_weight is a float between 0 and 1
             optimizer is an object from torch.optim
-            loss_func is an object from torch.nn
             phy_loss_weight is a float between 0 and 1
             mmd_lambda is a float >= 0
             vz_lambda is a float >=0
@@ -40,6 +41,9 @@ class PhyloAutoencoder(object):
         self.model              = model
         self.model.to(self.device)
 
+        self.optimizer = self.optimizer(self.model.parameters())
+
+        # some data shape parameters
         self.nchars             = self.model.num_chars
         self.char_weight        = char_weight if self.nchars > 0 else torch.tensor(0.)
         self.char_type          = self.model.char_type
@@ -63,26 +67,6 @@ class PhyloAutoencoder(object):
         for epoch in range(num_epochs):
             self.total_epochs += 1
             epoch_time = time.time()
-
-
-            # TESTING ###########
-            # if self.model.latent_layer_type == "GAUSS":
-            #     if epoch < 100:
-            #         # mmd_w = self.weights[3] * (self.total_epochs / 100)
-            #         # vz_w  = self.weights[4] * (self.total_epochs / 100)
-            #         mmd_w = 0.
-            #         vz_w  = 0.
-            #     elif epoch < 200:
-            #         mmd_w = self.weights[3] * ((epoch-100) / 100)
-            #         vz_w  = self.weights[4] * ((epoch-100) / 100)
-            #     else:
-            #         mmd_w = self.weights[3]
-            #         vz_w  = self.weights[4]
-            #     self.train_loss.set_weights({'mmd_weight': mmd_w, 'vz_weight': vz_w})
-            #     self.val_loss.set_weights({'mmd_weight': mmd_w, 'vz_weight': vz_w})
-
-            # END TESTING ###########
-
 
             # perform a mini batch step for the model
             self._mini_batch(validation=False)
