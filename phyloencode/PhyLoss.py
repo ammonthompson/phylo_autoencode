@@ -36,7 +36,7 @@ class PhyLoss(object):
         self.batch_ntips_loss   = []
         self.batch_mmd_loss     = []
         self.batch_vz_loss      = []
-        # loss weights
+        # loss weights TODO: make a dictionary
         self.phy_w, self.char_w, self.aux_w, self.mmd_w, self.vz_w  = weights
 
         self.char_type = char_type
