@@ -30,12 +30,13 @@ To train the autoencoder, ensure your **phylogenetic and auxiliary data** are in
 ---
 
 ## Encoding with a Trained Autoencoder
-To encode a set of phylogenetic trees, use the **`phyencode`** command:
+To encode and decode a set of phylogenetic trees, use the **`phyencode`** and **`phydecode`** commands:
 
 For more details on input formats and options, run:
 
 ```bash
 phyencode -h
+phydecode -h
 ```
 
 ---
