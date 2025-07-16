@@ -28,26 +28,26 @@ class AEData(object):
                  phy_data   : torch.Tensor,
                  aux_data   : torch.Tensor,
                  prop_train : float, 
-                 nchannels  : int,
+                 num_channels  : int,
                  char_data_type : str = "categorical", # "continuous" or "categorical"
-                 nchars     : int = 0,
+                 num_chars  : int = 0,
                  num_tips   : Optional[int] = None, # TODO: maybe make this a boolean and do it internally
                  ):
         """
         each tree in data is assumed to be flattend in column-major order
-        of a matrix of dimensions (nchannels, ntips)
+        of a matrix of dimensions (num_channels, ntips)
         """
-        self.nchannels = nchannels
+        self.num_channels = num_channels
         self.char_data_type = char_data_type
-        self.nchars = nchars
+        self.num_chars = num_chars
 
-        if self.char_data_type == "categorical" and (self.nchars == 0 or self.nchannels <= 2):
-            print("Warning: char_data_type is categorical but nchars == 0 or nchannels <= 2. "
+        if self.char_data_type == "categorical" and (self.num_chars == 0 or self.num_channels <= 2):
+            print("Warning: char_data_type is categorical but num_chars == 0 or num_channels <= 2. "
             "Setting char_data_type to continuous.")
             self.char_data_type = "continuous"
 
         # prepare phy_data and aux_data for splitting into train and val sets  
-        self.max_tips = phy_data.shape[1] / nchannels
+        self.max_tips = phy_data.shape[1] / num_channels
         self.phy_data = phy_data
         self.aux_data = aux_data
 
@@ -56,7 +56,7 @@ class AEData(object):
         else:
             self.data = np.hstack((self.phy_data, self.aux_data, num_tips))
         flat_phy_width = self.phy_data.shape[1]
-        self.max_tips = flat_phy_width // nchannels
+        self.max_tips = flat_phy_width // num_channels
 
         # split data 
         self.prop_train = prop_train
@@ -94,7 +94,7 @@ class AEData(object):
             # self.phy_ss = pp.MinMaxScaler(feature_range=(0., 1.)) # if decoder out is Sigmoid
             # self.phy_ss = utils.LogitStandardScaler()
         elif self.char_data_type == "categorical":
-            self.phy_ss = utils.StandardScalerPhyCategorical(self.nchars, self.nchannels, self.max_tips)
+            self.phy_ss = utils.StandardScalerPhyCategorical(self.num_chars, self.num_channels, self.max_tips)
             # self.phy_ss = utils.NoScalerNormalizer()
         else:
             raise ValueError("char_data_type must be 'continuous' or 'categorical'")
@@ -109,14 +109,14 @@ class AEData(object):
 
         # reshape phy data to (num examples, num channels, num tips)
         # (num examples, num channels x num tips) -> (num examples, num channels, num tips)
-        assert(train_phy_data.shape[1] % nchannels == 0)
+        assert(train_phy_data.shape[1] % num_channels == 0)
         self.norm_train_phy_data = self.norm_train_phy_data.reshape((self.norm_train_phy_data.shape[0], 
-                                                        nchannels, 
-                                                        int(self.norm_train_phy_data.shape[1]/nchannels)),
+                                                        num_channels, 
+                                                        int(self.norm_train_phy_data.shape[1]/num_channels)),
                                                         order = "F")
         self.norm_val_phy_data   = self.norm_val_phy_data.reshape((self.norm_val_phy_data.shape[0], 
-                                                        nchannels, 
-                                                        int(self.norm_val_phy_data.shape[1]/nchannels)),
+                                                        num_channels, 
+                                                        int(self.norm_val_phy_data.shape[1]/num_channels)),
                                                         order = "F")
         self.phy_width = self.norm_train_phy_data.shape[2]
         self.aux_width = self.norm_train_aux_data.shape[1]

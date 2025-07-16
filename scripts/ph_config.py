@@ -2,7 +2,7 @@
 settings = {    
     "out_prefix"        : "m4_10",    
     "num_subset"        : 120000,
-    "nworkers"          : 0,
+    "num_workers"       : 0,
     "num_epochs"        : 1500,
     "batch_size"        : 1024,
     "num_channels"      : 2,
@@ -18,6 +18,6 @@ settings = {
     "out_channels"      : [16,32,128],
     "latent_output_dim" : 100,
     "aux_inner_dim"     : 10,
-    "rand_seed"        : 0,
-    "char_type"        : "categorical",  #["categorical", "continuous"]
+    "seed"              : 0,
+    "char_type"         : "categorical",  #["categorical", "continuous"]
 }
