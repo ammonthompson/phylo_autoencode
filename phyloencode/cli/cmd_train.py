@@ -18,7 +18,7 @@ def main():
 
     # Training settings: Architecture, num epochs, batch size, etc.
     # override default settings provided as command line arguments
-    # Override all settings provided in config file
+    # Override all settings provided in config file if provided
     settings = get_default_settings()
     args = parse_arguments()
     update_settings_from_command_line(settings = settings, args = args)
