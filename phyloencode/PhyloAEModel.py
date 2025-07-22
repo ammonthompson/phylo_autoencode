@@ -157,16 +157,7 @@ class AECNN(nn.Module):
                                              char_type            = self.char_type)
         
 
-        with open(out_prefix + ".network.txt", "w") as f:  
-            f.write("PHYLOGENETIC ENCODER AND DECODER:\n")    
-            f.write(str(self.structured_encoder) + "\n")
-            f.write(str(self.latent_layer) + "\n")
-            f.write(str(self.latent_layer_decoder) + "\n")
-            f.write(str(self.structured_decoder) + "\n")
-            f.write("\n\nAUXILLIARY ENCODER AND DECODER:\n")
-            f.write(str(self.unstructured_encoder) + "\n")
-            f.write("\nSee latent layers above.\n")
-            f.write(str(self.unstructured_decoder))
+        self.write_network_to_file(out_prefix + ".network.txt")
         
  
 
@@ -228,6 +219,17 @@ class AECNN(nn.Module):
 
         return phy_decoded_x, char_decoded_x, unstructured_decoded_x, shared_latent_out
 
+    def write_network_to_file(self, out_fn):
+        with open(out_fn, "w") as f:  
+            f.write("PHYLOGENETIC ENCODER AND DECODER:\n")    
+            f.write(str(self.structured_encoder) + "\n")
+            f.write(str(self.latent_layer) + "\n")
+            f.write(str(self.latent_layer_decoder) + "\n")
+            f.write(str(self.structured_decoder) + "\n")
+            f.write("\n\nAUXILLIARY ENCODER AND DECODER:\n")
+            f.write(str(self.unstructured_encoder) + "\n")
+            f.write("\nSee latent layers above.\n")
+            f.write(str(self.unstructured_decoder))
 
 # encoder classes
 class DenseEncoder(nn.Module):

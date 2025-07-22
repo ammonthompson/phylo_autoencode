@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import torch
+from torch.optim import AdamW
 # import torch.utils.data as td
 import numpy as np
 import pandas as pd
@@ -16,6 +17,11 @@ from phyloencode.PhyloAutoencoder import PhyloAutoencoder
 
 def main():
 
+    # TODO: add learning rate and weight decay to settings
+    # optimizer settings
+    lr = 1e-3  # learning rate
+    wd = 1e-3  # weight decay
+
     # Training settings: Architecture, num epochs, batch size, etc.
     # override default settings provided as command line arguments
     # Override all settings provided in config file if provided
@@ -29,30 +35,35 @@ def main():
     # required command line argument
     data_fn = args.trn_data
 
+    ns = settings["num_subset"]
+    mt = settings["max_tips"]
+    num_test = 500
+
+
     # get formated tree data
     with h5py.File(data_fn, "r") as f:
         aux_data_names = f['aux_data_names'][...][0] 
         num_tips_idx = np.where(aux_data_names == b'num_taxa')[0][0]
-        aux_data = torch.tensor(f['aux_data'][0:settings["num_subset"],...], dtype = torch.float32)
+        aux_data = torch.tensor(f['aux_data'][0:ns,...], dtype = torch.float32)
         if len(aux_data.shape) != 2: # i.e. is an array but should be a matrix with 1 column
             aux_data = aux_data.reshape((aux_data.shape[0], 1))
-        phy_data = np.array(f['phy_data'][0:settings["num_subset"],...], dtype = np.float32)
-        phy_data = phy_data.reshape((phy_data.shape[0], phy_data.shape[1] // settings["max_tips"], settings["max_tips"]), order = "F")
+        phy_data = np.array(f['phy_data'][0:ns,...], dtype = np.float32)
+        phy_data = phy_data.reshape((phy_data.shape[0], phy_data.shape[1] // mt, mt), order = "F")
         phy_data = phy_data[:,0:settings["num_channels"],:] 
         phy_data = phy_data.reshape((phy_data.shape[0],-1), order = "F")
         phy_data = torch.tensor(phy_data, dtype = torch.float32)
-        # aux_data = torch.tensor(f['aux_data'][0:settings["num_subset"], num_tips_idx], dtype = torch.float32).view(-1,1)
-        num_tips = torch.tensor(f['aux_data'][0:settings["num_subset"],num_tips_idx], dtype = torch.float32).view(-1,1)
+        # aux_data = torch.tensor(f['aux_data'][0:ns, num_tips_idx], dtype = torch.float32).view(-1,1)
+        num_tips = torch.tensor(f['aux_data'][0:ns,num_tips_idx], dtype = torch.float32).view(-1,1)
         
-        test_aux_data = torch.tensor(f['aux_data'][settings["num_subset"]:(settings["num_subset"] + 500),...], dtype = torch.float32)
+        test_aux_data = torch.tensor(f['aux_data'][ns:(ns + num_test),...], dtype = torch.float32)
         if len(test_aux_data.shape) != 2: # i.e. is an array but should be a matrix with 1 column
             test_aux_data = test_aux_data.reshape((test_aux_data.shape[0], 1))
-        test_phy_data = np.array(f['phy_data'][settings["num_subset"]:(settings["num_subset"] + 500),...], dtype = np.float32)
-        test_phy_data = test_phy_data.reshape((test_phy_data.shape[0], test_phy_data.shape[1] // settings["max_tips"], settings["max_tips"]), order = "F")
+        test_phy_data = np.array(f['phy_data'][ns:(ns + num_test),...], dtype = np.float32)
+        test_phy_data = test_phy_data.reshape((test_phy_data.shape[0], test_phy_data.shape[1] // mt, mt), order = "F")
         test_phy_data = test_phy_data[:,0:settings["num_channels"],:]
         test_phy_data = test_phy_data.reshape((test_phy_data.shape[0],-1), order = "F")
         test_phy_data = torch.tensor(test_phy_data, dtype = torch.float32)
-        # test_aux_data = torch.tensor(f['aux_data'][settings["num_subset"]:(settings["num_subset"] + 500), num_tips_idx], dtype = torch.float32).view(-1,1)
+        # test_aux_data = torch.tensor(f['aux_data'][ns:(ns + num_test), num_tips_idx], dtype = torch.float32).view(-1,1)
 
 
     # create Data container
@@ -62,7 +73,8 @@ def main():
                                        prop_train       = 0.85,  
                                        num_channels     = settings["num_channels"], 
                                        num_chars        = settings["num_chars"],
-                                       num_tips         = num_tips)
+                                       num_tips         = num_tips
+                                       )
         
     # create model
     ae_model  = ph.PhyloAEModel.AECNN(
@@ -82,7 +94,7 @@ def main():
     # create Trainer
     tree_autoencoder = PhyloAutoencoder(
                                         model           = ae_model, 
-                                        optimizer       = torch.optim.Adam, 
+                                        optimizer       = AdamW(ae_model.parameters(), lr=lr, weight_decay=wd), 
                                         batch_size      = settings["batch_size"],
                                         phy_loss_weight = settings["phy_loss_weight"],
                                         char_weight     = settings["char_weight"],
@@ -98,20 +110,23 @@ def main():
     trn_loader, val_loader = ae_data.get_dataloaders(settings["batch_size"], shuffle = True, num_workers = settings["num_workers"])
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
     tree_autoencoder.train(num_epochs = settings["num_epochs"], seed = settings["seed"])
+    if tree_autoencoder.track_grad:
+        plot_gradient_norms(tree_autoencoder.mean_layer_grad_norm, 
+                            settings["out_prefix"] + ".layer_grad_norms.pdf")
+            
 
     # save model and normalizers
     tree_autoencoder.save_model(settings["out_prefix"] + ".ae_trained.pt")
     ae_data.save_normalizers(settings["out_prefix"])
 
     # make encoded tree file for 5,000 random trees from training data
-    rand_idx = np.random.randint(0, ae_data.prop_train * settings["num_subset"], size = min(5000, settings["num_subset"]))
+    rand_idx = np.random.randint(0, ae_data.prop_train * ns, size = min(5000, ns))
     rand_train_phy = torch.Tensor(ae_data.norm_train_phy_data[rand_idx,...])
     rand_train_aux = torch.Tensor(ae_data.norm_train_aux_data[rand_idx,...])
     latent_dat = tree_autoencoder.tree_encode(rand_train_phy, rand_train_aux)
     latent_dat_df = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), columns = None, index = None)
     latent_dat_df.to_csv(settings["out_prefix"] + ".traindat_latent.csv", header = False, index = False)
 
-    tree_autoencoder.plot_losses(settings["out_prefix"])
 
     #############################
     # Test Data Prediction 
@@ -148,6 +163,10 @@ def main():
     aux_pred_df = pd.DataFrame(auxpred)
     phy_pred_df.to_csv(settings["out_prefix"] + ".phy_pred.cblv", header = False, index = False)
     aux_pred_df.to_csv(settings["out_prefix"] + ".aux_pred.csv", header  = False, index = False)
+
+    # plot loss curves
+    tree_autoencoder.plot_losses(settings["out_prefix"])
+
 
 
 def parse_arguments():
@@ -237,7 +256,26 @@ def update_settings_from_command_line(settings, args):
             else:
                 settings[k] = v
 
-
+def plot_gradient_norms(layer_grad_norms, out_file, plots_per_page = 4):
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
+    laynorm = [z for z in layer_grad_norms.items()]
+    n_plots = len(laynorm)
+    n_pages = n_plots // 4 + ((n_plots % 4) > 0)
+    with PdfPages(out_file) as pdf:
+        for page in range(n_pages):
+            fig, axes = plt.subplots(plots_per_page // 2, 2)
+            axes = axes.flatten()
+            for plot_i in range(plots_per_page):
+                idx = page * plots_per_page + plot_i
+                if idx >= n_plots:
+                    axes.axis('off')
+                    continue
+                axes[plot_i].plot(laynorm[idx][1])
+                axes[plot_i].set_title(laynorm[idx][0], size = 6.)
+            fig.tight_layout()
+            pdf.savefig(fig)
+            plt.close(fig)
 
 def update_settings_from_config(settings, config):
     for key in settings:

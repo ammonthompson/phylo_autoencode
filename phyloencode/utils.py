@@ -411,3 +411,4 @@ def get_numtips(tree_data) ->  torch.Tensor:
         num_tips.append(first_max)
 
     return torch.Tensor(num_tips, dtype = torch.int32)
+

@@ -145,9 +145,11 @@ class AEData(object):
         self.train_dataloader = DataLoader(self.train_dataset, 
                                            batch_size   = batch_size, 
                                            shuffle      = shuffle, 
-                                           num_workers  = num_workers)
+                                           num_workers  = num_workers,
+                                           drop_last    = False)
         self.val_dataloader   = DataLoader(self.val_dataset, 
-                                           batch_size   = batch_size)
+                                           batch_size   = batch_size,
+                                           drop_last    = False)
         return self.train_dataloader, self.val_dataloader
 
 
@@ -157,6 +159,7 @@ class AEData(object):
 class TreeDataSet(Dataset):
     def __init__(self, phy_features, aux_features, num_tips: Optional[int] = None):
         super().__init__()
+        # TODO: phy_features and aux_features are ndarrays while mask is a torch.Tensor
         self.phy_features = phy_features
         self.aux_features = aux_features
         self.length = self.phy_features.shape[0]

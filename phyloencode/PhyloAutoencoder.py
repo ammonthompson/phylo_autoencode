@@ -17,7 +17,7 @@ from typing import List, Dict, Tuple, Optional, Union
 
 
 class PhyloAutoencoder(object):
-    def __init__(self, model, optimizer = optim.Adam, 
+    def __init__(self, model, optimizer, 
                  batch_size=128, phy_loss_weight=0.5, char_weight=0.5,
                  mmd_lambda=None, vz_lambda=None):
         '''
@@ -32,7 +32,6 @@ class PhyloAutoencoder(object):
 
         self.device             = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.batch_size         = batch_size
-        self.optimizer          = optimizer
 
         self.total_epochs       = 0
         self.train_loader       = None
@@ -41,7 +40,7 @@ class PhyloAutoencoder(object):
         self.model              = model
         self.model.to(self.device)
 
-        self.optimizer = self.optimizer(self.model.parameters())
+        self.optimizer = optimizer
 
         # some data shape parameters
         self.nchars             = self.model.num_chars
@@ -49,8 +48,7 @@ class PhyloAutoencoder(object):
         self.char_type          = self.model.char_type
         self.phy_channels       = self.model.num_structured_input_channel
         self.num_tree_chans     = self.phy_channels - self.nchars
-
-        self.latent_shape = (self.batch_size, self.model.latent_outwidth)
+        self.latent_shape       = (self.batch_size, self.model.latent_outwidth)
 
         # TODO: create an aux_weight, change everything to "lambda" or "weight" for consistency
         self.weights = (phy_loss_weight, self.char_weight, 1-phy_loss_weight, mmd_lambda, vz_lambda)
@@ -59,10 +57,21 @@ class PhyloAutoencoder(object):
         self.train_loss  = PhyLoss(self.weights, self.char_type, self.model.latent_layer_type)
         self.val_loss    = PhyLoss(self.weights, self.char_type, self.model.latent_layer_type)
 
+        # TODO: track gradients and param values
+        self.track_grad = True
+        if self.track_grad:
+            self.batch_layer_grad_norm = { layer_name : param.grad.norm().item() if param.grad is not None else []
+                               for layer_name, param in self.model.named_parameters() }
+            self.mean_layer_grad_norm = { layer_name : param.grad.norm().item() if param.grad is not None else []
+                               for layer_name, param in self.model.named_parameters() }
+        else:
+            self.batch_layer_grad_norm = None
+            self.mean_layer_grad_norm = None
 
 
-    def train(self, num_epochs, seed = 1):
-        self.set_seed(seed)
+    def train(self, num_epochs, seed = None):
+        if seed is not None:
+            self.set_seed(seed)
 
         for epoch in range(num_epochs):
             self.total_epochs += 1
@@ -78,7 +87,6 @@ class PhyloAutoencoder(object):
                 # print epoch mean component losses to screen       
                 self.val_loss.print_epoch_losses(elapsed_time = time.time() - epoch_time)
 
-
         
     def _mini_batch(self, validation = False):
         # Performs a mini batch step for the model.
@@ -92,7 +100,7 @@ class PhyloAutoencoder(object):
             step_function = self.evaluate
         else:
             data_loader   = self.train_loader
-            step_function = self.train_step
+            step_function = self._train_step
 
         if data_loader == None:
             return None
@@ -116,9 +124,14 @@ class PhyloAutoencoder(object):
             # perform SGD step for batch
             step_function(phy_batch, aux_batch, mask_batch, self.std_norm)
 
+        # compute mean of batch grad norms per layer
+        if self.track_grad and not validation:
+            for k,v in self.batch_layer_grad_norm.items():
+                self.mean_layer_grad_norm[k].append(np.mean(v))
+                self.batch_layer_grad_norm[k].clear()
 
     
-    def train_step(self, phy: torch.Tensor, aux: torch.Tensor, 
+    def _train_step(self, phy: torch.Tensor, aux: torch.Tensor, 
                    mask: torch.Tensor = None, std_norm : torch.Tensor = None):
         # batch train loss
         # set model to train mode
@@ -136,6 +149,10 @@ class PhyloAutoencoder(object):
 
         # compute gradient
         loss.backward()
+
+        # record gradient for assessments
+        if self.track_grad:
+            self._record_grad_norm()
 
         # update model paremeters with gradient
         self.optimizer.step()
@@ -161,66 +178,6 @@ class PhyloAutoencoder(object):
         # compute and update loss fields in val_loss
         self.val_loss.minibatch_loss(pred, true, segmented_mask)
 
-
-    def _split_tree_char(self, phy, mask):
-        # divide phy into tree and character data
-        if self.nchars > 0:
-            tree = phy[:, :self.num_tree_chans, :]
-            char = phy[:, self.num_tree_chans:, :]
-            tree_mask = mask[:, :self.num_tree_chans, :] if mask is not None else None
-            char_mask = mask[:, self.num_tree_chans:, :] if mask is not None else None
-        else:
-            tree = phy
-            char = None
-            tree_mask = mask
-            char_mask = None
-
-        return tree, char, tree_mask, char_mask
-
-    def plot_losses(self, out_prefix = "AElossplot", log = True):
-        # plot total losses
-        fig = plt.figure(figsize=(11, 8))
-        plt.plot(np.log10(self.train_loss.epoch_total_loss), label='Training Loss', c="b")
-        if self.val_loader:
-            plt.plot(np.log10(self.val_loss.epoch_total_loss), label='Validation Loss', c='r')
-        plt.xlabel('Epochs')
-        plt.ylabel('log10 Loss')
-        plt.legend()        
-        plt.grid(True)
-        range_y = [min(np.log10(np.concat((self.train_loss.epoch_total_loss, 
-                                           self.val_loss.epoch_total_loss)))), 
-                   max(np.log10(np.concat((self.train_loss.epoch_total_loss, 
-                                           self.val_loss.epoch_total_loss))))]
-        plt.yticks(ticks = np.linspace(range_y[0], range_y[1], num = 20))
-        plt.xticks(ticks=np.arange(0, len(self.train_loss.epoch_total_loss), 
-                                   step=len(self.train_loss.epoch_total_loss) // 10))
-        plt.tight_layout()
-        plt.savefig(out_prefix + ".loss.pdf", bbox_inches='tight')
-        plt.close(fig)
-
-        # plot each loss separately (only validation losses are recorded). 
-        # create subplots for each loss component               
-        num_subplots = 6 if self.model.latent_layer_type == "GAUSS" else 4
-        fig, axs = plt.subplots(num_subplots//2, 2, figsize=(11, 8), sharex=True)
-        # axs = axs.flatten()
-        fig.subplots_adjust(hspace=0.4, wspace=0.4)
-        self._fill_in_loss_comp_fig(self.val_loss.epoch_total_loss, "combined", axs[0,0])
-        self._fill_in_loss_comp_fig(self.val_loss.epoch_phy_loss, "phy", axs[0,1])
-        self._fill_in_loss_comp_fig(self.val_loss.epoch_char_loss, "char", axs[1,1])
-        self._fill_in_loss_comp_fig(self.val_loss.epoch_aux_loss, "aux", axs[1,0])
-        if self.model.latent_layer_type == "GAUSS":
-            self._fill_in_loss_comp_fig(self.val_loss.epoch_mmd_loss, "mmd", axs[2,0])
-            self._fill_in_loss_comp_fig(self.val_loss.epoch_vz_loss, "vz", axs[2,1])
-        plt.savefig(out_prefix + ".component_loss.pdf", bbox_inches='tight')
-        plt.close(fig)
-
-    def _fill_in_loss_comp_fig(self, val_losses, plot_label, ax):
-        ax.plot(np.log10(val_losses), label=plot_label, c="b")
-        ax.set_title(f"{plot_label} Loss")
-        ax.set_xlabel('Epochs')
-        ax.set_ylabel('Log10 Loss')
-        ax.grid(True)
-        ax.set_xticks(ticks=np.arange(0, len(val_losses), step=len(val_losses) // 10))
         
     def predict(self, phy: torch.Tensor, aux: torch.Tensor) -> Tuple[np.ndarray, np.ndarray]:
         self.model.eval() 
@@ -240,6 +197,7 @@ class PhyloAutoencoder(object):
         self.model.train()
         return phy_pred.detach().cpu().numpy(), aux_pred.detach().cpu().numpy()
 
+
     def to_device(self, device):
         try:
             self.device = device
@@ -247,12 +205,19 @@ class PhyloAutoencoder(object):
         except RuntimeError:
             print(f"Didn't work, sending to {self.device} instead.")
 
+    # TODO: should mask_loader be split to train and val loaders?
     def set_data_loaders(self, train_loader : torch.utils.data.DataLoader, 
                                val_loader   : torch.utils.data.DataLoader = None,
                                mask_loader  : torch.utils.data.DataLoader = None):
         self.train_loader = train_loader
         self.val_loader   = val_loader
         self.mask_loader  = mask_loader
+
+    def _record_grad_norm(self):
+        for layer_name, g in self.model.named_parameters():
+            gn = g.grad.data.norm().item()
+            self.batch_layer_grad_norm[layer_name].append(gn)
+
 
     def make_graph(self):
         if self.train_loader and self.writer:
@@ -336,3 +301,63 @@ class PhyloAutoencoder(object):
         return decoded_tree, decoded_aux
 
         
+    def plot_losses(self, out_prefix = "AElossplot", log = True):
+        # plot total losses
+        fig = plt.figure(figsize=(11, 8))
+        plt.plot(np.log10(self.train_loss.epoch_total_loss), label='Training Loss', c="b")
+        if self.val_loader:
+            plt.plot(np.log10(self.val_loss.epoch_total_loss), label='Validation Loss', c='r')
+        plt.xlabel('Epochs')
+        plt.ylabel('log10 Loss')
+        plt.legend()        
+        plt.grid(True)
+        range_y = [min(np.log10(np.concat((self.train_loss.epoch_total_loss, 
+                                           self.val_loss.epoch_total_loss)))), 
+                   max(np.log10(np.concat((self.train_loss.epoch_total_loss, 
+                                           self.val_loss.epoch_total_loss))))]
+        plt.yticks(ticks = np.linspace(range_y[0], range_y[1], num = 20))
+        plt.xticks(ticks=np.arange(0, len(self.train_loss.epoch_total_loss), 
+                                   step=len(self.train_loss.epoch_total_loss) // 10))
+        plt.tight_layout()
+        plt.savefig(out_prefix + ".loss.pdf", bbox_inches='tight')
+        plt.close(fig)
+
+        # plot each loss separately (only validation losses are recorded). 
+        # create subplots for each loss component               
+        num_subplots = 6 if self.model.latent_layer_type == "GAUSS" else 4
+        fig, axs = plt.subplots(num_subplots//2, 2, figsize=(11, 8), sharex=True)
+        # axs = axs.flatten()
+        fig.subplots_adjust(hspace=0.4, wspace=0.4)
+        self._fill_in_loss_comp_fig(self.val_loss.epoch_total_loss, "combined", axs[0,0])
+        self._fill_in_loss_comp_fig(self.val_loss.epoch_phy_loss, "phy", axs[0,1])
+        self._fill_in_loss_comp_fig(self.val_loss.epoch_char_loss, "char", axs[1,1])
+        self._fill_in_loss_comp_fig(self.val_loss.epoch_aux_loss, "aux", axs[1,0])
+        if self.model.latent_layer_type == "GAUSS":
+            self._fill_in_loss_comp_fig(self.val_loss.epoch_mmd_loss, "mmd", axs[2,0])
+            self._fill_in_loss_comp_fig(self.val_loss.epoch_vz_loss, "vz", axs[2,1])
+        plt.savefig(out_prefix + ".component_loss.pdf", bbox_inches='tight')
+        plt.close(fig)
+
+    def _fill_in_loss_comp_fig(self, val_losses, plot_label, ax):
+        ax.plot(np.log10(val_losses), label=plot_label, c="b")
+        ax.set_title(f"{plot_label} Loss")
+        ax.set_xlabel('Epochs')
+        ax.set_ylabel('Log10 Loss')
+        ax.grid(True)
+        ax.set_xticks(ticks=np.arange(0, len(val_losses), step=len(val_losses) // 10))
+
+        
+    def _split_tree_char(self, phy, mask):
+        # divide phy into tree and character data
+        if self.nchars > 0:
+            tree = phy[:, :self.num_tree_chans, :]
+            char = phy[:, self.num_tree_chans:, :]
+            tree_mask = mask[:, :self.num_tree_chans, :] if mask is not None else None
+            char_mask = mask[:, self.num_tree_chans:, :] if mask is not None else None
+        else:
+            tree = phy
+            char = None
+            tree_mask = mask
+            char_mask = None
+
+        return tree, char, tree_mask, char_mask
