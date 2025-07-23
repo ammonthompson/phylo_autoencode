@@ -151,18 +151,21 @@ with PdfPages(args.outfile) as pdf:
         # y = x line
         plt.plot([min_val, max_val], [min_val, max_val], 'r--')  # Red dashed line
         # equal mean point
-        plt.plot([0], [0], '+', markersize = 10, linewidth=2, c="blue")  # Green plus sign at origin
+        plt.plot([0], [0], '+', markersize = 10, linewidth=2, c="blue")  # Blue plus sign at origin
         plt.xlabel("N(0,1)", fontsize=6)
         plt.ylabel(f"Dim {i}", fontsize=6)
 
-        if (i+1) % 4 == 0:
-            # save the figure
+
+        if i == len(encoded_dat.columns) - 1:
+            # plotting is finished
             pdf.savefig()
             plt.close() 
-            if i == len(encoded_dat.columns) - 1:
-                # plotting is finished
-                break
-            else:
+            break
+        else:
+            if (i+1) % 4 == 0:
+                # save the figure
+                pdf.savefig()
+                plt.close()
                 # start a new page
                 plt.figure()
                 plt.subplots_adjust(wspace=0.4, hspace=0.4)  # Adjust margins

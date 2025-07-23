@@ -211,12 +211,11 @@ def main():
                                         )
     
 
-    # create data loaders
+    # create and add data loaders to trainer
     trn_loader, val_loader = ae_data.get_dataloaders(batch_size, shuffle = True, num_workers = nworkers)
-    
-    # Load data loaders and Train model
     tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
     tree_autoencoder.train(num_epochs = num_epochs, seed = rand_seed)
+
     # save model and normalizers
     tree_autoencoder.save_model(out_prefix + ".ae_trained.pt")
     ae_data.save_normalizers(out_prefix)
