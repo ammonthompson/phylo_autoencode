@@ -79,9 +79,11 @@ def main ():
                 print("No labels found in the hdf5 file. Continuing without making labels file.")
                 # raise ValueError("No labels found in the hdf5 file.")
 
-    elif tree_data_fn.endswith('.csv'):
+    elif tree_data_fn.endswith('.csv') or tree_data_fn.endswith(".cblv"):
         test_phy_data = pd.read_csv(tree_data_fn, header = None, index_col = None).to_numpy(dtype=np.float32)
         test_aux_data = pd.read_csv(aux_data_fn, header = None, index_col = None).to_numpy(dtype=np.float32)
+        test_phy_data = torch.tensor(test_phy_data, dtype = torch.float32)
+        test_aux_data = torch.tensor(test_aux_data, dtype = torch.float32)
     else:
         raise ValueError("Input file must be in hdf5 or csv format.")
     

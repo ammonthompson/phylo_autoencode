@@ -19,7 +19,7 @@ def main():
 
     # TODO: add learning rate and weight decay to settings
     # optimizer settings
-    lr = 1e-3  # learning rate
+    lr = 1e-4  # learning rate
     wd = 1e-3  # weight decay
 
     # Training settings: Architecture, num epochs, batch size, etc.
@@ -37,7 +37,7 @@ def main():
 
     ns = settings["num_subset"]
     mt = settings["max_tips"]
-    num_test = 500
+    num_test = 1000
 
 
     # get formated tree data
@@ -128,10 +128,10 @@ def main():
     latent_dat_df.to_csv(settings["out_prefix"] + ".traindat_latent.csv", header = False, index = False)
 
 
-    #############################
+    #####################################################
     # Test Data Prediction 
     # make predictions with trained model on test data
-    #############################
+    #####################################################
 
     # save true values of test data in cblv format
     phy_true_df = pd.DataFrame(test_phy_data.numpy())

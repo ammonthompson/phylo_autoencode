@@ -38,6 +38,7 @@ class AECNN(nn.Module):
         self.num_chars = num_chars
         
         # check that num_chars and num_channels are compatible
+        # TODO: fix this
         if num_chars > 0 and num_structured_input_channel <= 2:
             self.num_chars = 0
             Warning("""num_chars > 0 but data_channels <= 2.

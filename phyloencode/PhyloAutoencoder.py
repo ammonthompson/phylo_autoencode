@@ -57,8 +57,8 @@ class PhyloAutoencoder(object):
         self.train_loss  = PhyLoss(self.weights, self.char_type, self.model.latent_layer_type)
         self.val_loss    = PhyLoss(self.weights, self.char_type, self.model.latent_layer_type)
 
-        # TODO: track gradients and param values
-        self.track_grad = True
+        # TODO: add track_grad to parameters
+        self.track_grad = False
         if self.track_grad:
             self.batch_layer_grad_norm = { layer_name : param.grad.norm().item() if param.grad is not None else []
                                for layer_name, param in self.model.named_parameters() }
@@ -299,12 +299,12 @@ class PhyloAutoencoder(object):
             decoded_tree[:,char_start_idx:,:] = torch.softmax(decoded_tree[:,char_start_idx:,:], dim = 1)
         self.model.train()
         return decoded_tree, decoded_aux
-
         
-    def plot_losses(self, out_prefix = "AElossplot", log = True):
+    def plot_losses(self, out_prefix = "AElossplot", log = True, starting_epoch = 10):
         # plot total losses
         fig = plt.figure(figsize=(11, 8))
-        plt.plot(np.log10(self.train_loss.epoch_total_loss), label='Training Loss', c="b")
+        plt.plot(list(range(len(self.train_loss.epoch_total_loss)))[:starting_epoch],
+                 np.log10(self.train_loss.epoch_total_loss[:starting_epoch]), label='Training Loss', c="b")
         if self.val_loader:
             plt.plot(np.log10(self.val_loss.epoch_total_loss), label='Validation Loss', c='r')
         plt.xlabel('Epochs')
@@ -328,24 +328,26 @@ class PhyloAutoencoder(object):
         fig, axs = plt.subplots(num_subplots//2, 2, figsize=(11, 8), sharex=True)
         # axs = axs.flatten()
         fig.subplots_adjust(hspace=0.4, wspace=0.4)
-        self._fill_in_loss_comp_fig(self.val_loss.epoch_total_loss, "combined", axs[0,0])
-        self._fill_in_loss_comp_fig(self.val_loss.epoch_phy_loss, "phy", axs[0,1])
-        self._fill_in_loss_comp_fig(self.val_loss.epoch_char_loss, "char", axs[1,1])
-        self._fill_in_loss_comp_fig(self.val_loss.epoch_aux_loss, "aux", axs[1,0])
+        self._fill_in_loss_comp_fig(self.val_loss.epoch_total_loss, "combined", axs[0,0], starting_epoch)
+        self._fill_in_loss_comp_fig(self.val_loss.epoch_phy_loss, "phy", axs[0,1], starting_epoch)
+        self._fill_in_loss_comp_fig(self.val_loss.epoch_char_loss, "char", axs[1,1], starting_epoch)
+        self._fill_in_loss_comp_fig(self.val_loss.epoch_aux_loss, "aux", axs[1,0], starting_epoch)
         if self.model.latent_layer_type == "GAUSS":
-            self._fill_in_loss_comp_fig(self.val_loss.epoch_mmd_loss, "mmd", axs[2,0])
-            self._fill_in_loss_comp_fig(self.val_loss.epoch_vz_loss, "vz", axs[2,1])
+            self._fill_in_loss_comp_fig(self.val_loss.epoch_mmd_loss, "mmd", axs[2,0], starting_epoch)
+            self._fill_in_loss_comp_fig(self.val_loss.epoch_vz_loss, "vz", axs[2,1], starting_epoch)
         plt.savefig(out_prefix + ".component_loss.pdf", bbox_inches='tight')
         plt.close(fig)
 
-    def _fill_in_loss_comp_fig(self, val_losses, plot_label, ax):
-        ax.plot(np.log10(val_losses), label=plot_label, c="b")
+    def _fill_in_loss_comp_fig(self, val_losses, plot_label, ax, starting_epoch = 10):
+        ax.plot(list(range(len(val_losses)))[starting_epoch:], 
+                np.log10(val_losses[starting_epoch:]), label=plot_label, c="b")
+                # val_losses[starting_epoch:], label=plot_label, c="b")
         ax.set_title(f"{plot_label} Loss")
         ax.set_xlabel('Epochs')
         ax.set_ylabel('Log10 Loss')
+        # ax.set_ylabel('Loss')
         ax.grid(True)
         ax.set_xticks(ticks=np.arange(0, len(val_losses), step=len(val_losses) // 10))
-
         
     def _split_tree_char(self, phy, mask):
         # divide phy into tree and character data

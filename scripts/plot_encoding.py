@@ -83,7 +83,11 @@ def plot_distributions(df_1, df_2, percent_variance = None,
             if np.sum(percent_variance == None) > 0:
                 plt.subplot(5, 3, (i % 15) + 1)
                 if np.std(df_1[pc]) > 0:
+                    # empirical distribution
                     sns.kdeplot(df_1[pc], fill=True, color="blue", alpha=0.5, label=f"{pc} Dist.")
+                    # add std normal distribution curve for reference
+                    plt.plot(np.linspace(-3,3,50), 
+                             1/np.sqrt(2. * np.pi) * np.exp(-0.5 * np.linspace(-3,3,50) ** 2), color = 'red')
                 # Plot vertical lines for df_2
                 if df_2 is not None:
                     for value in df_2[pc]:
@@ -196,8 +200,6 @@ if __name__ == "__main__":
     # PCA analysis
     if df_1.shape[0] >= df_1.shape[1]:
         # Standardize and perform PCA on the first file
-        # df1_scaler = StandardScaler()
-        # scaled_data_1 = df1_scaler.fit_transform(df_1)
         scaled_data_1 = df_1
 
         # make reference PCA with distribution iid normal
