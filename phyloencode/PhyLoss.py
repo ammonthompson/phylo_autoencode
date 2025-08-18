@@ -15,17 +15,22 @@ class PhyLoss(object):
     # methods:
         # compute, stores, and returns component and total loss for val and train sets
         # plots loss curves
-    def __init__(self, weights : torch.Tensor, rand_matrix : torch.Tensor, char_type = None, latent_layer_Type = "GAUSS" ):
+    def __init__(self, weights : torch.Tensor, 
+                 rand_matrix : torch.Tensor, 
+                 char_type = None, 
+                 latent_layer_Type = "GAUSS",
+                 device = "cpu" ):
         # weights for all components
         # initialize component loss vectors for train and validation losses
 
         # epoch losses are the average of the batch losses
         # epoch losses
+        # TODO: put these in dictionaries
         self.epoch_total_loss   = []
         self.epoch_phy_loss     = []
         self.epoch_char_loss    = []
         self.epoch_aux_loss     = []
-        self.epoch_ntips_loss   = []
+        self.epoch_ntips_loss   = [] # TODO: not implemented?
         self.epoch_mmd_loss     = []
         self.epoch_vz_loss      = []
         # batch losses 
@@ -33,7 +38,7 @@ class PhyLoss(object):
         self.batch_phy_loss     = []
         self.batch_char_loss    = []
         self.batch_aux_loss     = []
-        self.batch_ntips_loss   = []
+        self.batch_ntips_loss   = [] # TODO: not implemented?
         self.batch_mmd_loss     = []
         self.batch_vz_loss      = []
         # loss weights TODO: make a dictionary
@@ -42,7 +47,13 @@ class PhyLoss(object):
         self.char_type = char_type
         self.latent_layer_type = latent_layer_Type
         
+        # TODO: think this was part of rdp_loss experiments, prob should delete at some point
         self.rand_matrix = rand_matrix # K x D, where K is the number of latent dims and D is the data dimension
+
+        # latent loss
+        # note, these two losses make use of two different samples of y from N(0, I)
+        self.mmd = MMDLoss(device)
+        self.vz  = VZLoss(device)
         
 
     def minibatch_loss(self, x : Tuple, y : Tuple, mask : Tuple):
@@ -64,7 +75,6 @@ class PhyLoss(object):
 
         return total_loss
 
-
     def append_mean_batch_loss(self):
         # averages the batch loss arrays and return 
         mean_total_loss = torch.mean(torch.stack(self.batch_total_loss)).item()
@@ -85,8 +95,6 @@ class PhyLoss(object):
         self.batch_ntips_loss   = []
         self.batch_mmd_loss     = []
         self.batch_vz_loss      = []
-
-  
 
     def print_epoch_losses(self, elapsed_time):
         print(  f"Epoch {len(self.epoch_total_loss)},  " +
@@ -143,10 +151,11 @@ class PhyLoss(object):
         device = latent_pred.device
         x = latent_pred
         if target is None:
-            y = torch.randn(x.shape).to(device)
+            y = torch.randn(x.shape, requires_grad=False).to(device)
         else:
             y = target[0:x.shape[0],:]
-        MMD = MMDLoss(device)(x, y)
+        # MMD = MMDLoss(device)(x, y)
+        MMD = self.mmd(x, y)
                 
         return MMD
 
@@ -157,7 +166,8 @@ class PhyLoss(object):
             y = torch.randn(x.shape).to(device)
         else:
             y = target[0:x.shape[0],:]
-        VZ = VZLoss(device)(x, y)
+        # VZ = VZLoss(device)(x, y)
+        VZ = self.vz(x,y)
 
         return VZ
 
@@ -303,8 +313,11 @@ class RBF(nn.Module):
     def __init__(self, device, n_kernels=5, mul_factor=2., bw=None):
         super().__init__()
         self.device = device
+        # Build a set of bandwidth multipliers: mul_factor^(k - floor(n_kernels/2)), 
+        # k = 0..n_kernels-1
+        # This centers the exponent range so you get symmetric scales around 1.0 
+        # (e.g., for 5 and mul_factor=2: [1/4,1/2,1,2,4]).
         self.bw_multipliers = mul_factor ** (torch.arange(n_kernels) - n_kernels // 2)
-        # print(mul_factor ** (torch.arange(n_kernels) - n_kernels // 2))
         self.bw_multipliers = self.bw_multipliers.to(self.device)
         if bw != None:
             self.bw = torch.tensor(bw).to(self.device)
@@ -312,25 +325,79 @@ class RBF(nn.Module):
             self.bw = bw
 
     def get_bw(self, L2_dists):
+        # returns the constant self.bw if set. Otherwise estimates from distances
         if self.bw is None:
+            # Heuristic bandwidth: average pairwise squared distance across the matrix,
+            # excluding the diagonal (n*(n-1) off-diagonal pairs if X=Y).
             n_samples = L2_dists.shape[0]
-            return L2_dists.data.sum() / (n_samples ** 2 - n_samples)
+            # Note: uses .data to avoid autograd tracking of this statistic.
+            avg_L2_dist = L2_dists.data.sum() / (n_samples * (n_samples - 1))
+            return avg_L2_dist
 
         return self.bw
 
     def forward(self, X, Y = None):
-        # X is 2N x D (N examples, D features) + N, D-dimensional samples from N(0,I)
-        # returns a 2N x 2N matrix with the RBF kernel between all possible pairs of rows
+        # X: (N_x, D), Y: (N_y, D) optional. If Y is None, 
+        # compute all pairwise distances within X.
+        # Output: (N_x, N_y) RBF kernel matrix (or (N_x, N_x) if Y is None), 
+        # summed over a set of bandwidths.
         if Y is None:
+             # Pairwise Euclidean distances; square to get squared L2 distances.
             L2_dists = torch.cdist(X, X) ** 2
         else:
             L2_dists = torch.cdist(X, Y) ** 2
 
-        sf = (self.get_bw(L2_dists) * self.bw_multipliers)[:, None, None]
+        # Base bandwidth (scalar) times a vector of multipliers -> vector of bandwidths.
+        # Shape after [:, None, None] is (K, 1, 1) 
+        # so it can broadcast over the (N_x, N_y) distance matrix.
 
-        return torch.exp(-L2_dists[None, ...] / sf).sum(dim=0)
+        # Compute exp(-||x - y||^2 / bw_k) for each k (adds a leading K axis via [None, ...]),
+        # then sum over K to form a multi-kernel RBF (no normalization).
+
+        bw = self.get_bw(L2_dists)
+        sf = (bw * self.bw_multipliers)[:, None, None]
+
+        # return torch.exp(-L2_dists[None, ...] / sf).sum(dim=0)
+        return torch.exp(-L2_dists[None, ...] / sf).mean(dim=0)
 
 class MMDLoss(nn.Module):
+    ''' Derived from: https://github.com/yiftachbeer/mmd_loss_pytorch/blob/master/mmd_loss.py'''
+    def __init__(self, device):
+        super().__init__()
+        self.kernel = RBF(device)
+
+    def forward(self, X, Y):
+        K = self.kernel(torch.vstack([X, Y]))
+        X_size = X.shape[0]
+        k_xx = K[:X_size, :X_size]
+        k_xy = K[:X_size, X_size:]
+        k_yy = K[X_size:, X_size:]
+        # MMD_loss = torch.sqrt((k_xx - 2 * k_xy + k_yy).sum())/sum(X.shape)    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
+        # MMD2_loss = k_xx.mean() - 2 * k_xy.mean() + k_yy.mean()   # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
+        # MMD2_loss = (k_xx - 2 * k_xy + k_yy).mean()    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
+
+        m = X_size
+        n = K.shape[0] - m
+        # sum_xx = (k_xx.sum() - k_xx.diag().sum())
+        # sum_yy = (k_yy.sum() - k_yy.diag().sum())
+        sum_xx = k_xx.fill_diagonal_(0).sum()
+        sum_yy = k_yy.fill_diagonal_(0).sum()
+
+        MMD2_loss = sum_xx / (m*(m-1)) + sum_yy / (n*(n-1)) - 2 * k_xy.mean()
+
+        # CHECKING
+        if MMD2_loss < 0 :
+            print("MMD2_loss < 0: ", MMD2_loss)
+
+
+        # MMD_loss = torch.sqrt(MMD2_loss.clamp_min(0.0) + 1e-12) 
+
+        # return MMD_loss
+        return MMD2_loss
+        # return MMD2_loss.clamp_min(0.0)
+    
+# doesnt seem to work as well
+class xxx_MMDLoss(nn.Module):
     ''' From: https://github.com/yiftachbeer/mmd_loss_pytorch/blob/master/mmd_loss.py'''
     def __init__(self, device):
         super().__init__()
@@ -342,11 +409,17 @@ class MMDLoss(nn.Module):
         k_xx = K[:X_size, :X_size]
         k_xy = K[:X_size, X_size:]
         k_yy = K[X_size:, X_size:]
-        # MMD_loss = torch.sqrt((k_xx - 2 * k_xy + k_yy).sum())/sum(X.shape)    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
-        # MMD2_loss = k_xx.mean() - 2 * k_xy.mean() + k_yy.mean()   # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
-        MMD2_loss = (k_xx - 2 * k_xy + k_yy).mean()    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
-        MMD_loss = torch.sqrt(MMD2_loss) #   # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
-        return MMD_loss
+
+        m = X_size
+        n = K.shape[0] - m
+        sum_xx = (k_xx.sum() - k_xx.diag().sum())
+        sum_yy = (k_yy.sum() - k_yy.diag().sum())
+
+        MMD2_loss = (sum_xx / (m * (m - 1) + 1e-12)
+              + sum_yy / (n * (n - 1) + 1e-12)
+              - 2.0 * k_xy.mean())
+
+        return MMD2_loss.clamp_min(0.0)
     
 class VZLoss(nn.Module):
     def __init__(self, device):
@@ -354,18 +427,7 @@ class VZLoss(nn.Module):
         self.kernel = RBF(device)
     
     def forward(self, X, Y):
-
-        # TESTING
-        # X_centered = X - X.mean(dim=0, keepdim=True)
-        # std = X.std(dim=0, unbiased=False, keepdim=True)
-        # X_norm = X_centered / (std + 1e-8)  # Normalize each feature to zero mean and unit variance
-
-        # corr_matrix = (X_norm.T @ X_norm) / X.shape[0]  # Shape: [latent_dim, latent_dim]
-        # corr_off_diag = corr_matrix[~torch.eye(corr_matrix.size(0), dtype=bool, device=X.device)]
-        
         return self.kernel(X.T, Y.T).var()
-        # return corr_off_diag.abs().mean()
-        # return self.kernel(X.T, Y.T).var() + corr_off_diag.abs().mean()
     
     
 # Might not be using anymore

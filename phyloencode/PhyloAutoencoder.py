@@ -2,7 +2,6 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
-# import pandas as pd
 import torch
 from torch import optim
 from torch.utils.data import Dataset, DataLoader, TensorDataset
@@ -10,37 +9,40 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from phyloencode import utils
 from phyloencode.PhyLoss import PhyLoss
-# from sklearn.linear_model import LinearRegression
 import time
 import os
 from typing import List, Dict, Tuple, Optional, Union
 
 
 class PhyloAutoencoder(object):
-    def __init__(self, model, optimizer, 
+    def __init__(self, model, optimizer, lr_scheduler = None,
                  batch_size=128, phy_loss_weight=0.5, char_weight=0.5,
                  mmd_lambda=None, vz_lambda=None):
-        '''
-            model is an object from torch.model
-            batch_size is an int
-            char_weight is a float between 0 and 1
-            optimizer is an object from torch.optim
-            phy_loss_weight is a float between 0 and 1
-            mmd_lambda is a float >= 0
-            vz_lambda is a float >=0
-        '''
+        """ Performs training and valdiation on an autoencoder object.
 
-        self.device             = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.batch_size         = batch_size
+        Args:
+            model (nn.Module): Autoencoder model
+            optimizer (torch.optim): optimizer for sgd updating.
+            batch_size (int, optional): Minibatch size. Defaults to 128.
+            phy_loss_weight (float, optional): _description_. Defaults to 0.5.
+            char_weight (float, optional): _description_. Defaults to 0.5.
+            mmd_lambda (_type_, optional): _description_. Defaults to None.
+            vz_lambda (_type_, optional): _description_. Defaults to None.
+        """
+        
+        # TODO: define the model object better (autoencoder ...)
+        # TODO: the Loss object should be passed in as a parameter
+        # TODO: run checks that the model has the expected attributes
 
-        self.total_epochs       = 0
-        self.train_loader       = None
-        self.val_loader         = None
-
-        self.model              = model
+        self.device       = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.batch_size   = batch_size
+        self.total_epochs = 0
+        self.train_loader = None
+        self.val_loader   = None
+        self.model        = model
         self.model.to(self.device)
-
         self.optimizer = optimizer
+        self.lr_sched  = lr_scheduler
 
         # some data shape parameters
         self.nchars             = self.model.num_chars
@@ -53,9 +55,11 @@ class PhyloAutoencoder(object):
         # TODO: create an aux_weight, change everything to "lambda" or "weight" for consistency
         self.weights = (phy_loss_weight, self.char_weight, 1-phy_loss_weight, mmd_lambda, vz_lambda)
 
-
-        self.train_loss  = PhyLoss(self.weights, self.char_type, self.model.latent_layer_type)
-        self.val_loss    = PhyLoss(self.weights, self.char_type, self.model.latent_layer_type)
+        # TODO: Maybe pass in as parameters to the constructor
+        self.train_loss  = PhyLoss(self.weights, None, self.char_type, self.model.latent_layer_type, 
+                                   device = self.device)
+        self.val_loss    = PhyLoss(self.weights, None, self.char_type, self.model.latent_layer_type, 
+                                   device = self.device)
 
         # TODO: add track_grad to parameters
         self.track_grad = False
@@ -69,6 +73,7 @@ class PhyloAutoencoder(object):
             self.mean_layer_grad_norm = None
 
 
+    # TODO: Would returning the trained model object make sense here for downstream readability?
     def train(self, num_epochs, seed = None):
         if seed is not None:
             self.set_seed(seed)
@@ -77,7 +82,7 @@ class PhyloAutoencoder(object):
             self.total_epochs += 1
             epoch_time = time.time()
 
-            # perform a mini batch step for the model
+            # perform all mini batch steps for the epoch
             self._mini_batch(validation=False)
             self.train_loss.append_mean_batch_loss()
 
@@ -87,12 +92,22 @@ class PhyloAutoencoder(object):
                 # print epoch mean component losses to screen       
                 self.val_loss.print_epoch_losses(elapsed_time = time.time() - epoch_time)
 
+
         
     def _mini_batch(self, validation = False):
-        # Performs a mini batch step for the model.
-        # loops through the data loader and performs a step for each batch
-        # Uses self.step_function to perform SGD step for each batch
-        # returns the mean loss from the mini batch steps
+        """Performs a mini batch step for the model.
+        loops through the data loader and performs a step for each batch
+        Uses self.step_function to perform SGD step for each batch
+        updates the mean loss from the mini batch steps
+
+        Args:
+            validation (bool, optional): use val_loader and evaluate if True,
+            If False use train_loader and _train_step. Defaults to False.
+
+        Returns:
+            None
+        """
+        # 
 
         # set data loader and step function
         if validation:
@@ -157,9 +172,12 @@ class PhyloAutoencoder(object):
         # update model paremeters with gradient
         self.optimizer.step()
 
-        # Clear the gradient for the next iteration, 
-        # preventing accumulation from previous steps.
+        # Clear the gradient for the next iteration so it doesnt accumulate 
         self.optimizer.zero_grad()
+
+        # update learning rate according to schedule
+        if self.lr_sched != None:
+            self.lr_sched.step()
 
         
     def evaluate(self, phy: torch.Tensor, aux: torch.Tensor,
@@ -214,11 +232,13 @@ class PhyloAutoencoder(object):
         self.mask_loader  = mask_loader
 
     def _record_grad_norm(self):
-        for layer_name, g in self.model.named_parameters():
-            gn = g.grad.data.norm().item()
-            self.batch_layer_grad_norm[layer_name].append(gn)
+        with torch.no_grad():
+            for layer_name, g in self.model.named_parameters():
+                # gn = g.grad.data.norm().item()
+                gn = g.grad.norm().item()
+                self.batch_layer_grad_norm[layer_name].append(gn)
 
-
+    # TODO: many of these methods should probably be handled by the model object
     def make_graph(self):
         if self.train_loader and self.writer:
             x_sample, y_sample = next(iter(self.train_loader))
@@ -323,7 +343,8 @@ class PhyloAutoencoder(object):
         plt.close(fig)
 
         # plot each loss separately (only validation losses are recorded). 
-        # create subplots for each loss component               
+        # create subplots for each loss component   
+        # # TODO: fix x-axis tick marks            
         num_subplots = 6 if self.model.latent_layer_type == "GAUSS" else 4
         fig, axs = plt.subplots(num_subplots//2, 2, figsize=(11, 8), sharex=True)
         # axs = axs.flatten()
@@ -349,7 +370,19 @@ class PhyloAutoencoder(object):
         ax.grid(True)
         ax.set_xticks(ticks=np.arange(0, len(val_losses), step=len(val_losses) // 10))
         
-    def _split_tree_char(self, phy, mask):
+    def _split_tree_char(self, phy : torch.Tensor, mask : torch.Tensor) -> Tuple[torch.Tensor, 
+                                                                                 torch.Tensor,
+                                                                                 torch.Tensor, 
+                                                                                 torch.Tensor, ]: 
+        """_summary_
+
+        Args:
+            phy (torch.Tensor): _description_
+            mask (torch.Tensor): _description_
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, ]: _description_
+        """
         # divide phy into tree and character data
         if self.nchars > 0:
             tree = phy[:, :self.num_tree_chans, :]

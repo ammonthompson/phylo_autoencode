@@ -1,16 +1,16 @@
 import torch
-import torch
 import torch.nn as nn
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Union
 from phyloencode import utils
 
 class AECNN(nn.Module):
-    '''
-        This class uses a CNN and a dense layer to encode which are concatenated
-        in a latent layer which then gets decoded by a transpose CNN and dense layer 
-        in parallel.
-    '''
+    """ This class uses a CNN and a dense layer to encode structured and unstructured data respectively
+        The encodings are are concatenated in a latent layer which then gets decoded by a transpose CNN 
+        and dense layer in parallel.
+    """
+
+
     def __init__(self, 
                  num_structured_input_channel, 
                  structured_input_width,  # Input width for structured data
@@ -23,8 +23,29 @@ class AECNN(nn.Module):
                  out_channels = [16, 32],
                  latent_output_dim = None, # if None, then controled by structured latent channels
                  latent_layer_type = "CNN",     # CNN, DENSE, GAUSS
-                 out_prefix = "out",
-                 ):
+                 out_prefix = "out"):         
+        """Constructor sets up network 
+
+        Args:
+            num_structured_input_channel (int): e.g. at least 2 for cblv formated trees
+            structured_input_width (int): e.g. num tips for trees
+            unstructured_latent_width (int, optional): number of auxiliary statistics or metadata. Defaults to None.
+            num_chars (int, optional): number of channels that are characters (< num_chars). defaults to 0.
+            char_type (str, optional): options are ["categorical", "continuous"]; int or float. Defaults to "categorical".
+            stride (list, optional): stride at each CNN layer for structured data encoder. Defaults to [2,2].
+            kernel (list, optional): kernel width for each layer for structured data encoder. Defaults to [3,3].
+            out_channels (list, optional): number of channels for output for each layer for structured data encoder. Defaults to [16, 32].
+            latent_output_dim (int, optional): Latent encoding dimension. Defaults to None.
+            latent_layer_type (str, optional): options are ["CNN", "DENSE", "GAUSS"]. Defaults to "CNN".
+            out_prefix (str, optional): prefix for output files. Defaults to "out".
+
+        Raises:
+            ValueError: if the stride array length does not equal the kernel array length
+            ValueError: _description_
+            ValueError: _description_
+            Warning: num_chars > 0 but data_channesl <= 2. num_chars set to zero automatically.
+            ValueError: _description_
+        """
         
         # assumptions:
         # inputs are standardized
@@ -161,13 +182,17 @@ class AECNN(nn.Module):
         self.write_network_to_file(out_prefix + ".network.txt")
         
  
-
-
     def forward(self, data: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
-
-        ''' 
+        """        
         Push data through the encoder and decoder networks.
-        '''
+
+        Args:
+            data (Tuple[torch.Tensor, torch.Tensor]): _description_
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: _description_
+        """
+        
 
         # data is a tuple (structured, unstructured)
 
@@ -220,7 +245,13 @@ class AECNN(nn.Module):
 
         return phy_decoded_x, char_decoded_x, unstructured_decoded_x, shared_latent_out
 
-    def write_network_to_file(self, out_fn):
+    def write_network_to_file(self, out_fn) -> None:
+        """Write network architecture to simple text file.
+
+        Args:
+            out_fn (_type_): _description_
+        """
+
         with open(out_fn, "w") as f:  
             f.write("PHYLOGENETIC ENCODER AND DECODER:\n")    
             f.write(str(self.structured_encoder) + "\n")
@@ -267,7 +298,6 @@ class CnnEncoder(nn.Module):
 
         # experimenting
         self.cnn_layers.add_module("norm_0", nn.BatchNorm1d(out_channels[0]))
-        # self.cnn_layers.add_module("act_0", SoftPower(0.1, 3.))
 
         # add more layers if depth greater than 1.
         if len(out_channels) > 1:
@@ -285,8 +315,6 @@ class CnnEncoder(nn.Module):
                 self.conv_out_width.append(conv_out_shape[2])  # bookkeeping           
                 print(conv_out_shape)
                 self.cnn_layers.add_module("norm_" + str(i), nn.BatchNorm1d(out_channels[i]))
-
-                # self.cnn_layers.add_module("softPower" + str(i), SoftPower(0.1, 3.))
 
                 if i < (nl-1):
                     self.cnn_layers.add_module("conv_ReLU_" + str(i), nn.ReLU())
@@ -364,6 +392,11 @@ class CnnDecoder(nn.Module):
  
         outshape = utils.get_outshape(self.tcnn_layers,  num_cnn_latent_channels, latent_width)
         print(outshape)
+
+        if (nl - 2) > 0:
+            self.tcnn_layers.add_module("tconv_norm_0", nn.BatchNorm1d(out_channels[nl-2]))
+
+
         self.tcnn_layers.add_module("tconv_ReLU_0", nn.ReLU())        
 
         for i in range(nl-2, 0, -1):
@@ -371,7 +404,7 @@ class CnnDecoder(nn.Module):
             w_in = outshape[2]
             new_target_width = encoder_layer_widths[i-1]
             npad, noutpad = self._get_paddings(new_target_width, w_in, stride[i], kernel[i])
-            self.tcnn_layers.add_module("conv1d_" + str(i), 
+            self.tcnn_layers.add_module("tconv1d_" + str(nl - i - 1), 
                                         nn.ConvTranspose1d(
                                             in_channels     = out_channels[i], 
                                             out_channels    = out_channels[i-1], 
@@ -379,10 +412,16 @@ class CnnDecoder(nn.Module):
                                             stride          = stride[i], 
                                             padding         = npad,
                                             output_padding  = noutpad
-                                            ))            
+                                            ))  
+                      
             print(utils.get_outshape(self.tcnn_layers, num_cnn_latent_channels, latent_width))
 
-            self.tcnn_layers.add_module("tconv_ReLU_" + str(i), nn.ReLU())
+            if i > 1:
+                self.tcnn_layers.add_module("tconv_norm_" + str(nl-i-1), 
+                                            nn.BatchNorm1d(out_channels[i-1]))
+
+
+            self.tcnn_layers.add_module("tconv_ReLU_" + str(nl - i - 1), nn.ReLU())
 
         # final decoder layer
         # get correct padding and output_padding for final decoder layer
@@ -400,12 +439,6 @@ class CnnDecoder(nn.Module):
                                         output_padding = outpad
                                         ))
         
-        # self.tcnn_layers.add_module("tconv_ReLU_out", nn.ReLU())
-        # self.tcnn_layers.add_module("tconv_softclip_out", utils.SoftClip())
-        # self.tcnn_layers.add_module("tconv_sigmoid_out", nn.Sigmoid())
-        # self.tcnn_layers.add_module("tconv_softmax_out", nn.Softmax(dim=1))
-        # self.tcnn_layers.add_module("tconv_Tanh_out", nn.Tanh())
-
         # print out shape
         print(utils.get_outshape(self.tcnn_layers, num_cnn_latent_channels, latent_width))
 
@@ -447,7 +480,7 @@ class CnnDecoder(nn.Module):
         return pad, outpad
     
 # Latent layer classes
-# TODO: Should probably remove LatentGauss and LatentCNN and just use LatentDense
+# TODO: Should probably remove LatentGauss and just use LatentDense
 class LatentCNN(nn.Module):
     def __init__(self, in_cnn_shape: Tuple[int, int], kernel_size = 9):
         # creates a tensor with shape (in_cnn_shape[1], in_cnn_shape[2] + 1)
@@ -528,6 +561,8 @@ class LatentCNNDecoder(nn.Module):
     def forward(self, x):
         return self.shared_layer(x)
 
+
+# TODO: maybe belong in utils.py
 class SoftPower(nn.Module):
     def __init__(self, alpha = 1., power = 2):
         super().__init__()

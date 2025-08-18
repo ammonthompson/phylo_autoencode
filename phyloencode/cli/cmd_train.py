@@ -3,7 +3,7 @@
 import torch
 from torch.optim import AdamW
 # import torch.utils.data as td
-import numpy as np
+import numpy  as np
 import pandas as pd
 # import sklearn as sk
 import phyloencode as ph
@@ -12,36 +12,40 @@ import h5py
 import argparse
 
 import phyloencode as ph
-from phyloencode import utils
+# from phyloencode import utils
 from phyloencode.PhyloAutoencoder import PhyloAutoencoder
+from phyloencode.PhyloAEModel     import AECNN
+from phyloencode.DataProcessors   import AEData
 
 def main():
 
-    # TODO: add learning rate and weight decay to settings
+    # TODO: add learning rate and weight decay (or the optimizer itself) to settings
     # optimizer settings
-    lr = 1e-4  # learning rate
+    lr = 1e-3  # learning rate
     wd = 1e-3  # weight decay
 
     # Training settings: Architecture, num epochs, batch size, etc.
     # override default settings provided as command line arguments
     # Override all settings provided in config file if provided
-    settings = get_default_settings()
-    args = parse_arguments()
+    settings    = get_default_settings()
+    args        = parse_arguments()
     update_settings_from_command_line(settings = settings, args = args)
     if args.config:
         config = ph.utils.read_config(args.config)
         update_settings_from_config(settings = settings, config = config)
 
     # required command line argument
-    data_fn = args.trn_data
-
-    ns = settings["num_subset"]
-    mt = settings["max_tips"]
-    num_test = 1000
+    data_fn     = args.trn_data
+    ns          = settings["num_subset"]
+    mt          = settings["max_tips"]
+    num_test    = 1000
 
 
     # get formated tree data
     with h5py.File(data_fn, "r") as f:
+
+        # TODO: use train_test_split from sklearn.model_selection 
+
         aux_data_names = f['aux_data_names'][...][0] 
         num_tips_idx = np.where(aux_data_names == b'num_taxa')[0][0]
         aux_data = torch.tensor(f['aux_data'][0:ns,...], dtype = torch.float32)
@@ -52,80 +56,104 @@ def main():
         phy_data = phy_data[:,0:settings["num_channels"],:] 
         phy_data = phy_data.reshape((phy_data.shape[0],-1), order = "F")
         phy_data = torch.tensor(phy_data, dtype = torch.float32)
-        # aux_data = torch.tensor(f['aux_data'][0:ns, num_tips_idx], dtype = torch.float32).view(-1,1)
         num_tips = torch.tensor(f['aux_data'][0:ns,num_tips_idx], dtype = torch.float32).view(-1,1)
         
-        test_aux_data = torch.tensor(f['aux_data'][ns:(ns + num_test),...], dtype = torch.float32)
+        # test data
+        test_aux_data = torch.tensor(f['aux_data'][ns:(ns + num_test),...], 
+                                     dtype = torch.float32)
         if len(test_aux_data.shape) != 2: # i.e. is an array but should be a matrix with 1 column
             test_aux_data = test_aux_data.reshape((test_aux_data.shape[0], 1))
-        test_phy_data = np.array(f['phy_data'][ns:(ns + num_test),...], dtype = np.float32)
-        test_phy_data = test_phy_data.reshape((test_phy_data.shape[0], test_phy_data.shape[1] // mt, mt), order = "F")
+        test_phy_data = np.array(f['phy_data'][ns:(ns + num_test),...], 
+                                 dtype = np.float32)
+        test_phy_data = test_phy_data.reshape((test_phy_data.shape[0], 
+                                               test_phy_data.shape[1] // mt, mt), 
+                                               order = "F")
         test_phy_data = test_phy_data[:,0:settings["num_channels"],:]
         test_phy_data = test_phy_data.reshape((test_phy_data.shape[0],-1), order = "F")
         test_phy_data = torch.tensor(test_phy_data, dtype = torch.float32)
-        # test_aux_data = torch.tensor(f['aux_data'][ns:(ns + num_test), num_tips_idx], dtype = torch.float32).view(-1,1)
 
 
     # create Data container
-    ae_data = ph.DataProcessors.AEData( 
-                                       phy_data         = phy_data,
-                                       aux_data         = aux_data,
-                                       prop_train       = 0.85,  
-                                       num_channels     = settings["num_channels"], 
-                                       num_chars        = settings["num_chars"],
-                                       num_tips         = num_tips
-                                       )
+    # TODO: prop train -> settings
+    ae_data = AEData( 
+                    phy_data         = phy_data,
+                    aux_data         = aux_data,
+                    prop_train       = 0.85,  
+                    num_channels     = settings["num_channels"], 
+                    num_chars        = settings["num_chars"],
+                    num_tips         = num_tips
+                    )
+    
+    trn_loader, val_loader = ae_data.get_dataloaders(settings["batch_size"], shuffle = True, 
+                                                    num_workers = settings["num_workers"])
         
     # create model
-    ae_model  = ph.PhyloAEModel.AECNN(
-                                      num_structured_input_channel  = ae_data.num_channels, 
-                                      structured_input_width        = ae_data.phy_width,
-                                      unstructured_input_width      = ae_data.aux_width,
-                                      stride                        = settings["stride"],
-                                      kernel                        = settings["kernel"],
-                                      out_channels                  = settings["out_channels"],
-                                      latent_output_dim             = settings["latent_output_dim"],
-                                      latent_layer_type             = settings["latent_model_type"],
-                                      num_chars                     = settings["num_chars"],
-                                      char_type                     = settings["char_type"],
-                                      out_prefix                    = settings["out_prefix"]
-                                      )
+    ae_model = AECNN(
+                    num_structured_input_channel  = ae_data.num_channels, 
+                    structured_input_width        = ae_data.phy_width,
+                    unstructured_input_width      = ae_data.aux_width,
+                    stride                        = settings["stride"],
+                    kernel                        = settings["kernel"],
+                    out_channels                  = settings["out_channels"],
+                    latent_output_dim             = settings["latent_output_dim"],
+                    latent_layer_type             = settings["latent_model_type"],
+                    num_chars                     = settings["num_chars"],
+                    char_type                     = settings["char_type"],
+                    out_prefix                    = settings["out_prefix"]
+                    )
+    
+    # optimizer
+    # opt = AdamW(ae_model.parameters(), lr=lr, weight_decay=wd)
+    opt = AdamW(split_params_by_wd(ae_model, wd), lr=lr)
+    lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            opt,
+            max_lr=lr,
+            epochs=settings["num_epochs"], 
+            steps_per_epoch=len(trn_loader),
+            pct_start=0.1,               # 10% warmup
+            anneal_strategy='cos',
+            cycle_momentum=False
+        )
+
 
     # create Trainer
-    tree_autoencoder = PhyloAutoencoder(
-                                        model           = ae_model, 
-                                        optimizer       = AdamW(ae_model.parameters(), lr=lr, weight_decay=wd), 
-                                        batch_size      = settings["batch_size"],
-                                        phy_loss_weight = settings["phy_loss_weight"],
-                                        char_weight     = settings["char_weight"],
-                                        mmd_lambda      = settings["mmd_lambda"],
-                                        vz_lambda       = settings["vz_lambda"],
-                                        )
+    tree_ae = PhyloAutoencoder(
+                                model           = ae_model, 
+                                optimizer       = opt, 
+                                lr_scheduler    = lr_scheduler,
+                                batch_size      = settings["batch_size"],
+                                phy_loss_weight = settings["phy_loss_weight"],
+                                char_weight     = settings["char_weight"],
+                                mmd_lambda      = settings["mmd_lambda"],
+                                vz_lambda       = settings["vz_lambda"],
+                                )
     
 
     #######################################
     # Train model with data from ae_data ##
     #######################################
     # create and add data loaders to trainer and train model
-    trn_loader, val_loader = ae_data.get_dataloaders(settings["batch_size"], shuffle = True, num_workers = settings["num_workers"])
-    tree_autoencoder.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
-    tree_autoencoder.train(num_epochs = settings["num_epochs"], seed = settings["seed"])
-    if tree_autoencoder.track_grad:
-        plot_gradient_norms(tree_autoencoder.mean_layer_grad_norm, 
+
+    tree_ae.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
+    tree_ae.train(num_epochs = settings["num_epochs"], seed = settings["seed"])
+    if tree_ae.track_grad:
+        plot_gradient_norms(tree_ae.mean_layer_grad_norm, 
                             settings["out_prefix"] + ".layer_grad_norms.pdf")
             
 
     # save model and normalizers
-    tree_autoencoder.save_model(settings["out_prefix"] + ".ae_trained.pt")
+    tree_ae.save_model(settings["out_prefix"] + ".ae_trained.pt")
     ae_data.save_normalizers(settings["out_prefix"])
 
     # make encoded tree file for 5,000 random trees from training data
     rand_idx = np.random.randint(0, ae_data.prop_train * ns, size = min(5000, ns))
     rand_train_phy = torch.Tensor(ae_data.norm_train_phy_data[rand_idx,...])
     rand_train_aux = torch.Tensor(ae_data.norm_train_aux_data[rand_idx,...])
-    latent_dat = tree_autoencoder.tree_encode(rand_train_phy, rand_train_aux)
-    latent_dat_df = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), columns = None, index = None)
-    latent_dat_df.to_csv(settings["out_prefix"] + ".traindat_latent.csv", header = False, index = False)
+    latent_dat = tree_ae.tree_encode(rand_train_phy, rand_train_aux)
+    latent_dat_df = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), 
+                                 columns = None, index = None)
+    latent_dat_df.to_csv(settings["out_prefix"] + ".traindat_latent.csv", 
+                         header = False, index = False)
 
 
     #####################################################
@@ -136,36 +164,44 @@ def main():
     # save true values of test data in cblv format
     phy_true_df = pd.DataFrame(test_phy_data.numpy())
     aux_true_df = pd.DataFrame(test_aux_data.numpy())
-    phy_true_df.to_csv(settings["out_prefix"] + ".phy_true.cblv", header = False, index = False)
-    aux_true_df.to_csv(settings["out_prefix"] + ".aux_true.csv", header = False, index = False)
+    phy_true_df.to_csv(settings["out_prefix"] + ".phy_true.cblv", 
+                       header = False, index = False)
+    aux_true_df.to_csv(settings["out_prefix"] + ".aux_true.csv", 
+                       header = False, index = False)
 
     # normalize test data
     phy_normalizer, aux_normalizer = ae_data.get_normalizers()
     phydat = phy_normalizer.transform(test_phy_data)
     auxdat = aux_normalizer.transform(test_aux_data)
-    phydat = phydat.reshape((phydat.shape[0], ae_data.num_channels, ae_data.phy_width), order = "F")
+    phydat = phydat.reshape((phydat.shape[0], ae_data.num_channels, ae_data.phy_width), 
+                            order = "F")
     phydat = torch.Tensor(phydat)
     auxdat = torch.Tensor(auxdat)
 
     # make predictions for test data (latent and reconstructed)
-    test_latent_dat = tree_autoencoder.tree_encode(phydat, auxdat)
-    latent_testdat_df = pd.DataFrame(test_latent_dat.detach().to('cpu').numpy(), columns = None, index = None)
-    latent_testdat_df.to_csv(settings["out_prefix"] + ".testdat_latent.csv", header = False, index = False)
+    test_latent_dat = tree_ae.tree_encode(phydat, auxdat)
+    latent_testdat_df = pd.DataFrame(test_latent_dat.detach().to('cpu').numpy(), 
+                                     columns = None, index = None)
+    latent_testdat_df.to_csv(settings["out_prefix"] + ".testdat_latent.csv", 
+                             header = False, index = False)
 
-    phy_pred, auxpred = tree_autoencoder.predict(phydat, auxdat)
+    phy_pred, auxpred = tree_ae.predict(phydat, auxdat)
 
     # transform and flatten predicted data
-    phy_pred = phy_normalizer.inverse_transform(phy_pred.reshape((phy_pred.shape[0], -1), order = "F"))
+    phy_pred = phy_normalizer.inverse_transform(phy_pred.reshape((phy_pred.shape[0], -1), 
+                                                                 order = "F"))
     auxpred  = aux_normalizer.inverse_transform(auxpred)
 
     # save predictions to file
     phy_pred_df = pd.DataFrame(phy_pred)
     aux_pred_df = pd.DataFrame(auxpred)
-    phy_pred_df.to_csv(settings["out_prefix"] + ".phy_pred.cblv", header = False, index = False)
-    aux_pred_df.to_csv(settings["out_prefix"] + ".aux_pred.csv", header  = False, index = False)
+    phy_pred_df.to_csv(settings["out_prefix"] + ".phy_pred.cblv", 
+                       header = False, index = False)
+    aux_pred_df.to_csv(settings["out_prefix"] + ".aux_pred.csv", 
+                       header  = False, index = False)
 
     # plot loss curves
-    tree_autoencoder.plot_losses(settings["out_prefix"])
+    tree_ae.plot_losses(settings["out_prefix"])
 
 
 
@@ -194,7 +230,6 @@ def parse_arguments():
     parser.add_argument("-ct", "--char_type",       required = False, help = "character type (categorical or continuous). Default categorical")
 
     return parser.parse_args()
-
 
 def get_default_settings():
     return {
@@ -282,6 +317,21 @@ def update_settings_from_config(settings, config):
         if key in config:
             settings[key] = config[key]
 
+# experimenting with only weight decay to weights (apparently it gets applied to bias and norm )
+def split_params_by_wd(model, wd):
+    # weight decay should be zero for bias and normalization variables
+    decay_params, no_decay_params = [], []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if name.endswith(".bias") or "norm" in name.lower() or "Norm" in name.lower():
+            no_decay_params.append(param)
+        else:
+            decay_params.append(param)
+    return [
+        {"params": decay_params, "weight_decay": wd},
+        {"params": no_decay_params, "weight_decay": 0.0},
+    ]
 
 if __name__ == "__main__":
     main()
