@@ -22,21 +22,34 @@ import matplotlib.pyplot as plt
 # p: proportion of data fro training -> float
 # nc: number of channels in the data for reshapeing phy data -> int
 # 
+
 class AEData(object):
     def __init__(self, 
-                #  data       : Tuple[torch.Tensor, torch.Tensor],
                  phy_data   : torch.Tensor,
                  aux_data   : torch.Tensor,
                  prop_train : float, 
                  num_channels  : int,
                  char_data_type : str = "categorical", # "continuous" or "categorical"
                  num_chars  : int = 0,
-                 num_tips   : Optional[int] = None, # TODO: maybe make this a boolean and do it internally
-                 ):
+                 num_tips   : Optional[int] = None):
         """
         each tree in data is assumed to be flattend in column-major order
         of a matrix of dimensions (num_channels, ntips)
+
+
+        Args:
+            phy_data (torch.Tensor): _description_
+            aux_data (torch.Tensor): _description_
+            prop_train (float): _description_
+            num_channels (int): _description_
+            char_data_type (str, optional): _description_. Defaults to "categorical".
+            num_tips (Optional[int], optional): _description_. Defaults to None.
+
+        Raises:
+            ValueError: _description_
         """
+        
+
         self.num_channels = num_channels
         self.char_data_type = char_data_type
         self.num_chars = num_chars
@@ -82,20 +95,13 @@ class AEData(object):
 
         # standardize train data
         if self.char_data_type == "continuous":
-            # self.phy_ss = pp.StandardScaler()
             if num_tips is None:
                 self.phy_ss = pp.StandardScaler()
             else:
                 self.phy_ss = utils.PositiveStandardScaler()
-            # self.phy_ss = utils.NoScalerNormalizer()
-            # self.phy_ss = utils.ShiftedStandardScaler(buffer_factor=1.0)
-            # self.phy_ss = pp.MinMaxScaler(feature_range=(-1., 1.)) # if decoder out is Tanh
-            # self.phy_ss = utils.StandardMinMaxScaler() # if decoder out is Tanh
-            # self.phy_ss = pp.MinMaxScaler(feature_range=(0., 1.)) # if decoder out is Sigmoid
-            # self.phy_ss = utils.LogitStandardScaler()
         elif self.char_data_type == "categorical":
-            self.phy_ss = utils.StandardScalerPhyCategorical(self.num_chars, self.num_channels, self.max_tips)
-            # self.phy_ss = utils.NoScalerNormalizer()
+            self.phy_ss = utils.StandardScalerPhyCategorical(self.num_chars, 
+                                                             self.num_channels, self.max_tips)
         else:
             raise ValueError("char_data_type must be 'continuous' or 'categorical'")
         self.aux_ss = pp.StandardScaler()
@@ -127,7 +133,7 @@ class AEData(object):
         self.val_dataset   = TreeDataSet(self.norm_val_phy_data,   self.norm_val_aux_data, val_num_tips)
 
 
-    def get_datasets(self) -> Tuple[torch.utils.data.Dataset, torch.utils.data.Dataset]:
+    def get_datasets(self) -> Tuple[Dataset, Dataset]:
         return self.train_dataset, self.val_dataset
 
     def get_normalizers(self) -> Tuple[sklearn.preprocessing.StandardScaler, sklearn.preprocessing.StandardScaler]:
@@ -140,16 +146,19 @@ class AEData(object):
     def get_dataloaders(self, 
                         batch_size  = 32, 
                         shuffle     = True, 
-                        num_workers = 0) -> Tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
+                        num_workers = 0) -> Tuple[DataLoader, DataLoader]:
+        # drop last batch if too small
+        drop_last = True if (len(self.train_dataset) % batch_size) < 32 else False
+        
         # data loaders
         self.train_dataloader = DataLoader(self.train_dataset, 
                                            batch_size   = batch_size, 
                                            shuffle      = shuffle, 
                                            num_workers  = num_workers,
-                                           drop_last    = False)
+                                           drop_last    = drop_last)
         self.val_dataloader   = DataLoader(self.val_dataset, 
-                                           batch_size   = batch_size,
-                                           drop_last    = False)
+                                           batch_size   = batch_size)
+        
         return self.train_dataloader, self.val_dataloader
 
 
