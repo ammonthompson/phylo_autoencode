@@ -19,6 +19,7 @@ from phyloencode.PhyloAutoencoder import PhyloAutoencoder
 '''
     This is meant to work with the files from PhyloAutoecnoder
 '''
+# TODO: am I using the estimated num tips in the recon aux data at all?
 
 def file_exists(fname):
     "Return error if no file"
@@ -145,6 +146,30 @@ def main():
     # save phy error results to single file
     phy_df.to_csv(output + '_phy_data.cblv.csv', index=True, header = None)
     phy_error_df.to_csv(output + '_phy_error.csv', index_label = "tree_number", index=True)
+
+    # create scatter plots true v pred for cblv
+    from matplotlib.backends.backend_pdf import PdfPages
+    with PdfPages(output + "_scatter_plots.pdf") as f:
+        # 9 plots per page
+        ndat = min(100, pred_phy_data.shape[1])
+        for i in range(pred_phy_data.shape[1] // 9):
+            fig, ax = plt.subplots(3, 3, sharex=True, sharey=True)
+            fig.tight_layout(pad=2., h_pad=2., w_pad = 2.)
+            for j in range(9):
+                d = 9 * i + j
+                row = j // 3
+                col = j % 3
+                min_val = min([np.min(phy_data[0:ndat,d]), np.min(pred_phy_data[0:ndat,d])])
+                max_val = max([np.max(phy_data[0:ndat,d]), np.max(pred_phy_data[0:ndat,d])])
+                ax[row][col].scatter(phy_data[0:ndat,d], pred_phy_data[0:ndat,d], s = 5)
+                ax[row][col].set_xlabel("True", fontsize = 8)
+                ax[row][col].set_ylabel("Pred", fontsize = 8)
+                ax[row][col].label_outer()
+                ax[row][col].set_title("dim " + str(d), fontsize = 8)
+                ax[row][col].plot([min_val, max_val], [min_val, max_val],
+                                   color = "r", linewidth=1)
+            f.savefig(fig)
+            plt.close()
 
     # print average errors
     print('avg. phy_rmse: {}'.format(phy_rmse.mean()))
