@@ -33,7 +33,7 @@ class AEData(object):
                  num_chars  : int = 0,
                  num_tips   : Optional[int] = None):
         """
-        each tree in data is assumed to be flattend in column-major order
+        Each tree in data is assumed to be flattend in column-major order
         of a matrix of dimensions (num_channels, ntips)
 
 
@@ -166,13 +166,20 @@ class AEData(object):
 
 # these classes work with datasets output from the Format step in Phyddle
 class TreeDataSet(Dataset):
-    def __init__(self, phy_features, aux_features, num_tips: Optional[int] = None):
+    def __init__(self, phy_features: torch.Tensor, 
+                 aux_features: torch.Tensor, 
+                 num_tips: Optional[int] = None):
         super().__init__()
-        # TODO: phy_features and aux_features are ndarrays while mask is a torch.Tensor
         self.phy_features = phy_features
         self.aux_features = aux_features
         self.length = self.phy_features.shape[0]
         self.num_tips = num_tips
+
+        # Basic shape checks
+        N = self.phy_features.shape[0]
+        if self.aux_features is not None and self.aux_features.shape[0] != N:
+            raise ValueError("aux_features and phy_features must have the same N (batch dimension)")
+
         if num_tips is None:
             self.mask = None
         else:

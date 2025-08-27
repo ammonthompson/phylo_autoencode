@@ -33,6 +33,7 @@ class PhyloAutoencoder(object):
         # TODO: define the model object better (autoencoder ...)
         # TODO: the Loss object should be passed in as a parameter
         # TODO: run checks that the model has the expected attributes
+        # TODO: Update seed functionality
 
         self.device       = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.batch_size   = batch_size
@@ -56,10 +57,8 @@ class PhyloAutoencoder(object):
         self.weights = (phy_loss_weight, self.char_weight, 1-phy_loss_weight, mmd_lambda, vz_lambda)
 
         # TODO: Maybe pass in as parameters to the constructor
-        self.train_loss  = PhyLoss(self.weights, None, self.char_type, self.model.latent_layer_type, 
-                                   device = self.device)
-        self.val_loss    = PhyLoss(self.weights, None, self.char_type, self.model.latent_layer_type, 
-                                   device = self.device)
+        self.train_loss  = PhyLoss(self.weights, self.char_type, self.model.latent_layer_type, self.device)
+        self.val_loss    = PhyLoss(self.weights, self.char_type, self.model.latent_layer_type, self.device)
 
         # TODO: add track_grad to parameters
         self.track_grad = False

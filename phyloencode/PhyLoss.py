@@ -16,16 +16,17 @@ class PhyLoss(object):
         # compute, stores, and returns component and total loss for val and train sets
         # plots loss curves
     def __init__(self, weights : torch.Tensor, 
-                 rand_matrix : torch.Tensor, 
                  char_type = None, 
                  latent_layer_Type = "GAUSS",
-                 device = "cpu" ):
+                 device = "cpu",
+                 rand_matrix : torch.Tensor = None, 
+):
         # weights for all components
         # initialize component loss vectors for train and validation losses
 
         # epoch losses are the average of the batch losses
         # epoch losses
-        # TODO: put these in dictionaries
+        # TODO: put these in dictionaries (more generic)
         self.epoch_total_loss   = []
         self.epoch_phy_loss     = []
         self.epoch_char_loss    = []

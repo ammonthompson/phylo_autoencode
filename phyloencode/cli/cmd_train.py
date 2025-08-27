@@ -10,6 +10,7 @@ import phyloencode as ph
 # import sys
 import h5py
 import argparse
+from sklearn.model_selection import train_test_split
 
 import phyloencode as ph
 # from phyloencode import utils
@@ -38,47 +39,42 @@ def main():
     data_fn     = args.trn_data
     ns          = settings["num_subset"]
     mt          = settings["max_tips"]
+    nc          = settings["num_channels"]
     num_test    = 1000
 
 
     # get formated tree data
     with h5py.File(data_fn, "r") as f:
 
-        # TODO: use train_test_split from sklearn.model_selection 
+        # num tips is important for masking. 
+        # TODO: num_tips for masking is implemented on the backend, still just extracted from aux data.
+        # TODO: Why did I choose to flatten phy_data here and then make AEData reshape to (ns, nc, mt)? Fix!
 
         aux_data_names = f['aux_data_names'][...][0] 
-        num_tips_idx = np.where(aux_data_names == b'num_taxa')[0][0]
+        num_tips_col_idx = np.where(aux_data_names == b'num_taxa')[0][0]
+
         aux_data = torch.tensor(f['aux_data'][0:ns,...], dtype = torch.float32)
+        phy_data = np.array(f['phy_data'][0:ns,...], dtype = np.float32)
+        num_tips = torch.tensor(f['aux_data'][0:ns,num_tips_col_idx], dtype = torch.float32).view(-1,1)
+
         if len(aux_data.shape) != 2: # i.e. is an array but should be a matrix with 1 column
             aux_data = aux_data.reshape((aux_data.shape[0], 1))
-        phy_data = np.array(f['phy_data'][0:ns,...], dtype = np.float32)
-        phy_data = phy_data.reshape((phy_data.shape[0], phy_data.shape[1] // mt, mt), order = "F")
-        phy_data = phy_data[:,0:settings["num_channels"],:] 
-        phy_data = phy_data.reshape((phy_data.shape[0],-1), order = "F")
-        phy_data = torch.tensor(phy_data, dtype = torch.float32)
-        num_tips = torch.tensor(f['aux_data'][0:ns,num_tips_idx], dtype = torch.float32).view(-1,1)
-        
-        # test data
-        test_aux_data = torch.tensor(f['aux_data'][ns:(ns + num_test),...], 
-                                     dtype = torch.float32)
-        if len(test_aux_data.shape) != 2: # i.e. is an array but should be a matrix with 1 column
-            test_aux_data = test_aux_data.reshape((test_aux_data.shape[0], 1))
-        test_phy_data = np.array(f['phy_data'][ns:(ns + num_test),...], 
-                                 dtype = np.float32)
-        test_phy_data = test_phy_data.reshape((test_phy_data.shape[0], 
-                                               test_phy_data.shape[1] // mt, mt), 
-                                               order = "F")
-        test_phy_data = test_phy_data[:,0:settings["num_channels"],:]
-        test_phy_data = test_phy_data.reshape((test_phy_data.shape[0],-1), order = "F")
-        test_phy_data = torch.tensor(test_phy_data, dtype = torch.float32)
+
+        # extract the specified subset of channels ("num_channels") that may be in the datasets
+        phy_data = pare_channels(phy_data, nc, mt)
+ 
+        # split off test data
+        (phy_data, test_phy_data, 
+         aux_data, test_aux_data, 
+         num_tips, test_num_tips) = train_test_split(phy_data, aux_data, num_tips, 
+                                                     test_size=num_test, shuffle=True)
 
 
     # create Data container
-    # TODO: prop train -> settings
     ae_data = AEData( 
                     phy_data         = phy_data,
                     aux_data         = aux_data,
-                    prop_train       = 0.85,  
+                    prop_train       = settings['proportion_train'],  
                     num_channels     = settings["num_channels"], 
                     num_chars        = settings["num_chars"],
                     num_tips         = num_tips
@@ -146,11 +142,12 @@ def main():
     ae_data.save_normalizers(settings["out_prefix"])
 
     # make encoded tree file for 5,000 random trees from training data
-    rand_idx = np.random.randint(0, ae_data.prop_train * ns, size = min(5000, ns))
-    rand_train_phy = torch.Tensor(ae_data.norm_train_phy_data[rand_idx,...])
-    rand_train_aux = torch.Tensor(ae_data.norm_train_aux_data[rand_idx,...])
-    latent_dat = tree_ae.tree_encode(rand_train_phy, rand_train_aux)
-    latent_dat_df = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), 
+    rand_idx        = np.random.randint(0, ae_data.prop_train * phy_data.shape[0], 
+                                        size = min(5000, phy_data.shape[0]))
+    rand_train_phy  = torch.Tensor(ae_data.norm_train_phy_data[rand_idx,...])
+    rand_train_aux  = torch.Tensor(ae_data.norm_train_aux_data[rand_idx,...])
+    latent_dat      = tree_ae.tree_encode(rand_train_phy, rand_train_aux)
+    latent_dat_df   = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), 
                                  columns = None, index = None)
     latent_dat_df.to_csv(settings["out_prefix"] + ".traindat_latent.csv", 
                          header = False, index = False)
@@ -228,7 +225,7 @@ def parse_arguments():
     parser.add_argument("-r", "--stride",           required = False, help = "stride size. Default 2,4,4")
     parser.add_argument("-oc", "--out_channels",    required = False, help = "output channels. Default 32,32,128")
     parser.add_argument("-ct", "--char_type",       required = False, help = "character type (categorical or continuous). Default categorical")
-
+    parser.add_argument("-pt", "--proportion-train", required = False, help = "Proportion of num-subset used for training vs validation. Default 0.85")
     return parser.parse_args()
 
 def get_default_settings():
@@ -251,7 +248,8 @@ def get_default_settings():
         "stride": [2, 4, 8],
         "kernel": [3, 5, 9],
         "out_channels": [16, 64, 128],
-        "char_type": "categorical"
+        "char_type": "categorical",
+        "proportion_train" : 0.85
     }
 
 def update_settings_from_command_line(settings, args):
@@ -275,7 +273,8 @@ def update_settings_from_command_line(settings, args):
         "kernel"        : args.kernel,
         "stride"        : args.stride,
         "out_channels"  : args.out_channels,
-        "char_type"     : args.char_type
+        "char_type"     : args.char_type,
+        "proportion_train": args.proportion_train
     }
 
     # override defaults with command line args
@@ -317,7 +316,6 @@ def update_settings_from_config(settings, config):
         if key in config:
             settings[key] = config[key]
 
-# experimenting with only weight decay to weights (apparently it gets applied to bias and norm )
 def split_params_by_wd(model, wd):
     # weight decay should be zero for bias and normalization variables
     decay_params, no_decay_params = [], []
@@ -332,6 +330,17 @@ def split_params_by_wd(model, wd):
         {"params": decay_params, "weight_decay": wd},
         {"params": no_decay_params, "weight_decay": 0.0},
     ]
+
+def pare_channels(phydata: np.ndarray, num_chans: int, max_tips: int) -> torch.Tensor:
+        # sometimes the number channels in the settings is less than the data.
+        # for example, if you want to ignore character data and just analyze trees
+        phydata = phydata.reshape((phydata.shape[0], phydata.shape[1] // max_tips, max_tips), order = "F")
+        phydata = phydata[:,0:num_chans,:] 
+        phydata = phydata.reshape((phydata.shape[0],-1), order = "F")
+        phydata = torch.tensor(phydata, dtype = torch.float32)
+        return phydata
+
+
 
 if __name__ == "__main__":
     main()

@@ -131,6 +131,8 @@ class AECNN(nn.Module):
                                              self.structured_input_width,
                                              self.layer_params)
 
+        # TODO: nn.adaptivepooling might be better than flattening cnn encoder outputs before latent layers
+
         # Calculate final structured output width after encoder
         # get dims for latent shared concatenated layer
         self.struct_outshape = utils.get_outshape(self.structured_encoder.cnn_layers, 
