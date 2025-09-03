@@ -10,17 +10,39 @@ import itertools
 
 
 class PhyLoss(object):
+    """_summary_
+
+    Args:
+        object (_type_): _description_
+
+    Raises:
+        ValueError: _description_
+
+    Returns:
+        _type_: _description_
+    """
     # holds component losses over epochs
     # to be called for an individual batch
     # methods:
         # compute, stores, and returns component and total loss for val and train sets
         # plots loss curves
-    def __init__(self, weights : torch.Tensor, 
-                 char_type = None, 
+    def __init__(self, 
+                 weights : torch.Tensor, 
+                 char_type : torch.Tensor = None, 
                  latent_layer_Type = "GAUSS",
                  device = "cpu",
-                 rand_matrix : torch.Tensor = None, 
-):
+                 rand_matrix : torch.Tensor = None,):
+        """_summary_
+
+        Args:
+            weights (torch.Tensor): _description_
+            char_type (torch.Tensor, optional): _description_. Defaults to None.
+            latent_layer_Type (str, optional): _description_. Defaults to "GAUSS".
+            device (str, optional): _description_. Defaults to "cpu".
+            rand_matrix (torch.Tensor, optional): _description_. Defaults to None.
+        """
+        # TODO: fix: chartype is an instance variable, yet is passed into PhyLoss methods as a parameter
+            
         # weights for all components
         # initialize component loss vectors for train and validation losses
 
@@ -56,21 +78,61 @@ class PhyLoss(object):
         self.mmd = MMDLoss(device)
         self.vz  = VZLoss(device)
         
+    def set_weights(self, weights : torch.Tensor):
+        """
+        Set the weights for the loss components. 
+        Args:
+            weights (torch.Tensor): A tensor containing the new weights for phy, char, 
+                                    aux, mmd, and vz losses.
+        """
+        self.phy_w  = weights['phy_weight']  if 'phy_weight'  in weights else self.phy_w
+        self.char_w = weights['char_weight'] if 'char_weight' in weights else self.char_w
+        self.aux_w  = weights['aux_weight']  if 'aux_weight'  in weights else self.aux_w
+        self.mmd_w  = weights['mmd_weight']  if 'mmd_weight'  in weights else self.mmd_w
+        self.vz_w   = weights['vz_weight']   if 'vz_weight'   in weights else self.vz_w
 
-    def minibatch_loss(self, x : Tuple, y : Tuple, mask : Tuple):
+    def minibatch_loss(self, pred : Tuple, true : Tuple, mask : Tuple):
         # appends to the self.losses and returns the current batch loss
-        # x is a tuple (dictionary maybe?) of predictions for a batch
-        # y is a tuple of the true values for a batch
+        # pred is a tuple (dictionary maybe?) of predictions for a batch
+        # true is a tuple of the true values for a batch
         # both contain: 
             # phy, char, mask, aux, ntips
 
-        phy_loss, char_loss, aux_loss, mmd_loss, vz_loss = self.losses(x, y, mask, self.char_type)
+        # TODO:  Weight numtips loss like phy recon loss (index 0 in tuple aux???). aux loss a tuple?
 
+
+        # (phy_loss, 
+        #  char_loss, 
+        #  aux_loss, 
+        #  mmd_loss, 
+        #  vz_loss) = self.losses(pred, true, mask)
+
+
+        # separate components
+        phy_hat, char_hat, aux_hat, latent_hat = pred
+        phy, char, aux, std_norm = true
+        tree_mask, char_mask = mask
+
+        device = phy_hat.device
+
+        # recon loss
+        phy_loss    = self._phy_recon_loss(phy_hat, phy, mask = tree_mask)
+        char_loss   = self._char_recon_loss(char_hat, char, self.char_type, char_mask) if char is not None else torch.tensor(0.).to(device)
+        aux_loss    = self._aux_recon_loss(aux_hat, aux)
+        ntips_loss  = self._num_tips_loss(aux_hat, aux)
+
+        # latent loss
+        mmd_loss = self._mmd_loss(latent_hat, std_norm) if latent_hat is not None else torch.tensor(0.).to(device)
+        vz_loss  = self._vz_loss(latent_hat, std_norm)  if latent_hat is not None else torch.tensor(0.).to(device)
+
+        # computed weighted total loss
         total_loss =    self.phy_w  * phy_loss  + \
                         self.char_w * char_loss + \
                         self.aux_w  * aux_loss  + \
+                        self.phy_w  * ntips_loss + \
                         self.mmd_w  * mmd_loss  + \
                         self.vz_w   * vz_loss 
+
         
         self._append_minibatch_losses(total_loss, phy_loss, char_loss, aux_loss, mmd_loss, vz_loss)
 
@@ -126,28 +188,106 @@ class PhyLoss(object):
         self.epoch_mmd_loss.append(mmd_loss)
         self.epoch_vz_loss.append(vz_loss)
 
+    # Loss functions (not sure if these should be used externally)
+    
+    # def losses(self, pred : torch.tensor, true : torch.tensor, mask : torch.tensor):
+    #     # separate components
+    #     phy_hat, char_hat, aux_hat, latent_hat = pred
+    #     phy, char, aux, std_norm = true
+    #     tree_mask, char_mask = mask
 
-# Loss functions
-    def losses(self, pred : torch.tensor, true : torch.tensor, mask : torch.tensor, char_type : str):
-        # separate components
-        phy_hat, char_hat, aux_hat, latent_hat = pred
-        phy, char, aux, std_norm = true
-        tree_mask, char_mask = mask
+    #     device = phy_hat.device
 
-        device = phy_hat.device
+    #     # recon loss
+    #     phy_loss  = self.phy_recon_loss(phy_hat, phy, mask = tree_mask)
+    #     char_loss = self.char_recon_loss(char_hat, char, self.char_type, char_mask) if char is not None else torch.tensor(0.).to(device)
+    #     aux_loss  = self.aux_recon_loss(aux_hat, aux)
 
-        # recon loss
-        phy_loss    = self.phy_recon_loss(phy_hat, phy, mask = tree_mask)
-        char_loss   = self.char_recon_loss(char_hat, char, char_type, char_mask) if char is not None else torch.tensor(0.).to(device)
-        aux_loss    = self.aux_recon_loss(aux_hat, aux)
+    #     # latent loss
+    #     latent_mmd_loss = self.mmd_loss(latent_hat, std_norm) if latent_hat is not None else torch.tensor(0.).to(device)
+    #     latent_vz_loss  = self.vz_loss(latent_hat, std_norm)  if latent_hat is not None else torch.tensor(0.).to(device)
 
-        # latent loss
-        latent_mmd_loss    = self.mmd_loss(latent_hat, std_norm) if latent_hat is not None else torch.tensor(0.).to(device)
-        latent_vz_loss     = self.vz_loss(latent_hat, std_norm)  if latent_hat is not None else torch.tensor(0.).to(device)
+    #     return phy_loss, char_loss, aux_loss, latent_mmd_loss, latent_vz_loss
 
-        return phy_loss, char_loss, aux_loss, latent_mmd_loss, latent_vz_loss
 
-    def mmd_loss(self, latent_pred, target = None):
+    def _phy_recon_loss(self, x, y, mask = None):
+        """
+        Compute the reconstruction loss for phylogenetic data.
+
+        Args:
+            x (torch.Tensor): Reconstructed phylogenetic data in cblv-like format.
+            y (torch.Tensor): Original phylogenetic data in same format.
+
+        Returns:
+            torch.Tensor: Reconstruction loss for phylogenetic data.
+        """
+        # if cblv-like data, use the first two channels in the loss
+        # else if augmented cblv-like data, use the first four channels in the data
+        if mask is None:
+            tree_loss = fun.mse_loss(x, y) 
+        else:
+            tree_loss = (fun.mse_loss(x, y, reduction='none') * mask).mean()  
+
+        tip1_loss = 0.1 * fun.mse_loss(x[:,0:2,0], y[:,0:2,0]) 
+
+        return tree_loss + tip1_loss
+
+    def _char_recon_loss(self, x, y, char_type = "categorical", mask = None):
+        """
+        Compute the reconstruction loss for categorical character data.
+
+        Args:
+            x (torch.Tensor): Reconstructed character data ((nchannels - 2) x ntips or 
+                                (nchannels - 4) x ntips).
+            y (torch.Tensor): Original character data ((nchannels - 2) x ntips or 
+                                (nchannels - 4) x ntips).
+            is_categorical (bool): Whether the character data is categorical.
+
+        Returns:
+            torch.Tensor: Reconstruction loss for character data.
+        """
+
+        if char_type == "categorical": 
+            # Use cross-entropy loss for categorical data
+            # Reshape to (batch_size * ntips, n_classes) for cross-entropy
+            x = x.permute(0, 2, 1).reshape(-1, x.shape[1])  # (batch_size * ntips, n_classes)
+            y = y.permute(0, 2, 1).reshape(-1, y.shape[1])  # (batch_size * ntips, n_classes)
+
+            # Convert one-hot to class indices
+            y = y.argmax(dim=1)  # shape (N,)
+            
+            char_loss = fun.cross_entropy(x, y, reduction = 'none')
+        else:
+            char_loss = fun.mse_loss(x, y, reduction = 'none')
+
+        if mask is not None:
+            # Apply the mask to the loss
+            mask = mask.permute(0, 2, 1).reshape(-1, mask.shape[1])
+            char_loss = char_loss * mask[:,0] # match dims (all columns are the same in mask)
+
+        return char_loss.mean()
+
+    def _aux_recon_loss(self, x, y):
+        """
+        Compute the reconstruction loss for auxiliary data.       
+
+        Args:
+            x (torch.Tensor): Reconstructed auxiliary data.
+            y (torch.Tensor): Original auxiliary data.
+
+        Returns:
+            torch.Tensor: Reconstruction loss for auxiliary data.
+        """
+        # Use mean squared error for auxiliary data
+        # first column is num tips and will loss will be handled separately
+        aux_loss = fun.mse_loss(x[:,1:], y[:,1:]) if x.shape[1] > 1 else torch.tensor(0.).to(x.device)
+        # return fun.mse_loss(x, y)
+        return aux_loss
+    
+    def _num_tips_loss(self, x, y):
+        return fun.mse_loss(x[:,0], y[:,0])
+
+    def _mmd_loss(self, latent_pred, target = None):
 
         device = latent_pred.device
         x = latent_pred
@@ -160,7 +300,7 @@ class PhyLoss(object):
                 
         return MMD
 
-    def vz_loss(self, latent_pred, target = None):
+    def _vz_loss(self, latent_pred, target = None):
         device = latent_pred.device
         x = latent_pred
         if target is None:
@@ -172,7 +312,8 @@ class PhyLoss(object):
 
         return VZ
 
-    def rdp_loss(self, Z_batch: torch.Tensor, X_batch: torch.Tensor, rand_matrix: torch.Tensor, n_pairs: int):
+    # Experimental
+    def _rdp_loss(self, Z_batch: torch.Tensor, X_batch: torch.Tensor, rand_matrix: torch.Tensor, n_pairs: int):
         """
         Computes the average Random Distance Prediction (RDP) loss for a batch
         by sampling 2 * n_pairs distinct indices and splitting them into i and j.
@@ -225,87 +366,6 @@ class PhyLoss(object):
 
         return 0.75 * loss + 0.25 * ad_aux_loss
 
-    def phy_recon_loss(self, x, y, mask = None):
-        """
-        Compute the reconstruction loss for phylogenetic data.
-
-        Args:
-            x (torch.Tensor): Reconstructed phylogenetic data in cblv-like format.
-            y (torch.Tensor): Original phylogenetic data in same format.
-
-        Returns:
-            torch.Tensor: Reconstruction loss for phylogenetic data.
-        """
-        # if cblv-like data, use the first two channels in the loss
-        # else if augmented cblv-like data, use the first four channels in the data
-        if mask is not None:
-            tree_loss = (fun.mse_loss(x, y, reduction='none') * mask).mean()  
-        else:
-            tree_loss = fun.mse_loss(x, y) 
-
-        tip1_loss = 0.1 * fun.mse_loss(x[:,0:2,0], y[:,0:2,0]) 
-
-        return tree_loss + tip1_loss
-
-    def char_recon_loss(self, x, y, char_type = "categorical", mask = None):
-        """
-        Compute the reconstruction loss for categorical character data.
-
-        Args:
-            x (torch.Tensor): Reconstructed character data ((nchannels - 2) x ntips or (nchannels - 4) x ntips).
-            y (torch.Tensor): Original character data ((nchannels - 2) x ntips or (nchannels - 4) x ntips).
-            is_categorical (bool): Whether the character data is categorical.
-
-        Returns:
-            torch.Tensor: Reconstruction loss for character data.
-        """
-
-        if char_type == "categorical": 
-            # Use cross-entropy loss for categorical data
-            # Reshape to (batch_size * ntips, n_classes) for cross-entropy
-            x = x.permute(0, 2, 1).reshape(-1, x.shape[1])  # (batch_size * ntips, n_classes)
-            y = y.permute(0, 2, 1).reshape(-1, y.shape[1])  # (batch_size * ntips, n_classes)
-
-            # Convert one-hot to class indices
-            y = y.argmax(dim=1)  # shape (N,)
-            
-            char_loss = fun.cross_entropy(x, y, reduction = 'none')
-        else:
-            char_loss = fun.mse_loss(x, y, reduction = 'none')
-
-        if mask is not None:
-            # Apply the mask to the loss
-            mask = mask.permute(0, 2, 1).reshape(-1, mask.shape[1])
-            char_loss = char_loss * mask[:,0] # match dims (all columns are the same in mask)
-
-        return char_loss.mean()
-
-    def aux_recon_loss(self, x, y):
-        """
-        Compute the reconstruction loss for auxiliary data.
-
-        Args:
-            x (torch.Tensor): Reconstructed auxiliary data.
-            y (torch.Tensor): Original auxiliary data.
-
-        Returns:
-            torch.Tensor: Reconstruction loss for auxiliary data.
-        """
-        # Use mean squared error for auxiliary data
-        return fun.mse_loss(x, y)
-        # return fun.l1_loss(x, y)
-
-    def set_weights(self, weights : torch.Tensor):
-        """
-        Set the weights for the loss components. 
-        Args:
-            weights (torch.Tensor): A tensor containing the new weights for phy, char, aux, mmd, and vz losses.
-        """
-        self.phy_w  = weights['phy_weight']  if 'phy_weight'  in weights else self.phy_w
-        self.char_w = weights['char_weight'] if 'char_weight' in weights else self.char_w
-        self.aux_w  = weights['aux_weight']  if 'aux_weight'  in weights else self.aux_w
-        self.mmd_w  = weights['mmd_weight']  if 'mmd_weight'  in weights else self.mmd_w
-        self.vz_w   = weights['vz_weight']   if 'vz_weight'   in weights else self.vz_w
 
 # classes for MMD2 loss
 # Encourage latent space to be be N(0,1) distributed
@@ -331,6 +391,7 @@ class RBF(nn.Module):
             # Heuristic bandwidth: average pairwise squared distance across the matrix,
             # excluding the diagonal (n*(n-1) off-diagonal pairs if X=Y).
             n_samples = L2_dists.shape[0]
+
             # Note: uses .data to avoid autograd tracking of this statistic.
             avg_L2_dist = L2_dists.data.sum() / (n_samples * (n_samples - 1))
             return avg_L2_dist
@@ -356,6 +417,7 @@ class RBF(nn.Module):
         # then sum over K to form a multi-kernel RBF (no normalization).
 
         bw = self.get_bw(L2_dists)
+
         sf = (bw * self.bw_multipliers)[:, None, None]
 
         # return torch.exp(-L2_dists[None, ...] / sf).sum(dim=0)
@@ -365,7 +427,7 @@ class MMDLoss(nn.Module):
     ''' Derived from: https://github.com/yiftachbeer/mmd_loss_pytorch/blob/master/mmd_loss.py'''
     def __init__(self, device):
         super().__init__()
-        self.kernel = RBF(device)
+        self.kernel = RBF(device, n_kernels=5)
 
     def forward(self, X, Y):
         K = self.kernel(torch.vstack([X, Y]))
@@ -373,23 +435,14 @@ class MMDLoss(nn.Module):
         k_xx = K[:X_size, :X_size]
         k_xy = K[:X_size, X_size:]
         k_yy = K[X_size:, X_size:]
-        # MMD_loss = torch.sqrt((k_xx - 2 * k_xy + k_yy).sum())/sum(X.shape)    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
-        # MMD2_loss = k_xx.mean() - 2 * k_xy.mean() + k_yy.mean()   # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
-        # MMD2_loss = (k_xx - 2 * k_xy + k_yy).mean()    # aaa, ppp, qqq, sss, ttt, xxx, yyy, zzz
 
         m = X_size
         n = K.shape[0] - m
-        # sum_xx = (k_xx.sum() - k_xx.diag().sum())
-        # sum_yy = (k_yy.sum() - k_yy.diag().sum())
+
         sum_xx = k_xx.fill_diagonal_(0).sum()
         sum_yy = k_yy.fill_diagonal_(0).sum()
 
         MMD2_loss = sum_xx / (m*(m-1)) + sum_yy / (n*(n-1)) - 2 * k_xy.mean()
-
-        # CHECKING
-        if MMD2_loss < 0 :
-            print("MMD2_loss < 0: ", MMD2_loss)
-
 
         # MMD_loss = torch.sqrt(MMD2_loss.clamp_min(0.0) + 1e-12) 
 
@@ -397,7 +450,17 @@ class MMDLoss(nn.Module):
         return MMD2_loss
         # return MMD2_loss.clamp_min(0.0)
     
-# doesnt seem to work as well
+class VZLoss(nn.Module):
+    def __init__(self, device):
+        super().__init__()
+        self.kernel = RBF(device, n_kernels=5)
+    
+    def forward(self, X, Y):
+        return self.kernel(X.T, Y.T).var()
+    
+
+
+# storage
 class xxx_MMDLoss(nn.Module):
     ''' From: https://github.com/yiftachbeer/mmd_loss_pytorch/blob/master/mmd_loss.py'''
     def __init__(self, device):
@@ -422,17 +485,7 @@ class xxx_MMDLoss(nn.Module):
 
         return MMD2_loss.clamp_min(0.0)
     
-class VZLoss(nn.Module):
-    def __init__(self, device):
-        super().__init__()
-        self.kernel = RBF(device)
-    
-    def forward(self, X, Y):
-        return self.kernel(X.T, Y.T).var()
-    
-    
-# Might not be using anymore
-    def recon_loss(self, x, y, 
+def recon_loss(self, x, y, 
                 num_chars = 0, 
                 char_type = "categorical", # [categorical, continuous]
                 char_weight = 0.5, 

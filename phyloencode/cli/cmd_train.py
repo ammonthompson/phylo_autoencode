@@ -20,11 +20,6 @@ from phyloencode.DataProcessors   import AEData
 
 def main():
 
-    # TODO: add learning rate and weight decay (or the optimizer itself) to settings
-    # optimizer settings
-    lr = 1e-3  # learning rate
-    wd = 1e-3  # weight decay
-
     # Training settings: Architecture, num epochs, batch size, etc.
     # override default settings provided as command line arguments
     # Override all settings provided in config file if provided
@@ -34,6 +29,10 @@ def main():
     if args.config:
         config = ph.utils.read_config(args.config)
         update_settings_from_config(settings = settings, config = config)
+
+    # Optimizer settings
+    lr = settings['learning_rate']
+    wd = settings['weight_decay']
 
     # required command line argument
     data_fn     = args.trn_data
@@ -49,20 +48,37 @@ def main():
         # num tips is important for masking. 
         # TODO: num_tips for masking is implemented on the backend, still just extracted from aux data.
         # TODO: Why did I choose to flatten phy_data here and then make AEData reshape to (ns, nc, mt)? Fix!
-
-        aux_data_names = f['aux_data_names'][...][0] 
-        num_tips_col_idx = np.where(aux_data_names == b'num_taxa')[0][0]
+        # TODO: Check a potential discrepency in num_taxa with phyddle --format output
+            
+        phy_data_np = np.array(f['phy_data'][0:ns,...], dtype = np.float32)
+        # extract the specified subset of channels ("num_channels")
+        phy_data = get_channels(phy_data_np, nc, mt)
 
         aux_data = torch.tensor(f['aux_data'][0:ns,...], dtype = torch.float32)
-        phy_data = np.array(f['phy_data'][0:ns,...], dtype = np.float32)
-        num_tips = torch.tensor(f['aux_data'][0:ns,num_tips_col_idx], dtype = torch.float32).view(-1,1)
-
         if len(aux_data.shape) != 2: # i.e. is an array but should be a matrix with 1 column
             aux_data = aux_data.reshape((aux_data.shape[0], 1))
 
-        # extract the specified subset of channels ("num_channels") that may be in the datasets
-        phy_data = pare_channels(phy_data, nc, mt)
- 
+        # get num tips (tree width/num_taxa)
+        try:
+            aux_data_names = f['aux_data_names'][...][0] 
+            cidx = np.where(aux_data_names == b'num_taxa')[0][0]
+            num_tips = torch.tensor(f['aux_data'][0:ns, cidx], dtype = torch.float32).view(-1,1)
+            # (maybe not necessary) remove the num taxa column (will be replaced with a num tips column at column 0)
+            # aux_data = np.delete(aux_data, cidx, axis = 1)
+        except(KeyError, IndexError) as e:
+            # get num tips from the tree itself
+            print(f"""No \"num_taxa\" in aux data. Computing num tips from phy_data instead. Exception: {e}""")
+            num_tips = get_num_tips(phy_data_np, mt) 
+
+        # place num_tips in first column of aux_data
+        aux_data = torch.hstack((num_tips, aux_data))
+
+        ### TESTING ##
+        # num_tips = get_num_tips(phy_data_np, mt)
+
+        # TODO: concatenate num tips to aux_data such that num_tips is first column
+
+
         # split off test data
         (phy_data, test_phy_data, 
          aux_data, test_aux_data, 
@@ -70,59 +86,62 @@ def main():
                                                      test_size=num_test, shuffle=True)
 
 
+    ###################################
+    # Set up network training objects #
+    ###################################
     # create Data container
-    ae_data = AEData( 
-                    phy_data         = phy_data,
-                    aux_data         = aux_data,
-                    prop_train       = settings['proportion_train'],  
-                    num_channels     = settings["num_channels"], 
-                    num_chars        = settings["num_chars"],
-                    num_tips         = num_tips
-                    )
+    ae_data     = AEData( 
+                        phy_data         = phy_data,
+                        aux_data         = aux_data,
+                        prop_train       = settings['proportion_train'],  
+                        num_channels     = settings["num_channels"], 
+                        num_chars        = settings["num_chars"],
+                        num_tips         = num_tips
+                        )
     
     trn_loader, val_loader = ae_data.get_dataloaders(settings["batch_size"], shuffle = True, 
                                                     num_workers = settings["num_workers"])
         
     # create model
-    ae_model = AECNN(
-                    num_structured_input_channel  = ae_data.num_channels, 
-                    structured_input_width        = ae_data.phy_width,
-                    unstructured_input_width      = ae_data.aux_width,
-                    stride                        = settings["stride"],
-                    kernel                        = settings["kernel"],
-                    out_channels                  = settings["out_channels"],
-                    latent_output_dim             = settings["latent_output_dim"],
-                    latent_layer_type             = settings["latent_model_type"],
-                    num_chars                     = settings["num_chars"],
-                    char_type                     = settings["char_type"],
-                    out_prefix                    = settings["out_prefix"]
-                    )
+    ae_model    = AECNN(
+                        num_structured_input_channel  = ae_data.num_channels, 
+                        structured_input_width        = ae_data.phy_width,
+                        unstructured_input_width      = ae_data.aux_width,
+                        stride                        = settings["stride"],
+                        kernel                        = settings["kernel"],
+                        out_channels                  = settings["out_channels"],
+                        latent_output_dim             = settings["latent_output_dim"],
+                        latent_layer_type             = settings["latent_model_type"],
+                        num_chars                     = settings["num_chars"],
+                        char_type                     = settings["char_type"],
+                        out_prefix                    = settings["out_prefix"]
+                        )
     
     # optimizer
     # opt = AdamW(ae_model.parameters(), lr=lr, weight_decay=wd)
-    opt = AdamW(split_params_by_wd(ae_model, wd), lr=lr)
-    lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            opt,
-            max_lr=lr,
-            epochs=settings["num_epochs"], 
-            steps_per_epoch=len(trn_loader),
-            pct_start=0.1,               # 10% warmup
-            anneal_strategy='cos',
-            cycle_momentum=False
-        )
+    opt         = AdamW(split_params_by_wd(ae_model, wd), lr=lr)
+    lr_schedlr  = torch.optim.lr_scheduler.OneCycleLR(
+                        opt,
+                        max_lr=lr,
+                        epochs=settings["num_epochs"], 
+                        steps_per_epoch=len(trn_loader),
+                        pct_start=0.1,               # 10% warmup
+                        anneal_strategy='cos',
+                        cycle_momentum=False
+                        )
 
 
     # create Trainer
-    tree_ae = PhyloAutoencoder(
-                                model           = ae_model, 
-                                optimizer       = opt, 
-                                lr_scheduler    = lr_scheduler,
-                                batch_size      = settings["batch_size"],
-                                phy_loss_weight = settings["phy_loss_weight"],
-                                char_weight     = settings["char_weight"],
-                                mmd_lambda      = settings["mmd_lambda"],
-                                vz_lambda       = settings["vz_lambda"],
-                                )
+    tree_ae     = PhyloAutoencoder(
+                        model           = ae_model, 
+                        optimizer       = opt, 
+                        lr_scheduler    = lr_schedlr,
+                        batch_size      = settings["batch_size"],
+                        phy_loss_weight = settings["phy_loss_weight"],
+                        char_weight     = settings["char_weight"],
+                        mmd_lambda      = settings["mmd_lambda"],
+                        vz_lambda       = settings["vz_lambda"],
+                        )
     
 
     #######################################
@@ -206,26 +225,28 @@ def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--trn_data",         required = True,  help = "Training data in hdf5 format.")
     parser.add_argument("-o", "--out_prefix",       required = False,  help = "Output prefix.")
-    parser.add_argument("-cfg", "--config",          required = False, help = "Configuration file. Settings dictionary. Default None.")
-    parser.add_argument("-s", "--seed",             required = False, help = "Random seed. Default random.")
-    parser.add_argument("-nw", "--num_workers",      required = False, help = "Number of workers. Default 0")
-    parser.add_argument("-ne", "--num_epochs",       required = False, help = "Number of training epochs. Default 100")
-    parser.add_argument("-b", "--batch_size",       required = False, help = "Batch size. Default 128")
-    parser.add_argument("-mmd", "--mmd_lambda",       required = False, help = "MMD lambda (>= 0). Default 1.0")
-    parser.add_argument("-vz", "--vz_lambda",        required = False, help = "VZ lambda (>= 0). Default 1.0")
-    parser.add_argument("-mt", "--max_tips",         required = False, help = "maximum number of tips.   Default 1000")
-    parser.add_argument("-w", "--phy_loss_weight",  required = False, help = "Phylogenetic loss weight (in [0,1]) . Default 0.9")
-    parser.add_argument("-ns", "--num_subset",       required = False, help = "subset of data used for training/testing. Default 10000")
-    parser.add_argument("-nchans", "--num_channels",     required = False, help = "number of data channels. Default 9")
-    parser.add_argument("-num_chars", "--num_chars",     required = False, help = "number of characters. Default 5")
-    parser.add_argument("-ld", "--latent_output_dim", required = False, help = "latent output dimension. Default None (determined by structured encoder output shape)")
-    parser.add_argument("-l", "--latent_model_type", required = False, help = "latent model type (GAUSS, DENSE, or CNN). Default GAUSS")
-    parser.add_argument("-cw", "--char_weight",     required = False, help = "how much weight to give to char loss. Default 0.0")
-    parser.add_argument("-k", "--kernel",           required = False, help = "kernel size. Default 3,5,5")
-    parser.add_argument("-r", "--stride",           required = False, help = "stride size. Default 2,4,4")
-    parser.add_argument("-oc", "--out_channels",    required = False, help = "output channels. Default 32,32,128")
+    parser.add_argument("-cfg", "--config",         required = False, help = "Configuration file. Settings dictionary. Default None.")
+    parser.add_argument("-s", "--seed",             required = False, type = int, help = "Random seed. Default random.")
+    parser.add_argument("-nw", "--num_workers",     required = False, type = int, help = "Number of workers. Default 0")
+    parser.add_argument("-ne", "--num_epochs",      required = False, type = int, help = "Number of training epochs. Default 100")
+    parser.add_argument("-b", "--batch_size",       required = False, type = int, help = "Batch size. Default 128")
+    parser.add_argument("-mmd", "--mmd_lambda",     required = False, type = float, help = "MMD lambda (>= 0). Default 1.0")
+    parser.add_argument("-vz", "--vz_lambda",       required = False, type = float, help = "VZ lambda (>= 0). Default 1.0")
+    parser.add_argument("-mt", "--max_tips",        required = False, type = float, help = "maximum number of tips.   Default 1000")
+    parser.add_argument("-w", "--phy_loss_weight",  required = False, type = float, help = "Phylogenetic loss weight (in [0,1]) . Default 0.9")
+    parser.add_argument("-ns", "--num_subset",      required = False, type = int, help = "subset of data used for training/testing. Default 10000")
+    parser.add_argument("-nchans", "--num_channels",  required = False, type = int, help = "number of data channels. Default 9")
+    parser.add_argument("-num_chars", "--num_chars",  required = False, type = int, help = "number of characters. Default 5")
+    parser.add_argument("-ld", "--latent_output_dim", required = False, type = int, help = "latent output dimension. Default None (determined by structured encoder output shape)")
+    parser.add_argument("-l", "--latent_model_type",  required = False, help = "latent model type (GAUSS, DENSE, or CNN). Default GAUSS")
+    parser.add_argument("-cw", "--char_weight",     required = False, type = float, help = "how much weight to give to char loss. Default 0.0")
+    parser.add_argument("-k", "--kernel",           required = False, type = int, help = "kernel size. Default 3,5,5")
+    parser.add_argument("-r", "--stride",           required = False, type = int, help = "stride size. Default 2,4,4")
+    parser.add_argument("-oc", "--out_channels",    required = False, type = int, help = "output channels. Default 32,32,128")
     parser.add_argument("-ct", "--char_type",       required = False, help = "character type (categorical or continuous). Default categorical")
-    parser.add_argument("-pt", "--proportion-train", required = False, help = "Proportion of num-subset used for training vs validation. Default 0.85")
+    parser.add_argument("-pt", "--proportion-train", required = False, type = float, help = "Proportion of num-subset used for training vs validation. Default 0.85")
+    parser.add_argument("-lr", "--learning-rate",   required = False, type = float, help = "Optimizer learning rate. Default 1e-3")
+    parser.add_argument("-wd", "--weight-decay",    required = False, type = float, help = "Optimizer weight decay. Default 1e-3")
     return parser.parse_args()
 
 def get_default_settings():
@@ -249,7 +270,9 @@ def get_default_settings():
         "kernel": [3, 5, 9],
         "out_channels": [16, 64, 128],
         "char_type": "categorical",
-        "proportion_train" : 0.85
+        "proportion_train" : 0.85,
+        "learning_rate" : 1e-3,
+        "weight_decay"  : 1e-3
     }
 
 def update_settings_from_command_line(settings, args):
@@ -274,7 +297,10 @@ def update_settings_from_command_line(settings, args):
         "stride"        : args.stride,
         "out_channels"  : args.out_channels,
         "char_type"     : args.char_type,
-        "proportion_train": args.proportion_train
+        "proportion_train": args.proportion_train,
+        "learning_rate" : args.learning_rate,
+        "weight_decay"  : args.weight_decay
+
     }
 
     # override defaults with command line args
@@ -311,7 +337,7 @@ def plot_gradient_norms(layer_grad_norms, out_file, plots_per_page = 4):
             pdf.savefig(fig)
             plt.close(fig)
 
-def update_settings_from_config(settings, config):
+def update_settings_from_config(settings : dict, config : dict):
     for key in settings:
         if key in config:
             settings[key] = config[key]
@@ -331,16 +357,34 @@ def split_params_by_wd(model, wd):
         {"params": no_decay_params, "weight_decay": 0.0},
     ]
 
-def pare_channels(phydata: np.ndarray, num_chans: int, max_tips: int) -> torch.Tensor:
-        # sometimes the number channels in the settings is less than the data.
-        # for example, if you want to ignore character data and just analyze trees
-        phydata = phydata.reshape((phydata.shape[0], phydata.shape[1] // max_tips, max_tips), order = "F")
-        phydata = phydata[:,0:num_chans,:] 
-        phydata = phydata.reshape((phydata.shape[0],-1), order = "F")
-        phydata = torch.tensor(phydata, dtype = torch.float32)
-        return phydata
+def get_channels(phydata: np.ndarray, num_chans: int, max_tips: int) -> torch.Tensor:
+    # sometimes the number channels in the settings is less than the data.
+    # for example, if you want to ignore character data and just analyze trees
+    phydata = phydata.reshape((phydata.shape[0], phydata.shape[1] // max_tips, max_tips), order = "F")
+    phydata = phydata[:,0:num_chans,:] 
+    phydata = phydata.reshape((phydata.shape[0],-1), order = "F")
+    phydata = torch.tensor(phydata, dtype = torch.float32)
+    return phydata
 
+def get_num_tips(phydata: np.ndarray, max_tips: int):
+    """
+      This computes the number of tips by finding the 
+      first column in the cblv which only contains zeros
 
+    Args:
+        phydata (np.ndarray): Flattened cblv(+s)
+        max_tips (int): width of all cblv
+
+    Returns:
+        torch.Tensor: number of tips in each tree
+    """
+        # change consitent zero in in second position to 1.
+    phydata = phydata.reshape((phydata.shape[0], phydata.shape[1] // max_tips, max_tips), order = "F")
+    phydata = phydata[:,0:2,:] 
+    phydata[:,:,0] = 1.
+    nt = torch.tensor([[np.where(np.max(phydata[x,...], axis = 0) == 0)[0][0]]
+                       for x in range(phydata.shape[0])], dtype=torch.float32)
+    return nt + 1
 
 if __name__ == "__main__":
     main()

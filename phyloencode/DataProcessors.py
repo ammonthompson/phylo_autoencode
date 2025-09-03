@@ -34,7 +34,7 @@ class AEData(object):
                  num_tips   : Optional[int] = None):
         """
         Each tree in data is assumed to be flattend in column-major order
-        of a matrix of dimensions (num_channels, ntips)
+        of a matrix of dimensions (num_channels, ntips).
 
 
         Args:
@@ -166,9 +166,23 @@ class AEData(object):
 
 # these classes work with datasets output from the Format step in Phyddle
 class TreeDataSet(Dataset):
+    
     def __init__(self, phy_features: torch.Tensor, 
                  aux_features: torch.Tensor, 
                  num_tips: Optional[int] = None):
+        """
+        If num_tips is provided, a mask is output otherwise mask is None
+
+
+        Args:
+            phy_features (torch.Tensor): _description_
+            aux_features (torch.Tensor): _description_
+            num_tips (Optional[int], optional): _description_. Defaults to None.
+
+        Raises:
+            ValueError: _description_
+        """
+        
         super().__init__()
         self.phy_features = phy_features
         self.aux_features = aux_features

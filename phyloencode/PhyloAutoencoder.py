@@ -31,9 +31,11 @@ class PhyloAutoencoder(object):
         """
         
         # TODO: define the model object better (autoencoder ...)
-        # TODO: the Loss object should be passed in as a parameter
+        # TODO: the Loss object should maybe be passed in as a parameter
         # TODO: run checks that the model has the expected attributes
         # TODO: Update seed functionality
+        # TODO: create an aux_weight, change everything to "lambda" or "weight" for consistency
+        # TODO: add track_grad to parameters
 
         self.device       = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.batch_size   = batch_size
@@ -45,6 +47,7 @@ class PhyloAutoencoder(object):
         self.optimizer = optimizer
         self.lr_sched  = lr_scheduler
 
+
         # some data shape parameters
         self.nchars             = self.model.num_chars
         self.char_weight        = char_weight if self.nchars > 0 else torch.tensor(0.)
@@ -53,14 +56,11 @@ class PhyloAutoencoder(object):
         self.num_tree_chans     = self.phy_channels - self.nchars
         self.latent_shape       = (self.batch_size, self.model.latent_outwidth)
 
-        # TODO: create an aux_weight, change everything to "lambda" or "weight" for consistency
         self.weights = (phy_loss_weight, self.char_weight, 1-phy_loss_weight, mmd_lambda, vz_lambda)
 
-        # TODO: Maybe pass in as parameters to the constructor
         self.train_loss  = PhyLoss(self.weights, self.char_type, self.model.latent_layer_type, self.device)
         self.val_loss    = PhyLoss(self.weights, self.char_type, self.model.latent_layer_type, self.device)
 
-        # TODO: add track_grad to parameters
         self.track_grad = False
         if self.track_grad:
             self.batch_layer_grad_norm = { layer_name : param.grad.norm().item() if param.grad is not None else []
@@ -72,8 +72,10 @@ class PhyloAutoencoder(object):
             self.mean_layer_grad_norm = None
 
 
-    # TODO: Would returning the trained model object make sense here for downstream readability?
     def train(self, num_epochs, seed = None):
+        
+        # TODO: Would returning the trained model object make sense here for downstream readability?
+
         if seed is not None:
             self.set_seed(seed)
 
@@ -84,12 +86,15 @@ class PhyloAutoencoder(object):
             # perform all mini batch steps for the epoch
             self._mini_batch(validation=False)
             self.train_loss.append_mean_batch_loss()
+            # print training epoch mean losses to screen
+            self.train_loss.print_epoch_losses(elapsed_time=time.time() - epoch_time)
 
             with torch.no_grad():
                 self._mini_batch(validation=True)             
                 self.val_loss.append_mean_batch_loss()
                 # print epoch mean component losses to screen       
                 self.val_loss.print_epoch_losses(elapsed_time = time.time() - epoch_time)
+                print("")
 
 
         
