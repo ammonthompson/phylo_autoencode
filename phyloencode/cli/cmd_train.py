@@ -70,10 +70,9 @@ def main():
             num_tips = get_num_tips(phy_data_np, mt) 
 
         # place num_tips in first column of aux_data
+        # TODO: aux_data should not be altered in any way
         aux_data = torch.hstack((num_tips, aux_data))
 
-        ### TESTING ##
-        # num_tips = get_num_tips(phy_data_np, mt)
 
         # split off test data
         (phy_data, test_phy_data, 

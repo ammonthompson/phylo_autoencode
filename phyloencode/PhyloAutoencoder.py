@@ -101,7 +101,7 @@ class PhyloAutoencoder(object):
     def _mini_batch(self, validation = False):
         """Performs a mini batch step for the model.
         loops through the data loader and performs a step for each batch
-        Uses self.step_function to perform SGD step for each batch
+        Uses step_function (self._train_step or self.evaluate) to perform SGD step for each batch
         updates the mean loss from the mini batch steps
 
         Args:

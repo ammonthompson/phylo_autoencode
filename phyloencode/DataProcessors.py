@@ -50,11 +50,12 @@ class AEData(object):
         Raises:
             ValueError: _description_
         """
-        
+        # TODO: phy_data and aux_data should be np.ndarray. Let the TreeDataSet constructor convert to torch.Tensor
 
-        self.num_channels = num_channels
+        self.num_channels   = num_channels
         self.char_data_type = char_data_type
-        self.num_chars = num_chars
+        self.num_chars      = num_chars
+        self.prop_train     = prop_train
 
         if self.char_data_type == "categorical" and (self.num_chars == 0 or self.num_channels <= 2):
             print("Warning: char_data_type is categorical but num_chars == 0 or num_channels <= 2. "
@@ -63,51 +64,23 @@ class AEData(object):
 
         # prepare phy_data and aux_data for splitting into train and val sets  
         self.max_tips = phy_data.shape[1] / num_channels
-        self.phy_data = phy_data
-        self.aux_data = aux_data
+        self.phy_data = phy_data.numpy() # TODO: This is dumb, see above TODO
+        self.aux_data = aux_data.numpy()
+        flat_phy_width = self.phy_data.shape[1]
 
         # if not provided, get num_tips and concatenate to aux_data
         if num_tips is None:
-            num_tips = get_num_tips(self.phy_data, self.phy_data / num_channels)
+            self.num_tips = get_num_tips(self.phy_data, self.phy_data / num_channels)
             self.aux_data = torch.hstack((num_tips, self.aux_data))
-
-        # TODO: no good reason for concatenating phy and aux data before splitting
-        if num_tips is None:
-            self.data = np.hstack((self.phy_data, self.aux_data))
         else:
-            self.data = np.hstack((self.phy_data, self.aux_data, num_tips))
-            
-        flat_phy_width = self.phy_data.shape[1]
-        self.max_tips = flat_phy_width // num_channels
+            self.num_tips = num_tips
 
         # split data 
-        self.prop_train = prop_train
-        num_train = int(prop_train * self.phy_data.shape[0])
-        train_data, val_data = train_test_split(self.data, train_size = num_train, shuffle=True)
-
-        # separate phy and aux data and num_tips if not None
-        # if num_tips is None:
-        #     train_phy_data = train_data[:,:flat_phy_width]
-        #     val_phy_data   = val_data[:,:flat_phy_width]
-        #     train_aux_data = train_data[:,flat_phy_width:]
-        #     val_aux_data   = val_data[:,flat_phy_width:]
-        #     train_num_tips = None
-        #     val_num_tips   = None
-        # else:
-        #     train_phy_data = train_data[:,:flat_phy_width]
-        #     val_phy_data   = val_data[:,:flat_phy_width]
-        #     train_aux_data = train_data[:,flat_phy_width:-1]
-        #     val_aux_data   = val_data[:,flat_phy_width:-1]
-        #     train_num_tips = train_data[:,-1]
-        #     val_num_tips   = val_data[:,-1]
-        train_phy_data = train_data[:,:flat_phy_width]
-        val_phy_data   = val_data[:,:flat_phy_width]
-        train_aux_data = train_data[:,flat_phy_width:-1]
-        val_aux_data   = val_data[:,flat_phy_width:-1]
-        train_num_tips = train_data[:,-1]
-        val_num_tips   = val_data[:,-1]
-
- 
+        num_train = int(self.prop_train * self.phy_data.shape[0])
+        (train_phy_data, val_phy_data,
+         train_aux_data, val_aux_data,
+         train_num_tips, val_num_tips) = train_test_split(self.phy_data, self.aux_data, self.num_tips, 
+                                                          train_size = num_train, shuffle=True)
 
         # standardize train data
         if self.char_data_type == "continuous":
@@ -143,10 +116,8 @@ class AEData(object):
         self.phy_width = self.norm_train_phy_data.shape[2]
         self.aux_width = self.norm_train_aux_data.shape[1]
 
-        # create Datasets. __getitem__() returns a tuple (phy, aux)
-        # used to create a DataLoader object. See get_dataloaders()
         self.train_dataset = TreeDataSet(self.norm_train_phy_data, self.norm_train_aux_data, train_num_tips)
-        self.val_dataset   = TreeDataSet(self.norm_val_phy_data,   self.norm_val_aux_data, val_num_tips)
+        self.val_dataset   = TreeDataSet(self.norm_val_phy_data,   self.norm_val_aux_data,   val_num_tips)
 
 
     def get_datasets(self) -> Tuple[Dataset, Dataset]:
