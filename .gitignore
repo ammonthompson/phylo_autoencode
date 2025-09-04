@@ -1,0 +1,9 @@
+# Ignore everything under testing/
+testing/**
+
+# But keep Python and R scripts in all subdirectories
+!testing/**/*.py
+!testing/**/*.r
+!testing/**/*.R
+
+__pycache__/
