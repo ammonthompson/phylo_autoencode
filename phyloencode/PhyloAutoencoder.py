@@ -3,14 +3,14 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from torch import optim
-from torch.utils.data import Dataset, DataLoader, TensorDataset
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-from phyloencode import utils
+# from torch import optim
+# from torch.utils.data import Dataset, DataLoader, TensorDataset
+# from sklearn.preprocessing import StandardScaler
+# from sklearn.model_selection import train_test_split
+# from phyloencode import utils
 from phyloencode.PhyLoss import PhyLoss
 import time
-import os
+# import os
 from typing import List, Dict, Tuple, Optional, Union
 
 
@@ -73,7 +73,7 @@ class PhyloAutoencoder(object):
 
 
     def train(self, num_epochs, seed = None):
-        
+
         # TODO: Would returning the trained model object make sense here for downstream readability?
 
         if seed is not None:

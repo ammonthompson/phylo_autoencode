@@ -119,7 +119,7 @@ class PhyLoss(object):
         phy_loss    = self._phy_recon_loss(phy_hat, phy, mask = tree_mask)
         char_loss   = self._char_recon_loss(char_hat, char, self.char_type, char_mask) if char is not None else torch.tensor(0.).to(device)
         aux_loss    = self._aux_recon_loss(aux_hat, aux)
-        ntips_loss  = self._num_tips_loss(aux_hat, aux)
+        ntips_loss  = self._num_tips_recon_loss(aux_hat, aux)
 
         # latent loss
         mmd_loss = self._mmd_loss(latent_hat, std_norm) if latent_hat is not None else torch.tensor(0.).to(device)
@@ -189,7 +189,7 @@ class PhyLoss(object):
         self.epoch_vz_loss.append(vz_loss)
 
     # Loss functions (not sure if these should be used externally)
-    
+
     # def losses(self, pred : torch.tensor, true : torch.tensor, mask : torch.tensor):
     #     # separate components
     #     phy_hat, char_hat, aux_hat, latent_hat = pred
@@ -284,7 +284,7 @@ class PhyLoss(object):
         # return fun.mse_loss(x, y)
         return aux_loss
     
-    def _num_tips_loss(self, x, y):
+    def _num_tips_recon_loss(self, x, y):
         return fun.mse_loss(x[:,0], y[:,0])
 
     def _mmd_loss(self, latent_pred, target = None):

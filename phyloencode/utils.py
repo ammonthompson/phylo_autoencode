@@ -384,31 +384,22 @@ def tconv1d_layer_outwidth(layer, input_width):
     width = (input_width - 1) * stride - 2 * padding + dilation * (kernel_size - 1) + output_padding + 1
     return width
 
-def get_numtips(tree_data) ->  torch.Tensor:
+def get_num_tips(phydata: np.ndarray, max_tips: int):
     """
-    Get the number of tips from the tree data.
+      This computes the number of tips by finding the 
+      first column in the cblv which only contains zeros
 
     Args:
-        tree_data (torch.Tensor): Tree data tensor.
+        phydata (np.ndarray): Flattened cblv(+s)
+        max_tips (int): width of all cblv
 
     Returns:
-        int: Number of tips.
+        torch.Tensor: number of tips in each tree
     """
-    # tree_data should have shape (batch_size, num_channels, num_tips)
-    # get the number of tips from the length of zero paddings at the end of each tree
-
-    # convert to numpy array
-    if isinstance(tree_data, torch.Tensor):
-        # check if tree_data is on GPU
-         tree_data = tree_data.numpy()
-
-    num_tips = []
-    for i in range(tree_data.shape[0]):
-        # get the number of tips from the length of zero paddings at the end of each tree
-        tree_cumsum = tree_data.cumsum(tree_data[i,1,...] == 0, axis=2)
-        tree_cummax = tree_cumsum.max()
-        first_max = np.where(tree_cumsum == tree_cummax)[0]
-        num_tips.append(first_max)
-
-    return torch.Tensor(num_tips, dtype = torch.int32)
-
+        # change consitent zero in in second position to 1.
+    phydata = phydata.reshape((phydata.shape[0], phydata.shape[1] // max_tips, max_tips), order = "F")
+    phydata = phydata[:,0:2,:] 
+    phydata[:,:,0] = 1.
+    nt = torch.tensor([[np.where(np.max(phydata[x,...], axis = 0) == 0)[0][0]]
+                       for x in range(phydata.shape[0])], dtype=torch.float32).view(-1,1)
+    return nt + 1

@@ -15,6 +15,8 @@ import scipy
 import phyloencode as ph
 from phyloencode import utils
 from phyloencode.PhyloAutoencoder import PhyloAutoencoder
+from phyloencode.utils            import get_num_tips
+
 
 '''
     This is meant to work with the files from PhyloAutoecnoder
@@ -85,12 +87,16 @@ def main():
         with h5py.File(args.data, 'r') as f:
             phy_data    = f['phy_data'][:]
             aux_data    = f['aux_data'][:]
-            # aux_data_names = f['aux_data_names'][:][0]
-            # labels      = f['labels'][:]
-            # label_names = f['label_names'][:][0]
+            
+            # TODO: this is a bad way of doing things (prob should handled in backend)
             # get the num tips
-            ntips_idx = np.where(f['aux_data_names'][...][0] == b'num_taxa')[0][0]
-            ntips = aux_data[:, ntips_idx]
+            try:
+                ntips_idx = np.where(f['aux_data_names'][...][0] == b'num_taxa')[0][0]
+                ntips = aux_data[:, ntips_idx].reshape((-1,1))
+            except(KeyError, IndexError) as e:
+                ntips = get_num_tips(phy_data, max_tips)
+            aux_data = np.hstack((ntips, aux_data))
+
 
     # subset phy_data to include only channels specified in the model
     phy_data = phy_data.reshape((phy_data.shape[0], int(phy_data.shape[1]/max_tips), max_tips), order='F')
@@ -125,7 +131,7 @@ def main():
 
     mask = np.zeros(phy_data.shape, dtype=bool)
     # phy_flat_width = max_tips * num_channels
-    num_unmask = ntips * num_channels
+    num_unmask = ntips[:,0] * num_channels
 
     for t in range(pred_phy_data.shape[0]):
         mask[t,0:int(num_unmask[t])] = True

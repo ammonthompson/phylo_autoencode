@@ -17,6 +17,7 @@ import phyloencode as ph
 from phyloencode.PhyloAutoencoder import PhyloAutoencoder
 from phyloencode.PhyloAEModel     import AECNN
 from phyloencode.DataProcessors   import AEData
+from phyloencode.utils            import get_num_tips
 
 def main():
 
@@ -366,25 +367,6 @@ def get_channels(phydata: np.ndarray, num_chans: int, max_tips: int) -> torch.Te
     phydata = torch.tensor(phydata, dtype = torch.float32)
     return phydata
 
-def get_num_tips(phydata: np.ndarray, max_tips: int):
-    """
-      This computes the number of tips by finding the 
-      first column in the cblv which only contains zeros
-
-    Args:
-        phydata (np.ndarray): Flattened cblv(+s)
-        max_tips (int): width of all cblv
-
-    Returns:
-        torch.Tensor: number of tips in each tree
-    """
-        # change consitent zero in in second position to 1.
-    phydata = phydata.reshape((phydata.shape[0], phydata.shape[1] // max_tips, max_tips), order = "F")
-    phydata = phydata[:,0:2,:] 
-    phydata[:,:,0] = 1.
-    nt = torch.tensor([[np.where(np.max(phydata[x,...], axis = 0) == 0)[0][0]]
-                       for x in range(phydata.shape[0])], dtype=torch.float32)
-    return nt + 1
 
 if __name__ == "__main__":
     main()

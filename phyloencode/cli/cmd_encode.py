@@ -9,6 +9,8 @@ import os
 import argparse
 import numpy as np
 import os
+from phyloencode.utils import get_num_tips
+
 
 def file_exists(fname):
     "Return error if no file"
@@ -26,7 +28,7 @@ def main ():
         " use the -s [--aux-data] flag to specify the auxiliary data file.")
     cmd.add_argument("-s", "--aux-data", required=False, help="Path to the auxiliary data if using csv format. " )
     cmd.add_argument("-nc", "--num-channels", required=False, type=int, help="Number of channels in the data. Default is 2.")
-    cmd.add_argument("-nt", "--num-tips", required=False, type=int,help="Max number of tips in the data. Default is 500.")
+    cmd.add_argument("-mt", "--max-tips", required=False, type=int,help="Max number of tips in the data. Default is 500.")
     cmd.add_argument("-o", "--out-prefix", required=False, help="Path to out file prefix")
 
     args = cmd.parse_args()
@@ -37,9 +39,9 @@ def main ():
     tree_data_fn      = file_exists(args.tree_data)
     aux_data_fn       = file_exists(args.aux_data) if args.aux_data is not None else None
     num_channels      = args.num_channels if args.num_channels is not None else None
-    num_tips          = args.num_tips if args.num_tips is not None else None
+    max_tips          = args.max_tips if args.max_tips is not None else None
 
-    if (num_tips is not None and num_channels is None) or (num_channels is not None and num_tips is None):
+    if (max_tips is not None and num_channels is None) or (num_channels is not None and max_tips is None):
         raise ValueError("If using num_tips, then num_channels must also be specified. " \
         "If using num_channels, then num_tips must also be specified.")
 
@@ -65,6 +67,17 @@ def main ():
         with h5py.File(tree_data_fn, "r") as f:
             test_phy_data = torch.tensor(f['phy_data'][...], dtype = torch.float32)
             test_aux_data = torch.tensor(f['aux_data'][...], dtype = torch.float32)
+
+            # TODO: this is a bad way of doing things (prob should handled in backend)
+            # get the num tips
+            try:
+                ntips_idx = np.where(f['aux_data_names'][...][0] == b'num_taxa')[0][0]
+                ntips = test_aux_data[:, ntips_idx].reshape((-1,1))
+            except(KeyError, IndexError) as e:
+                ntips = get_num_tips(test_phy_data, max_tips)
+            test_aux_data = np.hstack((ntips, test_aux_data))
+
+            # TODO: Probably not necessary
             if len(test_aux_data.shape) == 1:
                 test_aux_data = test_aux_data.reshape((test_aux_data.shape[0], 1))
             
@@ -89,11 +102,11 @@ def main ():
     
     if num_channels is not None:
         # print(test_phy_data[0,0:28])   
-        nc = test_phy_data.shape[1] // num_tips
-        if test_phy_data.shape[1] % num_tips != 0:
+        nc = test_phy_data.shape[1] // max_tips
+        if test_phy_data.shape[1] % max_tips != 0:
             raise ValueError("Number of tips does not match the number of tips in the trained model.")  
         # reshape, and then reduce the tensor to the number of channels desired (might be fewer than the original)
-        test_phy_data = test_phy_data.reshape(-1, num_tips, nc)[:, :, :num_channels].flatten(start_dim=1)
+        test_phy_data = test_phy_data.reshape(-1, max_tips, nc)[:, :, :num_channels].flatten(start_dim=1)
         # print(test_phy_data[0,0:8])
 
     # make predictions with trained model

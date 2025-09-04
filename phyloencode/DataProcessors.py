@@ -1,6 +1,6 @@
 
 import torch
-from torch.utils.data import Dataset, DataLoader, TensorDataset
+from torch.utils.data import Dataset, DataLoader #, TensorDataset
 import h5py
 import numpy as np
 import sklearn
@@ -11,8 +11,10 @@ import sklearn.preprocessing as pp
 from sklearn.model_selection import train_test_split
 from typing import List, Dict, Tuple, Optional, Union
 import phyloencode.utils as utils
-from matplotlib.backends.backend_pdf import PdfPages
-import matplotlib.pyplot as plt
+# from matplotlib.backends.backend_pdf import PdfPages
+# import matplotlib.pyplot as plt
+from phyloencode.utils            import get_num_tips
+
 
 # class that contains the DataSet and DataLoaders
 # splits and normalizes/denormalizes it
@@ -34,7 +36,7 @@ class AEData(object):
                  num_tips   : Optional[int] = None):
         """
         Each tree in data is assumed to be flattend in column-major order
-        of a matrix of dimensions (num_channels, ntips).
+        of a matrix of dimensions (num_channels, max_tips).
 
 
         Args:
@@ -64,10 +66,17 @@ class AEData(object):
         self.phy_data = phy_data
         self.aux_data = aux_data
 
+        # if not provided, get num_tips and concatenate to aux_data
+        if num_tips is None:
+            num_tips = get_num_tips(self.phy_data, self.phy_data / num_channels)
+            self.aux_data = torch.hstack((num_tips, self.aux_data))
+
+        # TODO: no good reason for concatenating phy and aux data before splitting
         if num_tips is None:
             self.data = np.hstack((self.phy_data, self.aux_data))
         else:
             self.data = np.hstack((self.phy_data, self.aux_data, num_tips))
+            
         flat_phy_width = self.phy_data.shape[1]
         self.max_tips = flat_phy_width // num_channels
 
@@ -77,20 +86,27 @@ class AEData(object):
         train_data, val_data = train_test_split(self.data, train_size = num_train, shuffle=True)
 
         # separate phy and aux data and num_tips if not None
-        if num_tips is None:
-            train_phy_data = train_data[:,:flat_phy_width]
-            val_phy_data   = val_data[:,:flat_phy_width]
-            train_aux_data = train_data[:,flat_phy_width:]
-            val_aux_data   = val_data[:,flat_phy_width:]
-            train_num_tips = None
-            val_num_tips   = None
-        else:
-            train_phy_data = train_data[:,:flat_phy_width]
-            val_phy_data   = val_data[:,:flat_phy_width]
-            train_aux_data = train_data[:,flat_phy_width:-1]
-            val_aux_data   = val_data[:,flat_phy_width:-1]
-            train_num_tips = train_data[:,-1]
-            val_num_tips   = val_data[:,-1]
+        # if num_tips is None:
+        #     train_phy_data = train_data[:,:flat_phy_width]
+        #     val_phy_data   = val_data[:,:flat_phy_width]
+        #     train_aux_data = train_data[:,flat_phy_width:]
+        #     val_aux_data   = val_data[:,flat_phy_width:]
+        #     train_num_tips = None
+        #     val_num_tips   = None
+        # else:
+        #     train_phy_data = train_data[:,:flat_phy_width]
+        #     val_phy_data   = val_data[:,:flat_phy_width]
+        #     train_aux_data = train_data[:,flat_phy_width:-1]
+        #     val_aux_data   = val_data[:,flat_phy_width:-1]
+        #     train_num_tips = train_data[:,-1]
+        #     val_num_tips   = val_data[:,-1]
+        train_phy_data = train_data[:,:flat_phy_width]
+        val_phy_data   = val_data[:,:flat_phy_width]
+        train_aux_data = train_data[:,flat_phy_width:-1]
+        val_aux_data   = val_data[:,flat_phy_width:-1]
+        train_num_tips = train_data[:,-1]
+        val_num_tips   = val_data[:,-1]
+
  
 
         # standardize train data
@@ -182,7 +198,7 @@ class TreeDataSet(Dataset):
         Raises:
             ValueError: _description_
         """
-        
+
         super().__init__()
         self.phy_features = phy_features
         self.aux_features = aux_features
