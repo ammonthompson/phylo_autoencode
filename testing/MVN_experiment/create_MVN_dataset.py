@@ -22,7 +22,6 @@ def create_MVN_dataset(template_fn, means, variance, num_samples=1000, output_fi
     with h5py.File(template_fn, 'r') as f:
         aux_colnames = f['aux_data_names'][:]
 
-
     data_dim = means.shape[0]  # Ensure data_dim matches the shape of the means
 
     Sigma = variance * np.eye(data_dim)  # scaled Identity covariance matrix
@@ -60,8 +59,11 @@ if __name__ == "__main__":
     variance = args.variance
 
     # convert string representation of function into a callable function
+    mode_gen_str = mode_gen_str.strip("\"")
+    mode_gen_str = mode_gen_str.strip("\'")    
     mode = eval(mode_gen_str, {"np":np})
     # mode2 = eval(mode2_gen_str, {"np":np})
+    print("mode: ", mode)
 
 
     create_MVN_dataset(template_fn, mode, 

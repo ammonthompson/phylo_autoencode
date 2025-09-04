@@ -47,8 +47,6 @@ def main():
     with h5py.File(data_fn, "r") as f:
 
         # num tips is important for masking. 
-        # TODO: num_tips for masking is implemented on the backend, still just extracted from aux data.
-        # TODO: Why did I choose to flatten phy_data here and then make AEData reshape to (ns, nc, mt)? Fix!
         # TODO: Check a potential discrepency in num_taxa with phyddle --format output
             
         phy_data_np = np.array(f['phy_data'][0:ns,...], dtype = np.float32)
@@ -76,9 +74,6 @@ def main():
 
         ### TESTING ##
         # num_tips = get_num_tips(phy_data_np, mt)
-
-        # TODO: concatenate num tips to aux_data such that num_tips is first column
-
 
         # split off test data
         (phy_data, test_phy_data, 
