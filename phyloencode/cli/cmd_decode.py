@@ -12,7 +12,7 @@ import argparse
 # takes in an encoded tree (encoded by the same trained model as the decoder)
 # outputs a cblv file
 
-# TODO: maybe should use reconstructed num_taxa to set indexes > num_taxa to zero in cblv
+# TODO: Output a nwk string too?
 
 def file_exists(fname):
     "Return error if no file"

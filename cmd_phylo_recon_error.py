@@ -154,6 +154,7 @@ def main():
     phy_df.to_csv(output + '_phy_data.cblv.csv', index=True, header = None)
     phy_error_df.to_csv(output + '_phy_error.csv', index_label = "tree_number", index=True)
 
+    # TODO: Scatter plots should maybe not include padding predictions (may be moot once decoder sets to zero is implemented)
     # create scatter plots true v pred for cblv
     from matplotlib.backends.backend_pdf import PdfPages
     with PdfPages(output + "_scatter_plots.pdf") as f:

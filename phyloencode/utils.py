@@ -30,10 +30,10 @@ class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
     # For one-hot encoded categorical data.
     # normalizes the data to have mean 0 and std 1.
     # ignores the categorical data
+    # uses PositiveStandardScaler (see below)
     def __init__(self, num_chars, num_chans, num_tips):
         super().__init__()
 
-        # self.cblv_scaler = StandardScaler()
         self.cblv_scaler = PositiveStandardScaler()
 
         self.num_chars = num_chars
@@ -288,6 +288,8 @@ class LogStandardScaler(BaseEstimator, TransformerMixin):
         return X_exp - self.min_positive_values
 
 class PositiveStandardScaler(BaseEstimator, TransformerMixin):
+    # this does not use zero-padded values for standardization.
+    # doesn't use mask (any zero is left out)
     def __init__(self):
         super().__init__()
         self.mean = None

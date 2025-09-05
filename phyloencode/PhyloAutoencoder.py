@@ -13,6 +13,8 @@ import time
 # import os
 from typing import List, Dict, Tuple, Optional, Union
 
+# TODO: maybe store normalizers in this object to make things tidy
+# TODO: load the data object into the autoencoder constructor rather than only relying on set_data_loaders
 
 class PhyloAutoencoder(object):
     def __init__(self, model, aux_ntax_cidx, optimizer, lr_scheduler = None,
@@ -85,12 +87,13 @@ class PhyloAutoencoder(object):
             self.total_epochs += 1
             epoch_time = time.time()
 
-            # perform all mini batch steps for the epoch
+            # perform all mini batch steps for the epoch for training data
             self._mini_batch(validation=False)
             self.train_loss.append_mean_batch_loss()
             # print training epoch mean losses to screen
             self.train_loss.print_epoch_losses(elapsed_time=time.time() - epoch_time)
 
+            # perform mini batch on validation data
             with torch.no_grad():
                 self._mini_batch(validation=True)             
                 self.val_loss.append_mean_batch_loss()
@@ -140,7 +143,8 @@ class PhyloAutoencoder(object):
             aux_batch = aux_batch.to(self.device)
                
             # target latent distribution sample
-            self.std_norm = torch.randn(self.latent_shape).to(self.device) if self.model.latent_layer_type == "GAUSS" else None
+            self.std_norm = torch.randn(self.latent_shape).to(self.device) \
+                if self.model.latent_layer_type == "GAUSS" else None
 
             # perform SGD step for batch
             step_function(phy_batch, aux_batch, mask_batch, self.std_norm)
@@ -204,6 +208,8 @@ class PhyloAutoencoder(object):
 
         
     def predict(self, phy: torch.Tensor, aux: torch.Tensor) -> Tuple[np.ndarray, np.ndarray]:
+        # pushes data through full autoencoder
+        # TODO: maybe should use num tips prediction to set implied predicted padding area to zero
         self.model.eval() 
         phy = phy.to(self.device)
         aux = aux.to(self.device)
@@ -311,6 +317,8 @@ class PhyloAutoencoder(object):
         return self.model.num_structured_latent_channels, self.model.reshaped_shared_latent_width
 
     def latent_decode(self, encoded_tree: torch.Tensor):
+        # TODO: maybe should use num tips prediction to set implied predicted padding area to zero
+
         self.model.eval()
         encoded_tree = encoded_tree.to(self.device)
         decoded_latent_layer = self.model.latent_layer_decoder(encoded_tree)

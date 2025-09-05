@@ -90,10 +90,6 @@ class AEData(object):
 
         # standardize train data
         if self.char_data_type == "continuous":
-            # if num_tips is None:
-            #     self.phy_ss = pp.StandardScaler()
-            # else:
-            #     self.phy_ss = utils.PositiveStandardScaler()
             self.phy_ss = utils.PositiveStandardScaler()
         elif self.char_data_type == "categorical":
             self.phy_ss = utils.StandardScalerPhyCategorical(self.num_chars, 
