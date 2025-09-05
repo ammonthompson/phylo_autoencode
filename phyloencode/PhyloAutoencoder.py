@@ -13,13 +13,10 @@ import time
 # import os
 from typing import List, Dict, Tuple, Optional, Union
 
-# TODO: maybe store normalizers in this object to make things tidy
-# TODO: load the data object into the autoencoder constructor rather than only relying on set_data_loaders
-
 class PhyloAutoencoder(object):
-    def __init__(self, model, aux_ntax_cidx, optimizer, lr_scheduler = None,
-                 batch_size=128, phy_loss_weight=0.5, char_weight=0.5,
-                 mmd_lambda=None, vz_lambda=None):
+    def __init__(self, model, optimizer, 
+                 lr_scheduler = None, batch_size=128, 
+                 train_loss = None, val_loss = None):
         """ Performs training and valdiation on an autoencoder object.
 
         Args:
@@ -38,6 +35,7 @@ class PhyloAutoencoder(object):
         # TODO: Update seed functionality
         # TODO: create an aux_weight, change everything to "lambda" or "weight" for consistency
         # TODO: add track_grad to parameters
+        # TODO: add checks that the loss objects are correct (contain certain fields and methods)
 
         self.device       = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.batch_size   = batch_size
@@ -48,22 +46,26 @@ class PhyloAutoencoder(object):
         self.model.to(self.device)
         self.optimizer = optimizer
         self.lr_sched  = lr_scheduler
-        self.aux_ntax_cidx = aux_ntax_cidx
+        # self.aux_ntax_cidx = aux_ntax_cidx
 
         # some data shape parameters
         self.nchars             = self.model.num_chars
-        self.char_weight        = char_weight if self.nchars > 0 else torch.tensor(0.)
         self.char_type          = self.model.char_type
         self.phy_channels       = self.model.num_structured_input_channel
         self.num_tree_chans     = self.phy_channels - self.nchars
         self.latent_shape       = (self.batch_size, self.model.latent_outwidth)
 
-        self.weights = (phy_loss_weight, self.char_weight, 1-phy_loss_weight, mmd_lambda, vz_lambda)
+        # TODO: move weights and loss objects out of the class. self.weights is only used by PhyLoss
+        # and Phyloss can be handled by a single object.
+        # self.char_weight        = char_weight if self.nchars > 0 else torch.tensor(0.)
+        # self.weights = (phy_loss_weight, self.char_weight, 1-phy_loss_weight, mmd_lambda, vz_lambda)
 
-        self.train_loss  = PhyLoss(self.weights, self.aux_ntax_cidx, self.char_type,
-                                   self.model.latent_layer_type, self.device)
-        self.val_loss    = PhyLoss(self.weights, self.aux_ntax_cidx, self.char_type,
-                                   self.model.latent_layer_type, self.device)
+        # self.train_loss  = PhyLoss(self.weights, self.aux_ntax_cidx, self.char_type,
+        #                            self.model.latent_layer_type, self.device)
+        # self.val_loss    = PhyLoss(self.weights, self.aux_ntax_cidx, self.char_type,
+        #                            self.model.latent_layer_type, self.device)
+        self.train_loss = train_loss
+        self.val_loss   = val_loss
 
         self.track_grad = False
         if self.track_grad:
@@ -78,7 +80,7 @@ class PhyloAutoencoder(object):
 
     def train(self, num_epochs, seed = None):
 
-        # TODO: Would returning the trained model object make sense here for downstream readability?
+        # TODO: Train should raise an error if data loaders and loss function haven't been set up.
 
         if seed is not None:
             self.set_seed(seed)
@@ -99,7 +101,6 @@ class PhyloAutoencoder(object):
                 self.val_loss.append_mean_batch_loss()
                 # print epoch mean component losses to screen       
                 self.val_loss.print_epoch_losses(elapsed_time = time.time() - epoch_time)
-                print("")
 
 
         
@@ -242,6 +243,10 @@ class PhyloAutoencoder(object):
         self.train_loader = train_loader
         self.val_loader   = val_loader
         self.mask_loader  = mask_loader
+
+    def set_losses(self, train_loss, val_loss):
+        self.train_loss = train_loss,
+        self.val_loader = val_loss
 
     def _record_grad_norm(self):
         with torch.no_grad():

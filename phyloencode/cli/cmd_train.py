@@ -14,9 +14,11 @@ from sklearn.model_selection import train_test_split
 
 import phyloencode as ph
 # from phyloencode import utils
-from phyloencode.PhyloAutoencoder import PhyloAutoencoder
-from phyloencode.PhyloAEModel     import AECNN
-from phyloencode.DataProcessors   import AEData
+from phyloencode.PhyloAutoencoder   import PhyloAutoencoder
+from phyloencode.PhyloAEModel       import AECNN
+from phyloencode.DataProcessors     import AEData
+from phyloencode.PhyLoss            import PhyLoss
+
 # from phyloencode.utils            import get_num_tips
 
 def main():
@@ -108,19 +110,29 @@ def main():
                         anneal_strategy='cos',
                         cycle_momentum=False
                         )
+    # Loss objects
+    loss_weights = (settings["phy_loss_weight"], 
+                    settings["char_weight"], 
+                    1 - settings["phy_loss_weight"], 
+                    settings["mmd_lambda"], 
+                    settings["vz_lambda"])
+    
+    # TODO: remove device from RBF class and PhyLoss, I dont think  I need it.
+    train_loss  = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
+                               ae_model.latent_layer_type, "cuda")
+    val_loss    = PhyLoss(loss_weights, ae_data.ntax_cidx,  ae_model.char_type,
+                               ae_model.latent_layer_type, "cuda", validation = True)
 
 
     # create Trainer
+    # TODO: should be ae_trainer, once some of its methods are moved to the model class where they belong
     tree_ae     = PhyloAutoencoder(
                         model           = ae_model, 
-                        aux_ntax_cidx   = ae_data.ntax_cidx,
                         optimizer       = opt, 
                         lr_scheduler    = lr_schedlr,
                         batch_size      = settings["batch_size"],
-                        phy_loss_weight = settings["phy_loss_weight"],
-                        char_weight     = settings["char_weight"],
-                        mmd_lambda      = settings["mmd_lambda"],
-                        vz_lambda       = settings["vz_lambda"],
+                        train_loss      = train_loss,
+                        val_loss        = val_loss
                         )
     
 

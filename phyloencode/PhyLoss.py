@@ -10,7 +10,8 @@ import itertools
 
 
 class PhyLoss(object):
-    """_summary_
+    """Statefull. performs loss calculation and holds batch and 
+        epoch mean losses for all components.
 
     Args:
         object (_type_): _description_
@@ -32,6 +33,7 @@ class PhyLoss(object):
                  char_type : torch.Tensor = None, 
                  latent_layer_Type = "GAUSS",
                  device = "cpu",
+                 validation  = False,
                  rand_matrix : torch.Tensor = None,):
         """_summary_
 
@@ -43,7 +45,7 @@ class PhyLoss(object):
             rand_matrix (torch.Tensor, optional): _description_. Defaults to None.
         """
         # TODO: fix: chartype is an instance variable, yet is passed into PhyLoss methods as a parameter
-            
+        self.validation = validation
         self.ntax_cidx = ntax_cidx
         # weights for all components
         # initialize component loss vectors for train and validation losses
@@ -154,8 +156,13 @@ class PhyLoss(object):
         self.batch_vz_loss      = []
 
     def print_epoch_losses(self, elapsed_time):
-        print(  f"Epoch {len(self.epoch_total_loss)},  " +
-                f"Loss: {self.epoch_total_loss[-1]:.4f},  " +
+        if self.validation:
+            loss_type = "Train loss: "
+        else:
+            print(f"Epoch {len(self.epoch_total_loss)}")
+            loss_type = "Val loss:   "
+            
+        print(  f"\t {loss_type}{self.epoch_total_loss[-1]:.4f},  " +
                 f"phy L: {self.epoch_phy_loss[-1]:.4f},  " +
                 f"char L: {self.epoch_char_loss[-1]:.4f},  " +
                 f"aux L: {self.epoch_aux_loss[-1]:.4f},  " +

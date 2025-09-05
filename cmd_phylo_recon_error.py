@@ -117,8 +117,7 @@ def main():
 
     # normalize test data and make predictions
     # normalize -> predict -> denormalize
-    tree_autoencoder = PhyloAutoencoder(model = model, aux_ntax_cidx = ntips_idx,
-                                        optimizer = torch.optim.Adam(model.parameters()))
+    tree_autoencoder = PhyloAutoencoder(model = model, optimizer = torch.optim.Adam(model.parameters()))
 
     # this outputs a tensor of shape (num_smaple, num_channels, num_tips)
     # TODO: Need a test that checks the test data colidx for num_taxa matches that in tree_autoencoder
