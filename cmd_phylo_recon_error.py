@@ -88,14 +88,14 @@ def main():
             phy_data    = f['phy_data'][:]
             aux_data    = f['aux_data'][:]
             
-            # TODO: this is a bad way of doing things (prob should handled in backend)
             # get the num tips
             try:
                 ntips_idx = np.where(f['aux_data_names'][...][0] == b'num_taxa')[0][0]
                 ntips = aux_data[:, ntips_idx].reshape((-1,1))
             except(KeyError, IndexError) as e:
-                ntips = get_num_tips(phy_data, max_tips)
-            aux_data = np.hstack((ntips, aux_data))
+                print(f"Error while getting num_taxa info: {e}\n" +
+                      "Make sure \"num_taxa\" is present in aux_data.\n" )
+                raise
 
 
     # subset phy_data to include only channels specified in the model
@@ -117,10 +117,11 @@ def main():
 
     # normalize test data and make predictions
     # normalize -> predict -> denormalize
-    tree_autoencoder = PhyloAutoencoder(model     = model, 
+    tree_autoencoder = PhyloAutoencoder(model = model, aux_ntax_cidx = ntips_idx,
                                         optimizer = torch.optim.Adam(model.parameters()))
 
     # this outputs a tensor of shape (num_smaple, num_channels, num_tips)
+    # TODO: Need a test that checks the test data colidx for num_taxa matches that in tree_autoencoder
     pred_phy_data, pred_aux_data = tree_autoencoder.predict(norm_phy_data, norm_aux_data)
     
     # flatten    

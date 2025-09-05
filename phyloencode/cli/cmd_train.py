@@ -17,7 +17,7 @@ import phyloencode as ph
 from phyloencode.PhyloAutoencoder import PhyloAutoencoder
 from phyloencode.PhyloAEModel     import AECNN
 from phyloencode.DataProcessors   import AEData
-from phyloencode.utils            import get_num_tips
+# from phyloencode.utils            import get_num_tips
 
 def main():
 
@@ -57,27 +57,11 @@ def main():
         if len(aux_data.shape) != 2: # i.e. is an array but should be a matrix with 1 column
             aux_data = aux_data.reshape((aux_data.shape[0], 1))
 
-        # get num tips (tree width/num_taxa)
-        try:
-            aux_data_names = f['aux_data_names'][...][0] 
-            cidx = np.where(aux_data_names == b'num_taxa')[0][0]
-            num_tips = torch.tensor(f['aux_data'][0:ns, cidx], dtype = torch.float32).view(-1,1)
-            # (maybe not necessary) remove the num taxa column (will be replaced with a num tips column at column 0)
-            # aux_data = np.delete(aux_data, cidx, axis = 1)
-        except(KeyError, IndexError) as e:
-            # get num tips from the tree itself
-            print(f"""No \"num_taxa\" in aux data. Computing num tips from phy_data instead. Exception: {e}""")
-            num_tips = get_num_tips(phy_data_np, mt) 
-
-        # place num_tips in first column of aux_data
-        # TODO: aux_data should not be altered in any way
-        aux_data = torch.hstack((num_tips, aux_data))
-
+        aux_data_names = f['aux_data_names'][...][0]
 
         # split off test data
         (phy_data, test_phy_data, 
-         aux_data, test_aux_data, 
-         num_tips, test_num_tips) = train_test_split(phy_data, aux_data, num_tips, 
+         aux_data, test_aux_data) = train_test_split(phy_data, aux_data, 
                                                      test_size=num_test, shuffle=True)
 
 
@@ -88,10 +72,10 @@ def main():
     ae_data     = AEData( 
                         phy_data         = phy_data,
                         aux_data         = aux_data,
+                        aux_colnames     = aux_data_names,
                         prop_train       = settings['proportion_train'],  
                         num_channels     = settings["num_channels"], 
                         num_chars        = settings["num_chars"],
-                        num_tips         = num_tips
                         )
     
     trn_loader, val_loader = ae_data.get_dataloaders(settings["batch_size"], shuffle = True, 
@@ -129,6 +113,7 @@ def main():
     # create Trainer
     tree_ae     = PhyloAutoencoder(
                         model           = ae_model, 
+                        aux_ntax_cidx   = ae_data.ntax_cidx,
                         optimizer       = opt, 
                         lr_scheduler    = lr_schedlr,
                         batch_size      = settings["batch_size"],

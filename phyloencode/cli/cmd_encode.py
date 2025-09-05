@@ -58,8 +58,6 @@ def main ():
     phy_normalizer = joblib.load(phy_normalizer_fn)
     aux_normalizer = joblib.load(aux_normalizer_fn)
 
-    tree_autoencoder = PhyloAutoencoder(model = ae_model, optimizer = torch.optim.Adam)
-
     # import test data
     # test if file type is hdf5
     # if not, raise error
@@ -67,15 +65,15 @@ def main ():
         with h5py.File(tree_data_fn, "r") as f:
             test_phy_data = torch.tensor(f['phy_data'][...], dtype = torch.float32)
             test_aux_data = torch.tensor(f['aux_data'][...], dtype = torch.float32)
+            ntips_idx = np.where(f['aux_data_names'][...][0] == b'num_taxa')[0][0]
 
             # TODO: this is a bad way of doing things (prob should handled in backend)
             # get the num tips
-            try:
-                ntips_idx = np.where(f['aux_data_names'][...][0] == b'num_taxa')[0][0]
-                ntips = test_aux_data[:, ntips_idx].reshape((-1,1))
-            except(KeyError, IndexError) as e:
-                ntips = get_num_tips(test_phy_data, max_tips)
-            test_aux_data = np.hstack((ntips, test_aux_data))
+            # try:
+            #     ntips = test_aux_data[:, ntips_idx].reshape((-1,1))
+            # except(KeyError, IndexError) as e:
+            #     ntips = get_num_tips(test_phy_data, max_tips)
+            # test_aux_data = np.hstack((ntips, test_aux_data))
 
             # TODO: Probably not necessary
             if len(test_aux_data.shape) == 1:
@@ -110,6 +108,9 @@ def main ():
         # print(test_phy_data[0,0:8])
 
     # make predictions with trained model
+    tree_autoencoder = PhyloAutoencoder(model = ae_model, aux_ntax_cidx = ntips_idx, 
+                                        optimizer = torch.optim.Adam)
+
     phydat = phy_normalizer.transform(test_phy_data)
     auxdat = aux_normalizer.transform(test_aux_data)
     phydat = phydat.reshape((phydat.shape[0], ae_model.num_structured_input_channel, 

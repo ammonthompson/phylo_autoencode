@@ -15,7 +15,7 @@ from typing import List, Dict, Tuple, Optional, Union
 
 
 class PhyloAutoencoder(object):
-    def __init__(self, model, optimizer, lr_scheduler = None,
+    def __init__(self, model, aux_ntax_cidx, optimizer, lr_scheduler = None,
                  batch_size=128, phy_loss_weight=0.5, char_weight=0.5,
                  mmd_lambda=None, vz_lambda=None):
         """ Performs training and valdiation on an autoencoder object.
@@ -46,7 +46,7 @@ class PhyloAutoencoder(object):
         self.model.to(self.device)
         self.optimizer = optimizer
         self.lr_sched  = lr_scheduler
-
+        self.aux_ntax_cidx = aux_ntax_cidx
 
         # some data shape parameters
         self.nchars             = self.model.num_chars
@@ -58,8 +58,10 @@ class PhyloAutoencoder(object):
 
         self.weights = (phy_loss_weight, self.char_weight, 1-phy_loss_weight, mmd_lambda, vz_lambda)
 
-        self.train_loss  = PhyLoss(self.weights, self.char_type, self.model.latent_layer_type, self.device)
-        self.val_loss    = PhyLoss(self.weights, self.char_type, self.model.latent_layer_type, self.device)
+        self.train_loss  = PhyLoss(self.weights, self.aux_ntax_cidx, self.char_type,
+                                   self.model.latent_layer_type, self.device)
+        self.val_loss    = PhyLoss(self.weights, self.aux_ntax_cidx, self.char_type,
+                                   self.model.latent_layer_type, self.device)
 
         self.track_grad = False
         if self.track_grad:

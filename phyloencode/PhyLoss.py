@@ -28,6 +28,7 @@ class PhyLoss(object):
         # plots loss curves
     def __init__(self, 
                  weights : torch.Tensor, 
+                 ntax_cidx : int,
                  char_type : torch.Tensor = None, 
                  latent_layer_Type = "GAUSS",
                  device = "cpu",
@@ -43,6 +44,7 @@ class PhyLoss(object):
         """
         # TODO: fix: chartype is an instance variable, yet is passed into PhyLoss methods as a parameter
             
+        self.ntax_cidx = ntax_cidx
         # weights for all components
         # initialize component loss vectors for train and validation losses
 
@@ -98,16 +100,6 @@ class PhyLoss(object):
         # both contain: 
             # phy, char, mask, aux, ntips
 
-        # TODO:  Weight numtips loss like phy recon loss (index 0 in tuple aux???). aux loss a tuple?
-
-
-        # (phy_loss, 
-        #  char_loss, 
-        #  aux_loss, 
-        #  mmd_loss, 
-        #  vz_loss) = self.losses(pred, true, mask)
-
-
         # separate components
         phy_hat, char_hat, aux_hat, latent_hat = pred
         phy, char, aux, std_norm = true
@@ -115,11 +107,13 @@ class PhyLoss(object):
 
         device = phy_hat.device
 
+        # TODO: Note: the aux_loss also contains a num_taxa loss, so loss appears twice. No big deal in my opinon.
+
         # recon loss
         phy_loss    = self._phy_recon_loss(phy_hat, phy, mask = tree_mask)
         char_loss   = self._char_recon_loss(char_hat, char, self.char_type, char_mask) if char is not None else torch.tensor(0.).to(device)
         aux_loss    = self._aux_recon_loss(aux_hat, aux)
-        ntips_loss  = self._num_tips_recon_loss(aux_hat, aux)
+        ntips_loss  = self._num_tips_recon_loss(aux_hat[:, self.ntax_cidx], aux[:, self.ntax_cidx])
 
         # latent loss
         mmd_loss = self._mmd_loss(latent_hat, std_norm) if latent_hat is not None else torch.tensor(0.).to(device)
@@ -187,28 +181,6 @@ class PhyLoss(object):
         self.epoch_aux_loss.append(aux_loss)
         self.epoch_mmd_loss.append(mmd_loss)
         self.epoch_vz_loss.append(vz_loss)
-
-    # Loss functions (not sure if these should be used externally)
-
-    # def losses(self, pred : torch.tensor, true : torch.tensor, mask : torch.tensor):
-    #     # separate components
-    #     phy_hat, char_hat, aux_hat, latent_hat = pred
-    #     phy, char, aux, std_norm = true
-    #     tree_mask, char_mask = mask
-
-    #     device = phy_hat.device
-
-    #     # recon loss
-    #     phy_loss  = self.phy_recon_loss(phy_hat, phy, mask = tree_mask)
-    #     char_loss = self.char_recon_loss(char_hat, char, self.char_type, char_mask) if char is not None else torch.tensor(0.).to(device)
-    #     aux_loss  = self.aux_recon_loss(aux_hat, aux)
-
-    #     # latent loss
-    #     latent_mmd_loss = self.mmd_loss(latent_hat, std_norm) if latent_hat is not None else torch.tensor(0.).to(device)
-    #     latent_vz_loss  = self.vz_loss(latent_hat, std_norm)  if latent_hat is not None else torch.tensor(0.).to(device)
-
-    #     return phy_loss, char_loss, aux_loss, latent_mmd_loss, latent_vz_loss
-
 
     def _phy_recon_loss(self, x, y, mask = None):
         """
@@ -280,12 +252,12 @@ class PhyLoss(object):
         """
         # Use mean squared error for auxiliary data
         # first column is num tips and will loss will be handled separately
-        aux_loss = fun.mse_loss(x[:,1:], y[:,1:]) if x.shape[1] > 1 else torch.tensor(0.).to(x.device)
+        aux_loss = fun.mse_loss(x, y) if x.shape[1] > 1 else torch.tensor(0.).to(x.device)
         # return fun.mse_loss(x, y)
         return aux_loss
     
     def _num_tips_recon_loss(self, x, y):
-        return fun.mse_loss(x[:,0], y[:,0])
+        return fun.mse_loss(x, y)
 
     def _mmd_loss(self, latent_pred, target = None):
 

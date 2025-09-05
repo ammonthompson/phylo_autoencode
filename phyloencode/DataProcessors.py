@@ -29,11 +29,11 @@ class AEData(object):
     def __init__(self, 
                  phy_data   : torch.Tensor,
                  aux_data   : torch.Tensor,
+                 aux_colnames : list[str],
                  prop_train : float, 
                  num_channels  : int,
                  char_data_type : str = "categorical", # "continuous" or "categorical"
-                 num_chars  : int = 0,
-                 num_tips   : Optional[int] = None):
+                 num_chars  : int = 0):
         """
         Each tree in data is assumed to be flattend in column-major order
         of a matrix of dimensions (num_channels, max_tips).
@@ -62,18 +62,24 @@ class AEData(object):
             "Setting char_data_type to continuous.")
             self.char_data_type = "continuous"
 
+        # check that num_taxa is present in aux_colnames: if not return error
+        if b"num_taxa" not in aux_colnames:
+            raise ValueError("\"num_taxa\" must be in the aux_data. It is used for masking and " + 
+                             "training to predict correct tree size.\n" +
+                             "Use utils.get_num_tips to get the number of taxa per tree from the tree data. "+
+                             "Add \"num_taxa\" to the aux_colnames list and the num_taxa data to the corresponding " +
+                             "column in aux_data.")
+        
+
         # prepare phy_data and aux_data for splitting into train and val sets  
         self.max_tips = phy_data.shape[1] / num_channels
         self.phy_data = phy_data.numpy() # TODO: This is dumb, see above TODO
         self.aux_data = aux_data.numpy()
         flat_phy_width = self.phy_data.shape[1]
 
-        # if not provided, get num_tips and concatenate to aux_data
-        if num_tips is None:
-            self.num_tips = get_num_tips(self.phy_data, self.phy_data / num_channels)
-            self.aux_data = torch.hstack((num_tips, self.aux_data))
-        else:
-            self.num_tips = num_tips
+        # num_tips is needed for masking
+        self.ntax_cidx = np.where(aux_colnames == b'num_taxa')[0][0]
+        self.num_tips = aux_data[:, self.ntax_cidx]
 
         # split data 
         num_train = int(self.prop_train * self.phy_data.shape[0])
@@ -84,10 +90,11 @@ class AEData(object):
 
         # standardize train data
         if self.char_data_type == "continuous":
-            if num_tips is None:
-                self.phy_ss = pp.StandardScaler()
-            else:
-                self.phy_ss = utils.PositiveStandardScaler()
+            # if num_tips is None:
+            #     self.phy_ss = pp.StandardScaler()
+            # else:
+            #     self.phy_ss = utils.PositiveStandardScaler()
+            self.phy_ss = utils.PositiveStandardScaler()
         elif self.char_data_type == "categorical":
             self.phy_ss = utils.StandardScalerPhyCategorical(self.num_chars, 
                                                              self.num_channels, self.max_tips)
