@@ -75,7 +75,8 @@ def main ():
                 # if labels are present, save them to a csv file
                 # check if labels are in the correct format
                 labels = f['labels'][...]
-                label_names = [lbl.decode('utf-8') if isinstance(lbl, bytes) else lbl for lbl in f['label_names'][...][0]]
+                label_names = [lbl.decode('utf-8') if isinstance(lbl, bytes) 
+                               else lbl for lbl in f['label_names'][...][0]]
                 df = pd.DataFrame(labels, columns=label_names)
                 df.to_csv(out_file_prefix + ".labels.csv", index = False)
             else:
@@ -83,8 +84,10 @@ def main ():
                 # raise ValueError("No labels found in the hdf5 file.")
 
     elif tree_data_fn.endswith('.csv') or tree_data_fn.endswith(".cblv"):
-        test_phy_data = pd.read_csv(tree_data_fn, header = None, index_col = None).to_numpy(dtype=np.float32)
-        test_aux_data = pd.read_csv(aux_data_fn, header = None, index_col = None).to_numpy(dtype=np.float32)
+        test_phy_data = pd.read_csv(tree_data_fn, header = None, 
+                                    index_col = None).to_numpy(dtype=np.float32)
+        test_aux_data = pd.read_csv(aux_data_fn, header = None, 
+                                    index_col = None).to_numpy(dtype=np.float32)
         test_phy_data = torch.tensor(test_phy_data, dtype = torch.float32)
         test_aux_data = torch.tensor(test_aux_data, dtype = torch.float32)
     else:
@@ -99,6 +102,8 @@ def main ():
         test_phy_data = test_phy_data.reshape(-1, max_tips, nc)[:, :, :num_channels].flatten(start_dim=1)
         # print(test_phy_data[0,0:8])
 
+    print(test_phy_data.shape)
+    
     # make predictions with trained model
     tree_autoencoder = PhyloAutoencoder(model = ae_model, optimizer = torch.optim.Adam)
 

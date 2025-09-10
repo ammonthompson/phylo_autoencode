@@ -1,5 +1,6 @@
 # Ignore everything under testing/
 testing/**
+dtop_testing/**
 
 # But keep Python and R scripts in all subdirectories
 !testing/**/*.py

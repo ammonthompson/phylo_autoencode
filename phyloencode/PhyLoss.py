@@ -6,6 +6,7 @@ import torch.nn.functional as fun
 from typing import List, Dict, Tuple, Optional, Union
 import numpy as np
 import itertools
+import matplotlib.pyplot as plt
 
 
 
@@ -157,11 +158,11 @@ class PhyLoss(object):
 
     def print_epoch_losses(self, elapsed_time):
         if self.validation:
-            loss_type = "Train loss: "
+            loss_type = "Val loss:   "
         else:
             print(f"Epoch {len(self.epoch_total_loss)}")
-            loss_type = "Val loss:   "
-            
+            loss_type = "Train loss: "
+
         print(  f"\t {loss_type}{self.epoch_total_loss[-1]:.4f},  " +
                 f"phy L: {self.epoch_phy_loss[-1]:.4f},  " +
                 f"char L: {self.epoch_char_loss[-1]:.4f},  " +
@@ -202,49 +203,57 @@ class PhyLoss(object):
         """
         # if cblv-like data, use the first two channels in the loss
         # else if augmented cblv-like data, use the first four channels in the data
+        # TODO: instead of computing mask.sum() you can pass in num_tips 
         if mask is None:
-            tree_loss = fun.mse_loss(x, y) 
+            batch_mean_tree_loss = fun.mse_loss(x, y, reduction = "mean") 
         else:
-            tree_loss = (fun.mse_loss(x, y, reduction='none') * mask).mean()  
+            tree_mse = ((fun.mse_loss(x, y, reduction='none') * mask).sum(dim=(1,2)) / 
+                         mask.sum(dim = (1,2))) 
+            batch_mean_tree_loss = tree_mse.mean()
 
         tip1_loss = 0.1 * fun.mse_loss(x[:,0:2,0], y[:,0:2,0]) 
 
-        return tree_loss + tip1_loss
+        return batch_mean_tree_loss + tip1_loss
 
     def _char_recon_loss(self, x, y, char_type = "categorical", mask = None):
         """
         Compute the reconstruction loss for categorical character data.
 
         Args:
-            x (torch.Tensor): Reconstructed character data ((nchannels - 2) x ntips or 
-                                (nchannels - 4) x ntips).
-            y (torch.Tensor): Original character data ((nchannels - 2) x ntips or 
-                                (nchannels - 4) x ntips).
+        # TODO: fix this doc string (num_chars)
+            x (torch.Tensor): Reconstructed character data.
+            y (torch.Tensor): Original character data.
             is_categorical (bool): Whether the character data is categorical.
+            mask : tips that are just padding
 
         Returns:
             torch.Tensor: Reconstruction loss for character data.
         """
+        # TODO: instead of computing mask.sum() you can pass in num_tips 
 
         if char_type == "categorical": 
-            # Use cross-entropy loss for categorical data
-            # Reshape to (batch_size * ntips, n_classes) for cross-entropy
-            x = x.permute(0, 2, 1).reshape(-1, x.shape[1])  # (batch_size * ntips, n_classes)
-            y = y.permute(0, 2, 1).reshape(-1, y.shape[1])  # (batch_size * ntips, n_classes)
-
             # Convert one-hot to class indices
-            y = y.argmax(dim=1)  # shape (N,)
+            # y = y.argmax(dim=1)  # shape (N, maxtips)
             
-            char_loss = fun.cross_entropy(x, y, reduction = 'none')
+            char_loss = fun.cross_entropy(x, y, reduction = 'none') 
         else:
             char_loss = fun.mse_loss(x, y, reduction = 'none')
 
-        if mask is not None:
-            # Apply the mask to the loss
-            mask = mask.permute(0, 2, 1).reshape(-1, mask.shape[1])
-            char_loss = char_loss * mask[:,0] # match dims (all columns are the same in mask)
+        # print(x.shape, y.shape, mask.shape)
+        # print(char_loss.shape)
+        # print("x: ", x[0,:,0:5])
+        # print("y: ", y[0,0:5])
+        # print("char_loss: ", char_loss[0,0:5])
+        # print("------------")
 
-        return char_loss.mean()
+        # quit()
+
+        if mask is not None:
+            pb_char_loss = (char_loss * mask[:,0,:] ).sum(dim=1) / mask[:,0,:].sum(dim=1)# match dims (all columns are the same in mask)
+        else:
+            pb_char_loss = char_loss
+
+        return pb_char_loss.mean()
 
     def _aux_recon_loss(self, x, y):
         """
@@ -268,10 +277,9 @@ class PhyLoss(object):
 
     def _mmd_loss(self, latent_pred, target = None):
 
-        device = latent_pred.device
         x = latent_pred
         if target is None:
-            y = torch.randn(x.shape, requires_grad=False).to(device)
+            y = torch.randn(x.shape, requires_grad=False).to(x.device)
         else:
             y = target[0:x.shape[0],:]
         # MMD = MMDLoss(device)(x, y)
@@ -290,6 +298,9 @@ class PhyLoss(object):
         VZ = self.vz(x,y)
 
         return VZ
+
+
+
 
     # Experimental
     def _rdp_loss(self, Z_batch: torch.Tensor, X_batch: torch.Tensor, rand_matrix: torch.Tensor, n_pairs: int):
@@ -437,6 +448,7 @@ class VZLoss(nn.Module):
     def forward(self, X, Y):
         return self.kernel(X.T, Y.T).var()
     
+
 
 
 # storage

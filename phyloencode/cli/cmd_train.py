@@ -33,9 +33,6 @@ def main():
         config = ph.utils.read_config(args.config)
         update_settings_from_config(settings = settings, config = config)
 
-    # Optimizer settings
-    lr = settings['learning_rate']
-    wd = settings['weight_decay']
 
     # required command line argument
     data_fn     = args.trn_data
@@ -50,6 +47,7 @@ def main():
 
         # num tips is important for masking. 
         # TODO: Check a potential discrepency in num_taxa with phyddle --format output
+        # TODO: maybe move some of this to backend: the Data object from DataProcessors should maybe handle all this
             
         phy_data_np = np.array(f['phy_data'][0:ns,...], dtype = np.float32)
         # extract the specified subset of channels ("num_channels")
@@ -84,6 +82,8 @@ def main():
                                                     num_workers = settings["num_workers"])
         
     # create model
+    # TODO: The trainer is an object that mutates a model, maybe it makes the most sense for the trainer to be an attribute of the model?
+    # TODO: model should know which aux variable is num tips???
     ae_model    = AECNN(
                         num_structured_input_channel  = ae_data.num_channels, 
                         structured_input_width        = ae_data.phy_width,
@@ -99,6 +99,10 @@ def main():
                         )
     
     # optimizer
+    # settings
+    lr = settings['learning_rate']
+    wd = settings['weight_decay']
+
     # opt = AdamW(ae_model.parameters(), lr=lr, weight_decay=wd)
     opt         = AdamW(split_params_by_wd(ae_model, wd), lr=lr)
     lr_schedlr  = torch.optim.lr_scheduler.OneCycleLR(
@@ -110,22 +114,24 @@ def main():
                         anneal_strategy='cos',
                         cycle_momentum=False
                         )
-    # Loss objects
+    
+    # Loss objects (stateful)    
+    # TODO: remove device from RBF class and PhyLoss, I dont think  I need it.
+        # loss weights
     loss_weights = (settings["phy_loss_weight"], 
                     settings["char_weight"], 
                     1 - settings["phy_loss_weight"], 
                     settings["mmd_lambda"], 
                     settings["vz_lambda"])
-    
-    # TODO: remove device from RBF class and PhyLoss, I dont think  I need it.
+
     train_loss  = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
                                ae_model.latent_layer_type, "cuda")
     val_loss    = PhyLoss(loss_weights, ae_data.ntax_cidx,  ae_model.char_type,
                                ae_model.latent_layer_type, "cuda", validation = True)
 
 
-    # create Trainer
-    # TODO: should be ae_trainer, once some of its methods are moved to the model class where they belong
+    # create model trainer and trained model container
+    # the model, the data, and the loss come together here
     tree_ae     = PhyloAutoencoder(
                         model           = ae_model, 
                         optimizer       = opt, 
@@ -141,7 +147,7 @@ def main():
     #######################################
     # create and add data loaders to trainer and train model
 
-    tree_ae.set_data_loaders(train_loader=trn_loader, val_loader=val_loader)
+    tree_ae.set_data_loaders(train_loader=trn_loader, val_loader=val_loader) 
     tree_ae.train(num_epochs = settings["num_epochs"], seed = settings["seed"])
     if tree_ae.track_grad:
         plot_gradient_norms(tree_ae.mean_layer_grad_norm, 
@@ -172,7 +178,7 @@ def main():
     # save true values of test data in cblv format
     phy_true_df = pd.DataFrame(test_phy_data.numpy())
     aux_true_df = pd.DataFrame(test_aux_data.numpy())
-    phy_true_df.to_csv(settings["out_prefix"] + ".phy_true.cblv", 
+    phy_true_df.to_csv(settings["out_prefix"] + ".phy_true.cblv.csv", 
                        header = False, index = False)
     aux_true_df.to_csv(settings["out_prefix"] + ".aux_true.csv", 
                        header = False, index = False)
@@ -193,17 +199,18 @@ def main():
     latent_testdat_df.to_csv(settings["out_prefix"] + ".testdat_latent.csv", 
                              header = False, index = False)
 
-    phy_pred, auxpred = tree_ae.predict(phydat, auxdat)
+    phy_pred, aux_pred = tree_ae.predict(phydat, auxdat)
+    # phy_pred, char_pred, aux_pred, latent_pred = tree_ae.predict(phydat, auxdat)
 
     # transform and flatten predicted data
     phy_pred = phy_normalizer.inverse_transform(phy_pred.reshape((phy_pred.shape[0], -1), 
                                                                  order = "F"))
-    auxpred  = aux_normalizer.inverse_transform(auxpred)
+    aux_pred  = aux_normalizer.inverse_transform(aux_pred)
 
     # save predictions to file
     phy_pred_df = pd.DataFrame(phy_pred)
-    aux_pred_df = pd.DataFrame(auxpred)
-    phy_pred_df.to_csv(settings["out_prefix"] + ".phy_pred.cblv", 
+    aux_pred_df = pd.DataFrame(aux_pred)
+    phy_pred_df.to_csv(settings["out_prefix"] + ".phy_pred.cblv.csv", 
                        header = False, index = False)
     aux_pred_df.to_csv(settings["out_prefix"] + ".aux_pred.csv", 
                        header  = False, index = False)

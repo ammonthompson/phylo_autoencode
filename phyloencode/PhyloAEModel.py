@@ -181,69 +181,6 @@ class AECNN(nn.Module):
         self.write_network_to_file(out_prefix + ".network.txt")
         
  
-    def old_forward(self, data: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
-        """        
-        Push data through the encoder and decoder networks.
-
-        Args:
-            data (Tuple[torch.Tensor, torch.Tensor]): _description_
-
-        Returns:
-            Tuple[torch.Tensor, torch.Tensor]: _description_
-        """
-        
-
-        # data is a tuple (structured, unstructured)
-
-        # Encode
-        structured_encoded_x   = self.structured_encoder(data[0]) # (nbatch, nchannels, out_width)
-        unstructured_encoded_x = self.unstructured_encoder(data[1]) # (nbatch, out_width)
-
-        # TODO: THe latent Classes should be able to handle the reshaping of the data
-        # Combine encodings and reshape depending on the latent layer type
-        flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)
-        combined_latent           = torch.cat((flat_structured_encoded_x, unstructured_encoded_x), dim=1)  # aux latent last
-
-        if self.latent_layer_type == "CNN":
-            reshaped_shared_latent = combined_latent.view(-1, self.num_structured_latent_channels, 
-                                                              self.reshaped_shared_latent_width)
-            shared_latent_out      = self.latent_layer(reshaped_shared_latent)
-            structured_decoded_x   = self.structured_decoder(shared_latent_out)
-            unstructured_decoded_x = self.unstructured_decoder(shared_latent_out.flatten(start_dim=1))
-        
-        elif self.latent_layer_type == "GAUSS":
-            shared_latent_out   = self.latent_layer(combined_latent)
-
-            # testings
-            decoded_shared_latent_out = self.latent_layer_decoder(shared_latent_out)
-
-            reshaped_decoded_shared_latent_out = decoded_shared_latent_out.view(-1, self.num_structured_latent_channels, 
-                                                                                    self.reshaped_shared_latent_width) 
-            structured_decoded_x   = self.structured_decoder(reshaped_decoded_shared_latent_out)
-            unstructured_decoded_x = self.unstructured_decoder(decoded_shared_latent_out)
-        
-        elif self.latent_layer_type == "DENSE":
-            shared_latent_out   = self.latent_layer(combined_latent)            
-            reshaped_latent_out = shared_latent_out.view(-1, self.num_structured_latent_channels, 
-                                                                self.reshaped_shared_latent_width)
-            structured_decoded_x   = self.structured_decoder(reshaped_latent_out)
-            unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
-
-        # separate the two type of structured decoded: tree and character data
-        # maybe this should be done somewhere more downstream
-        if self.num_chars > 0:
-            phy_decoded_x = structured_decoded_x[:,:(structured_decoded_x.shape[1]-self.num_chars),:]
-            char_decoded_x = structured_decoded_x[:,(structured_decoded_x.shape[1]-self.num_chars):,:]
-        else:
-            phy_decoded_x = structured_decoded_x
-            char_decoded_x = None
-        # model should output the latent layer if layer type is "GAUSS"
-        if self.latent_layer_type != "GAUSS":
-            shared_latent_out = None
-
-        return phy_decoded_x, char_decoded_x, unstructured_decoded_x, shared_latent_out
-
-
     def forward(self, data: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         """        
         Push data through the encoder and decoder networks.
@@ -259,6 +196,7 @@ class AECNN(nn.Module):
 
         # Encode/Decode
         shared_latent_out        = self.encode(data[0], data[1])
+
         (structured_decoded_x, 
          unstructured_decoded_x) = self.decode(shared_latent_out)
 
@@ -323,7 +261,7 @@ class AECNN(nn.Module):
             self.train(is_training)
     
     
-    def decode(self, z: torch.Tensor, *, num_tips = None,
+    def decode(self, z: torch.Tensor, *, num_tips_auxidx : int = None,
                inference = False, detach = False) -> Tuple[torch.Tensor, torch.Tensor]:
         
         is_training = self.training
@@ -348,6 +286,11 @@ class AECNN(nn.Module):
                     char_start_idx = decoded_tree.shape[1] - self.num_chars
                     decoded_tree[:,char_start_idx:,:] = torch.softmax(decoded_tree[:,char_start_idx:,:], dim = 1)
 
+                # if num_tips provided, set all indices > column idx implied by num_tips to zero
+                if num_tips_auxidx is not None:
+                    idx = num_tips_auxidx
+                    decoded_tree = utils.set_pred_pad_to_zero(decoded_tree, decoded_aux[:,idx])
+
                 if inference and detach:
                     decoded_tree = decoded_tree.detach()
                     decoded_aux  = decoded_aux.detach()
@@ -355,8 +298,8 @@ class AECNN(nn.Module):
         finally:
             self.train(is_training)
 
-    # TODO: should prob output torch.Tensors
-    def predict(self, phy: torch.Tensor, aux: torch.Tensor,
+    # TODO: should prob output torch.Tensors like everything else?
+    def predict(self, phy: torch.Tensor, aux: torch.Tensor, *, num_tips_auxidx : int  = None,
                 inference = False, detach = False) -> Tuple[np.ndarray, np.ndarray]:
                 # pushes data through full autoencoder
         # TODO: maybe should use num tips prediction to set implied predicted padding area to zero
@@ -371,22 +314,22 @@ class AECNN(nn.Module):
             with grad_context:
                 phy = phy.to(self.device)
                 aux = aux.to(self.device)
-                tree_pred, char_pred, aux_pred, latent = self((phy, aux))
+                tree_pred, char_pred, aux_pred, _ = self((phy, aux))
 
                 if char_pred is not None:
-                    if self.char_type == "categorical":
-                        char_sftmx = torch.softmax(char_pred, dim = 1)
-                        phy_pred = torch.cat((tree_pred, char_sftmx), dim = 1)
-                    else:
-                        phy_pred =  torch.cat((tree_pred, char_pred), dim = 1)
+                    phy_pred =  torch.cat((tree_pred, char_pred), dim = 1)
                 else:
                     phy_pred = tree_pred
+
+                if num_tips_auxidx is not None:
+                    idx = num_tips_auxidx
+                    decoded_tree = utils.set_pred_pad_to_zero(decoded_tree, aux_pred[:,idx])
 
                 if inference and detach:
                     phy_pred = phy_pred.detach()
                     aux_pred = aux_pred.detach()
 
-                return phy_pred.detach().cpu().numpy(), aux_pred.detach().cpu().numpy()
+                return phy_pred.cpu().numpy(), aux_pred.cpu().numpy()
         finally:
             self.train(is_training)
 
@@ -408,6 +351,71 @@ class AECNN(nn.Module):
             f.write(str(self.unstructured_encoder) + "\n")
             f.write("\nSee latent layers above.\n")
             f.write(str(self.unstructured_decoder))
+
+    def old_forward(self, data: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
+        """        
+        Push data through the encoder and decoder networks.
+
+        Args:
+            data (Tuple[torch.Tensor, torch.Tensor]): _description_
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: _description_
+        """
+        
+
+        # data is a tuple (structured, unstructured)
+
+        # Encode
+        structured_encoded_x   = self.structured_encoder(data[0]) # (nbatch, nchannels, out_width)
+        unstructured_encoded_x = self.unstructured_encoder(data[1]) # (nbatch, out_width)
+
+        # TODO: THe latent Classes should be able to handle the reshaping of the data
+        # Combine encodings and reshape depending on the latent layer type
+        flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)
+        combined_latent           = torch.cat((flat_structured_encoded_x, unstructured_encoded_x), dim=1)  # aux latent last
+
+        if self.latent_layer_type == "CNN":
+            reshaped_shared_latent = combined_latent.view(-1, self.num_structured_latent_channels, 
+                                                              self.reshaped_shared_latent_width)
+            shared_latent_out      = self.latent_layer(reshaped_shared_latent)
+            structured_decoded_x   = self.structured_decoder(shared_latent_out)
+            unstructured_decoded_x = self.unstructured_decoder(shared_latent_out.flatten(start_dim=1))
+        
+        elif self.latent_layer_type == "GAUSS":
+            shared_latent_out   = self.latent_layer(combined_latent)
+
+            # testings
+            decoded_shared_latent_out = self.latent_layer_decoder(shared_latent_out)
+
+            reshaped_decoded_shared_latent_out = decoded_shared_latent_out.view(-1, self.num_structured_latent_channels, 
+                                                                                    self.reshaped_shared_latent_width) 
+            structured_decoded_x   = self.structured_decoder(reshaped_decoded_shared_latent_out)
+            unstructured_decoded_x = self.unstructured_decoder(decoded_shared_latent_out)
+        
+        elif self.latent_layer_type == "DENSE":
+            shared_latent_out   = self.latent_layer(combined_latent)            
+            reshaped_latent_out = shared_latent_out.view(-1, self.num_structured_latent_channels, 
+                                                                self.reshaped_shared_latent_width)
+            structured_decoded_x   = self.structured_decoder(reshaped_latent_out)
+            unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
+
+        # separate the two type of structured decoded: tree and character data
+        # maybe this should be done somewhere more downstream
+        if self.num_chars > 0:
+            phy_decoded_x = structured_decoded_x[:,:(structured_decoded_x.shape[1]-self.num_chars),:]
+            char_decoded_x = structured_decoded_x[:,(structured_decoded_x.shape[1]-self.num_chars):,:]
+        else:
+            phy_decoded_x = structured_decoded_x
+            char_decoded_x = None
+        # model should output the latent layer if layer type is "GAUSS"
+        if self.latent_layer_type != "GAUSS":
+            shared_latent_out = None
+
+        return phy_decoded_x, char_decoded_x, unstructured_decoded_x, shared_latent_out
+
+
+
 
 # encoder classes
 class DenseEncoder(nn.Module):

@@ -72,7 +72,7 @@ class AEData(object):
         
 
         # prepare phy_data and aux_data for splitting into train and val sets  
-        self.max_tips = phy_data.shape[1] / num_channels
+        self.max_tips = int(phy_data.shape[1] / num_channels)
         self.phy_data = phy_data.numpy() # TODO: This is dumb, see above TODO
         self.aux_data = aux_data.numpy()
         flat_phy_width = self.phy_data.shape[1]

@@ -8,10 +8,12 @@ import torch
 # from sklearn.preprocessing import StandardScaler
 # from sklearn.model_selection import train_test_split
 # from phyloencode import utils
-from phyloencode.PhyLoss import PhyLoss
+# from phyloencode.PhyLoss import PhyLoss
+from phyloencode.DataProcessors import AEData
 import time
 # import os
 from typing import List, Dict, Tuple, Optional, Union
+
 
 class PhyloAutoencoder(object):
     def __init__(self, model, optimizer, 
@@ -30,7 +32,6 @@ class PhyloAutoencoder(object):
         """
         
         # TODO: define the model object better (autoencoder ...)
-        # TODO: the Loss object should maybe be passed in as a parameter
         # TODO: run checks that the model has the expected attributes
         # TODO: Update seed functionality
         # TODO: create an aux_weight, change everything to "lambda" or "weight" for consistency
@@ -55,15 +56,6 @@ class PhyloAutoencoder(object):
         self.num_tree_chans     = self.phy_channels - self.nchars
         self.latent_shape       = (self.batch_size, self.model.latent_outwidth)
 
-        # TODO: move weights and loss objects out of the class. self.weights is only used by PhyLoss
-        # and Phyloss can be handled by a single object.
-        # self.char_weight        = char_weight if self.nchars > 0 else torch.tensor(0.)
-        # self.weights = (phy_loss_weight, self.char_weight, 1-phy_loss_weight, mmd_lambda, vz_lambda)
-
-        # self.train_loss  = PhyLoss(self.weights, self.aux_ntax_cidx, self.char_type,
-        #                            self.model.latent_layer_type, self.device)
-        # self.val_loss    = PhyLoss(self.weights, self.aux_ntax_cidx, self.char_type,
-        #                            self.model.latent_layer_type, self.device)
         self.train_loss = train_loss
         self.val_loss   = val_loss
 
@@ -102,8 +94,7 @@ class PhyloAutoencoder(object):
                 # print epoch mean component losses to screen       
                 self.val_loss.print_epoch_losses(elapsed_time = time.time() - epoch_time)
 
-
-        
+       
     def _mini_batch(self, validation = False):
         """Performs a mini batch step for the model.
         loops through the data loader and performs a step for each batch
@@ -208,25 +199,10 @@ class PhyloAutoencoder(object):
         self.val_loss.minibatch_loss(pred, true, segmented_mask)
 
         
-    def predict(self, phy: torch.Tensor, aux: torch.Tensor) -> Tuple[np.ndarray, np.ndarray]:
-        # pushes data through full autoencoder
-        # TODO: maybe should use num tips prediction to set implied predicted padding area to zero
-        self.model.eval() 
-        phy = phy.to(self.device)
-        aux = aux.to(self.device)
-        tree_pred, char_pred, aux_pred, latent = self.model((phy, aux))
+    def predict(self, phy: torch.Tensor, aux: torch.Tensor, *,
+                inference = True, detach = True) -> Tuple[np.ndarray, np.ndarray]:
 
-        if char_pred is not None:
-            if self.char_type == "categorical":
-                char_sftmx = torch.softmax(char_pred, dim = 1)
-                phy_pred = torch.cat((tree_pred, char_sftmx), dim = 1)
-            else:
-                phy_pred =  torch.cat((tree_pred, char_pred), dim = 1)
-        else:
-            phy_pred = tree_pred
-
-        self.model.train()
-        return phy_pred.detach().cpu().numpy(), aux_pred.detach().cpu().numpy()
+        return self.model.predict(phy, aux, inference = inference, detach = detach)
 
 
     def to_device(self, device):
@@ -236,17 +212,21 @@ class PhyloAutoencoder(object):
         except RuntimeError:
             print(f"Didn't work, sending to {self.device} instead.")
 
-    # TODO: should mask_loader be split to train and val loaders?
     def set_data_loaders(self, train_loader : torch.utils.data.DataLoader, 
                                val_loader   : torch.utils.data.DataLoader = None,
                                mask_loader  : torch.utils.data.DataLoader = None):
         self.train_loader = train_loader
         self.val_loader   = val_loader
-        self.mask_loader  = mask_loader
+        # self.mask_loader  = mask_loader
 
     def set_losses(self, train_loss, val_loss):
         self.train_loss = train_loss,
         self.val_loader = val_loss
+
+    def set_data(self, data : AEData, num_workers : int):
+        self.train_loader, self.val_loader = data.get_dataloaders(self.batch_size, shuffle = True, 
+                                                                    num_workers = num_workers)
+        # self.mask_loader  = mask_loader ???
 
     def _record_grad_norm(self):
         with torch.no_grad():
@@ -255,7 +235,6 @@ class PhyloAutoencoder(object):
                 gn = g.grad.norm().item()
                 self.batch_layer_grad_norm[layer_name].append(gn)
 
-    # TODO: many of these methods should probably be handled by the model object
     def make_graph(self):
         if self.train_loader and self.writer:
             x_sample, y_sample = next(iter(self.train_loader))
@@ -287,58 +266,21 @@ class PhyloAutoencoder(object):
     def save_model(self, filename):
         torch.save(self.model, filename)
 
-    def tree_encode(self, phy: torch.Tensor, aux: torch.Tensor):
-        self.model.eval() 
-        phy = phy.to(self.device)
-        aux = aux.to(self.device)
+    def tree_encode(self, phy: torch.Tensor, aux: torch.Tensor, *,
+               inference = True, detach = True ):
 
-        # get latent unstrcutured and structured embeddings
-        structured_encoded_x   = self.model.structured_encoder(phy)    # (1, nchannels, out_width)
-        unstructured_encoded_x = self.model.unstructured_encoder(aux)  # (1, out_width)
+        return self.model.encode(phy, aux, inference = inference, detach = detach)
 
-        # reshape structured embeddings
-        flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)
-        combined_latent           = torch.cat((flat_structured_encoded_x, 
-                                               unstructured_encoded_x), dim=1)
-        
-        
-        # get combined latent output
-        if self.model.latent_layer_type   == "CNN":
-            reshaped_shared_latent = combined_latent.view(-1, self.model.num_structured_latent_channels, 
-                                                              self.model.reshaped_shared_latent_width)
-            shared_latent_out = self.model.latent_layer(reshaped_shared_latent)
+    def latent_decode(self, encoded_tree: torch.Tensor, *, num_tips = None,
+               inference = True, detach = True):
 
-        elif self.model.latent_layer_type == "GAUSS":
-            shared_latent_out = self.model.latent_layer(combined_latent)
-
-        elif self.model.latent_layer_type == "DENSE":
-            shared_latent_out = self.model.latent_layer(combined_latent)
-
-        self.model.train()
-
-        return(shared_latent_out.flatten(start_dim=1))
+        return self.model.decode(encoded_tree, num_tips = num_tips,
+                                 inference = inference, detach = detach)
 
     def get_latent_shape(self):
         return self.model.num_structured_latent_channels, self.model.reshaped_shared_latent_width
-
-    def latent_decode(self, encoded_tree: torch.Tensor):
-        # TODO: maybe should use num tips prediction to set implied predicted padding area to zero
-
-        self.model.eval()
-        encoded_tree = encoded_tree.to(self.device)
-        decoded_latent_layer = self.model.latent_layer_decoder(encoded_tree)
-        # reshape
-        reshaped_decoded_latent_layer = decoded_latent_layer.view(-1, self.model.num_structured_latent_channels, 
-                                                                        self.model.reshaped_shared_latent_width) 
-        decoded_tree = self.model.structured_decoder(reshaped_decoded_latent_layer)
-        decoded_aux  = self.model.unstructured_decoder(decoded_latent_layer.flatten(start_dim=1))
-        if self.char_type == "categorical":
-            # softmax the char data
-            char_start_idx = decoded_tree.shape[1] - self.nchars
-            decoded_tree[:,char_start_idx:,:] = torch.softmax(decoded_tree[:,char_start_idx:,:], dim = 1)
-        self.model.train()
-        return decoded_tree, decoded_aux
-        
+       
+    # TODO: abstract this function. PhyLoss should handle the particulars
     def plot_losses(self, out_prefix = "AElossplot", log = True, starting_epoch = 10):
         # plot total losses
         fig = plt.figure(figsize=(11, 8))
@@ -391,9 +333,9 @@ class PhyloAutoencoder(object):
         
     def _split_tree_char(self, phy : torch.Tensor, mask : torch.Tensor) -> Tuple[torch.Tensor, 
                                                                                  torch.Tensor,
-                                                                                 torch.Tensor, 
+                                                                                 torch.Tensor,       
                                                                                  torch.Tensor, ]: 
-        """_summary_
+        """used by train_step and evaluate
 
         Args:
             phy (torch.Tensor): _description_

@@ -31,6 +31,8 @@ class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
     # normalizes the data to have mean 0 and std 1.
     # ignores the categorical data
     # uses PositiveStandardScaler (see below)
+    # TODO: disambiguate between max_tips and num_tips
+
     def __init__(self, num_chars, num_chans, num_tips):
         super().__init__()
 
@@ -405,3 +407,20 @@ def get_num_tips(phydata: np.ndarray, max_tips: int):
     nt = torch.tensor([[np.where(np.max(phydata[x,...], axis = 0) == 0)[0][0]]
                        for x in range(phydata.shape[0])], dtype=torch.float32).view(-1,1)
     return nt + 1
+
+def set_pred_pad_to_zero(phy_pred : torch.Tensor, pred_num_tips : torch.Tensor) -> torch.Tensor:
+    # phy_pred has shape (batch size, num channels, max_tips)
+
+    B, C, T = phy_pred.shape
+
+    # make a shape (B, T) grid of indexes: [[0,1,2,...], [0,1,2,...], ...]
+    idx_grid = torch.arange(T, device=phy_pred.device).expand(B, T)
+
+    if pred_num_tips.dim() == 1:
+        pred_num_tips = pred_num_tips.unsqueeze(dim=1)
+
+    ntip_mask = (idx_grid <= pred_num_tips).unsqueeze(dim=1)
+
+    masked_phy_pred = phy_pred * ntip_mask
+
+    return masked_phy_pred
