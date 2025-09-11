@@ -408,19 +408,25 @@ def get_num_tips(phydata: np.ndarray, max_tips: int):
                        for x in range(phydata.shape[0])], dtype=torch.float32).view(-1,1)
     return nt + 1
 
-def set_pred_pad_to_zero(phy_pred : torch.Tensor, pred_num_tips : torch.Tensor) -> torch.Tensor:
-    # phy_pred has shape (batch size, num channels, max_tips)
+def set_pred_pad_to_zero(phy_pred: np.ndarray, pred_num_tips: np.ndarray) -> np.ndarray:
+    """
+    phy_pred: shape (batch_size, num_channels, max_tips)
+    pred_num_tips: shape (batch_size,) or (batch_size, 1)
+    """
+    bs, nc, mt = phy_pred.shape
 
-    B, C, T = phy_pred.shape
+    # Ensure pred_num_tips is (bs, 1)
+    pred_num_tips = pred_num_tips.reshape(-1, 1)
 
-    # make a shape (B, T) grid of indexes: [[0,1,2,...], [0,1,2,...], ...]
-    idx_grid = torch.arange(T, device=phy_pred.device).expand(B, T)
+    # idx_grid: shape (bs, mt)
+    idx_grid = np.arange(mt).reshape(1, -1)  # (1, mt)
+    idx_grid = np.tile(idx_grid, (bs, 1))    # (bs, mt)
 
-    if pred_num_tips.dim() == 1:
-        pred_num_tips = pred_num_tips.unsqueeze(dim=1)
+    # Mask: True for valid tips, False for padding
+    ntip_mask = (idx_grid < pred_num_tips)   # (bs, mt)
 
-    ntip_mask = (idx_grid <= pred_num_tips).unsqueeze(dim=1)
+    # Expand mask to (bs, nc, mt)
+    ntip_mask = np.expand_dims(ntip_mask, axis=1)
 
     masked_phy_pred = phy_pred * ntip_mask
-
     return masked_phy_pred

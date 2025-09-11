@@ -96,6 +96,7 @@ class PhyLoss(object):
         self.mmd_w  = weights['mmd_weight']  if 'mmd_weight'  in weights else self.mmd_w
         self.vz_w   = weights['vz_weight']   if 'vz_weight'   in weights else self.vz_w
 
+    # TODO: maybe make PhyLoss an nn.Module and turn this into a forward method
     def minibatch_loss(self, pred : Tuple, true : Tuple, mask : Tuple):
         # appends to the self.losses and returns the current batch loss
         # pred is a tuple (dictionary maybe?) of predictions for a batch
@@ -232,21 +233,9 @@ class PhyLoss(object):
         # TODO: instead of computing mask.sum() you can pass in num_tips 
 
         if char_type == "categorical": 
-            # Convert one-hot to class indices
-            # y = y.argmax(dim=1)  # shape (N, maxtips)
-            
             char_loss = fun.cross_entropy(x, y, reduction = 'none') 
         else:
             char_loss = fun.mse_loss(x, y, reduction = 'none')
-
-        # print(x.shape, y.shape, mask.shape)
-        # print(char_loss.shape)
-        # print("x: ", x[0,:,0:5])
-        # print("y: ", y[0,0:5])
-        # print("char_loss: ", char_loss[0,0:5])
-        # print("------------")
-
-        # quit()
 
         if mask is not None:
             pb_char_loss = (char_loss * mask[:,0,:] ).sum(dim=1) / mask[:,0,:].sum(dim=1)# match dims (all columns are the same in mask)
@@ -273,6 +262,7 @@ class PhyLoss(object):
         return aux_loss
     
     def _num_tips_recon_loss(self, x, y):
+        # TODO: ordinal loss
         return fun.mse_loss(x, y)
 
     def _mmd_loss(self, latent_pred, target = None):

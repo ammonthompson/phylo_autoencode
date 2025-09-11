@@ -25,6 +25,8 @@ from phyloencode.utils            import get_num_tips
 # nc: number of channels in the data for reshapeing phy data -> int
 # 
 
+# TODO: implement a single public normalize data function
+
 class AEData(object):
     def __init__(self, 
                  phy_data   : torch.Tensor,
@@ -98,6 +100,7 @@ class AEData(object):
             raise ValueError("char_data_type must be 'continuous' or 'categorical'")
         self.aux_ss = pp.StandardScaler()
 
+        # TODO: need to normalize num_tips
         self.phy_normalizer = self.phy_ss.fit(train_phy_data)
         self.aux_normalizer = self.aux_ss.fit(train_aux_data)
         self.norm_train_phy_data = self.phy_normalizer.transform(train_phy_data)

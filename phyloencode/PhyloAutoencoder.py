@@ -16,8 +16,10 @@ from typing import List, Dict, Tuple, Optional, Union
 
 
 class PhyloAutoencoder(object):
-    def __init__(self, model, optimizer, 
-                 lr_scheduler = None, batch_size=128, 
+    def __init__(self, 
+                 model, 
+                 optimizer, 
+                 *, lr_scheduler = None, batch_size=128, 
                  train_loss = None, val_loss = None):
         """ Performs training and valdiation on an autoencoder object.
 
@@ -200,7 +202,7 @@ class PhyloAutoencoder(object):
 
         
     def predict(self, phy: torch.Tensor, aux: torch.Tensor, *,
-                inference = True, detach = True) -> Tuple[np.ndarray, np.ndarray]:
+                inference = False, detach = False) -> Tuple[np.ndarray, np.ndarray]:
 
         return self.model.predict(phy, aux, inference = inference, detach = detach)
 
@@ -213,20 +215,18 @@ class PhyloAutoencoder(object):
             print(f"Didn't work, sending to {self.device} instead.")
 
     def set_data_loaders(self, train_loader : torch.utils.data.DataLoader, 
-                               val_loader   : torch.utils.data.DataLoader = None,
-                               mask_loader  : torch.utils.data.DataLoader = None):
+                               val_loader   : torch.utils.data.DataLoader = None):
         self.train_loader = train_loader
         self.val_loader   = val_loader
-        # self.mask_loader  = mask_loader
 
     def set_losses(self, train_loss, val_loss):
         self.train_loss = train_loss,
         self.val_loader = val_loss
 
-    def set_data(self, data : AEData, num_workers : int):
-        self.train_loader, self.val_loader = data.get_dataloaders(self.batch_size, shuffle = True, 
-                                                                    num_workers = num_workers)
-        # self.mask_loader  = mask_loader ???
+    # def set_data(self, data : AEData, num_workers : int):
+    #     self.data = data
+    #     self.train_loader, self.val_loader = self.data.get_dataloaders(self.batch_size, shuffle = True, 
+    #                                                                     num_workers = num_workers)
 
     def _record_grad_norm(self):
         with torch.no_grad():
@@ -267,15 +267,14 @@ class PhyloAutoencoder(object):
         torch.save(self.model, filename)
 
     def tree_encode(self, phy: torch.Tensor, aux: torch.Tensor, *,
-               inference = True, detach = True ):
-
+               inference = False, detach = False ):
+        # same defaults as model.encode
         return self.model.encode(phy, aux, inference = inference, detach = detach)
 
-    def latent_decode(self, encoded_tree: torch.Tensor, *, num_tips = None,
-               inference = True, detach = True):
-
-        return self.model.decode(encoded_tree, num_tips = num_tips,
-                                 inference = inference, detach = detach)
+    def latent_decode(self, encoded_tree: torch.Tensor, *,
+               inference = False, detach = False):
+        # same defaults as model.decode
+        return self.model.decode(encoded_tree, inference = inference, detach = detach)
 
     def get_latent_shape(self):
         return self.model.num_structured_latent_channels, self.model.reshaped_shared_latent_width
@@ -357,3 +356,4 @@ class PhyloAutoencoder(object):
             char_mask = None
 
         return tree, char, tree_mask, char_mask
+

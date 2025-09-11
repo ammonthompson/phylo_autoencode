@@ -261,9 +261,8 @@ class AECNN(nn.Module):
             self.train(is_training)
     
     
-    def decode(self, z: torch.Tensor, *, num_tips_auxidx : int = None,
+    def decode(self, z: torch.Tensor, *,
                inference = False, detach = False) -> Tuple[torch.Tensor, torch.Tensor]:
-        
         is_training = self.training
         z = z.to(self.device)
 
@@ -286,23 +285,20 @@ class AECNN(nn.Module):
                     char_start_idx = decoded_tree.shape[1] - self.num_chars
                     decoded_tree[:,char_start_idx:,:] = torch.softmax(decoded_tree[:,char_start_idx:,:], dim = 1)
 
-                # if num_tips provided, set all indices > column idx implied by num_tips to zero
-                if num_tips_auxidx is not None:
-                    idx = num_tips_auxidx
-                    decoded_tree = utils.set_pred_pad_to_zero(decoded_tree, decoded_aux[:,idx])
-
                 if inference and detach:
                     decoded_tree = decoded_tree.detach()
                     decoded_aux  = decoded_aux.detach()
+                    
                 return decoded_tree, decoded_aux
+            
         finally:
             self.train(is_training)
 
     # TODO: should prob output torch.Tensors like everything else?
-    def predict(self, phy: torch.Tensor, aux: torch.Tensor, *, num_tips_auxidx : int  = None,
+    def predict(self, phy: torch.Tensor, aux: torch.Tensor, *, 
                 inference = False, detach = False) -> Tuple[np.ndarray, np.ndarray]:
-                # pushes data through full autoencoder
-        # TODO: maybe should use num tips prediction to set implied predicted padding area to zero
+        
+        # pushes data through full autoencoder
         is_training = self.training
         if inference:
             self.eval()
@@ -314,16 +310,13 @@ class AECNN(nn.Module):
             with grad_context:
                 phy = phy.to(self.device)
                 aux = aux.to(self.device)
-                tree_pred, char_pred, aux_pred, _ = self((phy, aux))
+                # model PREDICTS here
+                tree_pred, char_pred, aux_pred, _ = self((phy, aux)) 
 
                 if char_pred is not None:
                     phy_pred =  torch.cat((tree_pred, char_pred), dim = 1)
                 else:
                     phy_pred = tree_pred
-
-                if num_tips_auxidx is not None:
-                    idx = num_tips_auxidx
-                    decoded_tree = utils.set_pred_pad_to_zero(decoded_tree, aux_pred[:,idx])
 
                 if inference and detach:
                     phy_pred = phy_pred.detach()

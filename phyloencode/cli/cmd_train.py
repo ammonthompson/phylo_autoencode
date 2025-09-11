@@ -18,6 +18,7 @@ from phyloencode.PhyloAutoencoder   import PhyloAutoencoder
 from phyloencode.PhyloAEModel       import AECNN
 from phyloencode.DataProcessors     import AEData
 from phyloencode.PhyLoss            import PhyLoss
+import phyloencode.utils as utils
 
 # from phyloencode.utils            import get_num_tips
 
@@ -53,6 +54,7 @@ def main():
         # extract the specified subset of channels ("num_channels")
         phy_data = get_channels(phy_data_np, nc, mt)
 
+        # aux data must contain at least one column, "num_taxa"
         aux_data = torch.tensor(f['aux_data'][0:ns,...], dtype = torch.float32)
         if len(aux_data.shape) != 2: # i.e. is an array but should be a matrix with 1 column
             aux_data = aux_data.reshape((aux_data.shape[0], 1))
@@ -184,6 +186,7 @@ def main():
                        header = False, index = False)
 
     # normalize test data
+    # TODO: give ae_data functionality to do all this normalization and output phydat, auxdat
     phy_normalizer, aux_normalizer = ae_data.get_normalizers()
     phydat = phy_normalizer.transform(test_phy_data)
     auxdat = aux_normalizer.transform(test_aux_data)
@@ -199,13 +202,19 @@ def main():
     latent_testdat_df.to_csv(settings["out_prefix"] + ".testdat_latent.csv", 
                              header = False, index = False)
 
-    phy_pred, aux_pred = tree_ae.predict(phydat, auxdat)
-    # phy_pred, char_pred, aux_pred, latent_pred = tree_ae.predict(phydat, auxdat)
+    phy_pred, aux_pred = tree_ae.predict(phydat, auxdat, inference=True, detach = True)
+    
 
     # transform and flatten predicted data
-    phy_pred = phy_normalizer.inverse_transform(phy_pred.reshape((phy_pred.shape[0], -1), 
-                                                                 order = "F"))
+    phy_pred  = phy_normalizer.inverse_transform(phy_pred.reshape((phy_pred.shape[0], -1), order = "F"))
     aux_pred  = aux_normalizer.inverse_transform(aux_pred)
+
+
+    # set predicted padding to zeros  (using predicted num tips)
+    phy_pred = phy_pred.reshape((phy_pred.shape[0], ae_data.num_channels, ae_data.phy_width), order = "F")
+    phy_pred = utils.set_pred_pad_to_zero(phy_pred,  aux_pred[:,ae_data.ntax_cidx])    
+    phy_pred = phy_pred.reshape((phy_pred.shape[0], -1), order = "F")
+
 
     # save predictions to file
     phy_pred_df = pd.DataFrame(phy_pred)
