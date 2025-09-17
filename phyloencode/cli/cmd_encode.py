@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # test a pretrained model
 from phyloencode.PhyloAutoencoder import PhyloAutoencoder
+from phyloencode import utils
 import torch
 import joblib
 import h5py
@@ -11,12 +12,6 @@ import numpy as np
 import os
 from phyloencode.utils import get_num_tips
 
-
-def file_exists(fname):
-    "Return error if no file"
-    if not os.path.isfile(fname):
-        raise argparse.ArgumentTypeError(f"File '{fname}' does not exist.")
-    return fname
 
 def main ():
     cmd = argparse.ArgumentParser(description="Encode phylogenetic trees and auxiliary data with trained autodencoder.")
@@ -33,11 +28,11 @@ def main ():
 
     args = cmd.parse_args()
 
-    ae_model_fn       = file_exists(args.model)
-    phy_normalizer_fn = file_exists(args.phy_normalizer)
-    aux_normalizer_fn = file_exists(args.aux_normalizer)
-    tree_data_fn      = file_exists(args.tree_data)
-    aux_data_fn       = file_exists(args.aux_data) if args.aux_data is not None else None
+    ae_model_fn       = utils.file_exists(args.model)
+    phy_normalizer_fn = utils.file_exists(args.phy_normalizer)
+    aux_normalizer_fn = utils.file_exists(args.aux_normalizer)
+    tree_data_fn      = utils.file_exists(args.tree_data)
+    aux_data_fn       = utils.file_exists(args.aux_data) if args.aux_data is not None else None
     num_channels      = args.num_channels if args.num_channels is not None else None
     max_tips          = args.max_tips if args.max_tips is not None else None
 
@@ -65,7 +60,6 @@ def main ():
         with h5py.File(tree_data_fn, "r") as f:
             test_phy_data = torch.tensor(f['phy_data'][...], dtype = torch.float32)
             test_aux_data = torch.tensor(f['aux_data'][...], dtype = torch.float32)
-            ntips_idx = np.where(f['aux_data_names'][...][0] == b'num_taxa')[0][0]
 
             # TODO: Probably not necessary
             if len(test_aux_data.shape) == 1:
@@ -81,7 +75,6 @@ def main ():
                 df.to_csv(out_file_prefix + ".labels.csv", index = False)
             else:
                 print("No labels found in the hdf5 file. Continuing without making labels file.")
-                # raise ValueError("No labels found in the hdf5 file.")
 
     elif tree_data_fn.endswith('.csv') or tree_data_fn.endswith(".cblv"):
         test_phy_data = pd.read_csv(tree_data_fn, header = None, 
@@ -100,9 +93,6 @@ def main ():
             raise ValueError("Number of tips does not match the number of tips in the trained model.")  
         # reshape, and then reduce the tensor to the number of channels desired (might be fewer than the original)
         test_phy_data = test_phy_data.reshape(-1, max_tips, nc)[:, :, :num_channels].flatten(start_dim=1)
-        # print(test_phy_data[0,0:8])
-
-    print(test_phy_data.shape)
     
     # make predictions with trained model
     tree_autoencoder = PhyloAutoencoder(model = ae_model, optimizer = torch.optim.Adam)
@@ -115,7 +105,7 @@ def main ():
     auxdat = torch.Tensor(auxdat)
 
     # make encoded tree file
-    latent_dat = tree_autoencoder.tree_encode(phydat, auxdat)
+    latent_dat = tree_autoencoder.tree_encode(phydat, auxdat, inference=True, detach=True)
     latent_dat_df = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), columns = None, index = None)
     latent_dat_df.to_csv(out_file_prefix + ".ae_encoded.csv", header = None, index = None)
 

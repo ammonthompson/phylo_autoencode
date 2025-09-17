@@ -79,7 +79,7 @@ class AEData(object):
         self.aux_data = aux_data.numpy()
         flat_phy_width = self.phy_data.shape[1]
 
-        # num_tips is needed for masking
+        # num_tips is needed for masking (is  a part of aux when computing loss)
         self.ntax_cidx = np.where(aux_colnames == b'num_taxa')[0][0]
         self.num_tips = aux_data[:, self.ntax_cidx]
 
@@ -99,8 +99,7 @@ class AEData(object):
         else:
             raise ValueError("char_data_type must be 'continuous' or 'categorical'")
         self.aux_ss = pp.StandardScaler()
-
-        # TODO: need to normalize num_tips
+        
         self.phy_normalizer = self.phy_ss.fit(train_phy_data)
         self.aux_normalizer = self.aux_ss.fit(train_aux_data)
         self.norm_train_phy_data = self.phy_normalizer.transform(train_phy_data)
@@ -129,7 +128,8 @@ class AEData(object):
     def get_datasets(self) -> Tuple[Dataset, Dataset]:
         return self.train_dataset, self.val_dataset
 
-    def get_normalizers(self) -> Tuple[sklearn.preprocessing.StandardScaler, sklearn.preprocessing.StandardScaler]:
+    def get_normalizers(self) -> Tuple[sklearn.preprocessing.StandardScaler, 
+                                       sklearn.preprocessing.StandardScaler]:
         return self.phy_normalizer, self.aux_normalizer
     
     def save_normalizers(self, file_prefix):
@@ -164,7 +164,8 @@ class TreeDataSet(Dataset):
                  aux_features: torch.Tensor, 
                  num_tips: Optional[int] = None):
         """
-        If num_tips is provided, a mask is output otherwise mask is None
+        If num_tips is provided, a mask is output otherwise mask is None.
+        
 
 
         Args:

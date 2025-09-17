@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import torch
 import torch.nn as nn
-import torch.nn.functional as fun
-from torch.utils.data import Dataset, DataLoader, TensorDataset
+# import torch.nn.functional as fun
+# from torch.utils.data import Dataset, DataLoader, TensorDataset
 from typing import List, Dict, Tuple, Optional, Union
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -10,9 +10,11 @@ from sklearn.preprocessing import StandardScaler
 import importlib.util
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
+import os
+import argparse
 
 
-# Soft clipping function
+# Soft clipping functionality
 class SoftClip(nn.Module):
     def __init__(self, low=1e-6):
         super().__init__()
@@ -21,10 +23,9 @@ class SoftClip(nn.Module):
     def forward(self, x):
         return self.low + (1 - 2 * self.low) * torch.sigmoid(x)
 
-
 # these classes work with datasets output from the Format step in Phyddle
 # they are used to normalize the data before training
-# they are used to create a DataSet object. See TreeDataSet class
+# they are used to create a DataSet object. See phyloencode.TreeDataSet class
 class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
     # this is a modified version of sklearn's StandardScaler. 
     # For one-hot encoded categorical data.
@@ -326,6 +327,12 @@ class PositiveStandardScaler(BaseEstimator, TransformerMixin):
 
 
 # other functions
+def file_exists(fname):
+    "Return error if no file"
+    if not os.path.isfile(fname):
+        raise argparse.ArgumentTypeError(f"File '{fname}' does not exist.")
+    return fname
+
 def read_config(config_file: str) -> Dict[str, Union[int, float, str]]:
     """
     Read a configuration file and return the settings as a dictionary.
@@ -423,10 +430,125 @@ def set_pred_pad_to_zero(phy_pred: np.ndarray, pred_num_tips: np.ndarray) -> np.
     idx_grid = np.tile(idx_grid, (bs, 1))    # (bs, mt)
 
     # Mask: True for valid tips, False for padding
-    ntip_mask = (idx_grid < pred_num_tips)   # (bs, mt)
+    ntip_mask = (idx_grid <= np.round(pred_num_tips, decimals = 0))   # (bs, mt)
 
     # Expand mask to (bs, nc, mt)
     ntip_mask = np.expand_dims(ntip_mask, axis=1)
 
-    masked_phy_pred = phy_pred * ntip_mask
+    # masked_phy_pred = phy_pred * ntip_mask
+    masked_phy_pred = np.where(ntip_mask, phy_pred, 0.0)
+
     return masked_phy_pred
+
+def phylo_scatterplot(pred_phy_data, true_phy_data, 
+                      pred_aux_data, true_aux_data, 
+                      aux_names, output):
+    """Create scatter plots true v pred for cblv.
+
+    Args:
+        pred_phy_data (_type_): _description_
+        true_phy_data (_type_): _description_
+        pred_aux_data (_type_): _description_
+        true_aux_data (_type_): _description_
+        aux_names (_type_): _description_
+        output (_type_): _description_
+    """
+    # 
+    with PdfPages(output + "_scatter_plots.pdf") as f:
+        ndat = min(100, pred_phy_data.shape[1])
+        # 9 plots per page
+        # plot aux data
+        for i in range(pred_aux_data.shape[1] // 9):
+            fig, ax = plt.subplots(3, 3)
+            fig.tight_layout(pad=2., h_pad=2., w_pad = 2.)
+            aux_clabels = aux_names
+            for j in range(9):
+                d = 9 * i + j
+                row = j // 3
+                col = j % 3
+                min_val = min([np.min(true_aux_data[0:ndat,d]), np.min(pred_aux_data[0:ndat,d])])
+                max_val = max([np.max(true_aux_data[0:ndat,d]), np.max(pred_aux_data[0:ndat,d])])
+                ax[row][col].scatter(true_aux_data[0:ndat,d], pred_aux_data[0:ndat,d], s = 5)
+                ax[row][col].set_xlabel("True", fontsize = 8)
+                ax[row][col].set_ylabel("Pred", fontsize = 8)
+                ax[row][col].label_outer()
+                ax[row][col].set_title(aux_clabels[d], fontsize = 8)
+                ax[row][col].plot([min_val, max_val], [min_val, max_val],
+                                   color = "r", linewidth=1)
+            f.savefig(fig)
+            plt.close()
+
+        #plot cblv(+s) data
+        for i in range(pred_phy_data.shape[1] // 9):
+            fig, ax = plt.subplots(3, 3, sharex=True, sharey=True)
+            fig.tight_layout(pad=2., h_pad=2., w_pad = 2.)
+            for j in range(9):
+                d = 9 * i + j
+                row = j // 3
+                col = j % 3
+                min_val = min([np.min(true_phy_data[0:ndat,d]), np.min(pred_phy_data[0:ndat,d])])
+                max_val = max([np.max(true_phy_data[0:ndat,d]), np.max(pred_phy_data[0:ndat,d])])
+                ax[row][col].scatter(true_phy_data[0:ndat,d], pred_phy_data[0:ndat,d], s = 5)
+                ax[row][col].set_xlabel("True", fontsize = 8)
+                ax[row][col].set_ylabel("Pred", fontsize = 8)
+                ax[row][col].label_outer()
+                ax[row][col].set_title("dim " + str(d), fontsize = 8)
+                ax[row][col].plot([min_val, max_val], [min_val, max_val],
+                                   color = "r", linewidth=1)
+            f.savefig(fig)
+            plt.close()
+
+def make_loss_plots(train_loss, val_loss = None,  *, latent_layer_type = None,
+                out_prefix = "AElossplot", log = True, starting_epoch = 10):
+    fig = plt.figure(figsize=(11, 8))
+    plt.plot(list(range(len(train_loss.epoch_total_loss)))[starting_epoch:],
+                np.log10(train_loss.epoch_total_loss[starting_epoch:]), 
+                label='Training Loss', c="r")
+    if val_loss:
+        plt.plot(list(range(len(val_loss.epoch_total_loss)))[starting_epoch:],
+                 np.log10(val_loss.epoch_total_loss[starting_epoch:]), 
+                 label='Validation Loss', c='b')
+    plt.xlabel('Epochs')
+    plt.ylabel('log10 Loss')
+    plt.legend()        
+    plt.grid(True)
+    
+    range_y = [min(np.log10(np.concat((train_loss.epoch_total_loss[starting_epoch:], 
+                                        val_loss.epoch_total_loss[starting_epoch:])))), 
+                max(np.log10(np.concat((train_loss.epoch_total_loss[starting_epoch:], 
+                                        val_loss.epoch_total_loss[starting_epoch:]))))]
+    
+    plt.yticks(ticks = np.linspace(range_y[0], range_y[1], num = 20))
+    plt.xticks(ticks=np.arange(0, len(train_loss.epoch_total_loss), 
+                                step=len(train_loss.epoch_total_loss) // 10))
+    plt.tight_layout()
+    plt.savefig(out_prefix + ".loss.pdf", bbox_inches='tight')
+    plt.close(fig)
+
+    # plot each loss separately (only validation losses are recorded). 
+    # create subplots for each loss component   
+    # TODO: fix x-axis tick marks            
+    num_subplots = 6 if latent_layer_type == "GAUSS" else 4
+    fig, axs = plt.subplots(num_subplots//2, 2, figsize=(11, 8), sharex=True)
+    # axs = axs.flatten()
+    fig.subplots_adjust(hspace=0.4, wspace=0.4)
+    fill_in_loss_comp_fig(val_loss.epoch_total_loss, "combined", axs[0,0], starting_epoch)
+    fill_in_loss_comp_fig(val_loss.epoch_phy_loss, "phy", axs[0,1], starting_epoch)
+    fill_in_loss_comp_fig(val_loss.epoch_char_loss, "char", axs[1,1], starting_epoch)
+    fill_in_loss_comp_fig(val_loss.epoch_aux_loss, "aux", axs[1,0], starting_epoch)
+    if latent_layer_type == "GAUSS":
+        fill_in_loss_comp_fig(val_loss.epoch_mmd_loss, "mmd", axs[2,0], starting_epoch)
+        fill_in_loss_comp_fig(val_loss.epoch_vz_loss, "vz", axs[2,1], starting_epoch)
+    plt.savefig(out_prefix + ".component_loss.pdf", bbox_inches='tight')
+    plt.close(fig)
+
+def fill_in_loss_comp_fig(val_losses, plot_label, ax, starting_epoch = 10):
+    ax.plot(list(range(len(val_losses)))[starting_epoch:], 
+            np.log10(val_losses[starting_epoch:]), label=plot_label, c="b")
+            # val_losses[starting_epoch:], label=plot_label, c="b")
+    ax.set_title(f"{plot_label} Loss")
+    ax.set_xlabel('Epochs')
+    ax.set_ylabel('Log10 Loss')
+    # ax.set_ylabel('Loss')
+    ax.grid(True)
+    ax.set_xticks(ticks=np.arange(0, len(val_losses), step=len(val_losses) // 10))

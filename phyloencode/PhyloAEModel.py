@@ -10,12 +10,13 @@ class AECNN(nn.Module):
         and dense layer in parallel.
     """
 
-
     def __init__(self, 
                  num_structured_input_channel, 
                  structured_input_width,  # Input width for structured data
                  unstructured_input_width,
+                 *,
                  unstructured_latent_width = None, # must be integer multiple of num_structured_latent_channels
+                 aux_numtips_idx = None,
                  num_chars = 0,
                  char_type = "categorical", # categorical, continuous
                  stride = [2,2],
@@ -25,7 +26,7 @@ class AECNN(nn.Module):
                  latent_layer_type = "CNN",     # CNN, DENSE, GAUSS
                  out_prefix = "out",
                  device = "auto"):         
-        """Constructor sets up network 
+        """Constructor sets up all layers needed for network.  
 
         Args:
             num_structured_input_channel (int): e.g. at least 2 for cblv formated trees
@@ -58,6 +59,7 @@ class AECNN(nn.Module):
 
         self.char_type = char_type
         self.num_chars = num_chars
+        self.aux_numtips_idx = aux_numtips_idx
         
         # check that num_chars and num_channels are compatible
         # TODO: fix this
@@ -68,18 +70,9 @@ class AECNN(nn.Module):
                                 than 2 to use character data.
                           Setting num_chars to 0""")
 
-        nl = len(out_channels)
-        # ensure stride and kernel array lengths match the out_channel earray's length
-        if len(stride) != nl:
-            raise ValueError(f"Expected stride array length of {nl}, but got {len(stride)}.")
-
-        if len(kernel) != nl:
-            raise ValueError(f"Expected kernel array length of {nl}, but got {len(kernel)}.")
-
-        # Ensure kernel values are >= than stride values
-        stride_arr, kernel_arr = np.array(stride), np.array(kernel)
-        if np.min(kernel_arr - stride_arr) < 0:
-            raise ValueError("Each kernel value must be greater than the corresponding stride value.")
+        if not (len(stride) == len(kernel) == len(out_channels)):
+            raise ValueError("stride, kernel  and out_channels array lengths should all be equal," + 
+                             f" but got lengths {len(stride)}, {len(kernel)}, {len(out_channels)}.")
 
         # convolution layers parameters
         self.layer_params = {"out_channels": out_channels,
@@ -121,13 +114,17 @@ class AECNN(nn.Module):
         self.unstructured_encoder = DenseEncoder(self.unstructured_input_width, 
                                                  self.unstructured_latent_width)
 
+        # TESTING
+        # self.encoder_adaptive_pool = torch.nn.AdaptiveAvgPool1d(output_size= self.latent_layer_dim)
+
+
         # Structured Encoder
         print("Structured autoencoder shapes:")
         print((1, self.num_structured_input_channel, self.structured_input_width))
         self.structured_encoder = CnnEncoder(self.num_structured_input_channel, 
                                              self.structured_input_width,
                                              self.layer_params)
-
+        
         # TODO: nn.adaptivepooling might be better than flattening cnn encoder outputs before latent layers
 
         # Calculate final structured output width after encoder
@@ -194,11 +191,11 @@ class AECNN(nn.Module):
 
         # data is a tuple (structured, unstructured)
 
-        # Encode/Decode
-        shared_latent_out        = self.encode(data[0], data[1])
-
+        # Encode
+        latent = self.encode(data[0], data[1])
+        # Decode
         (structured_decoded_x, 
-         unstructured_decoded_x) = self.decode(shared_latent_out)
+         unstructured_decoded_x) = self.decode(latent)
 
         # separate the two type of structured decoded: tree and character data
         # maybe this should be done somewhere more downstream
@@ -210,9 +207,9 @@ class AECNN(nn.Module):
             char_decoded_x = None
         # model should output the latent layer if layer type is "GAUSS"
         if self.latent_layer_type != "GAUSS":
-            shared_latent_out = None
+            latent = None
 
-        return phy_decoded_x, char_decoded_x, unstructured_decoded_x, shared_latent_out
+        return phy_decoded_x, char_decoded_x, unstructured_decoded_x, latent
 
 
     def encode(self, phy: torch.Tensor, aux: torch.Tensor, *,
@@ -236,6 +233,10 @@ class AECNN(nn.Module):
 
                 # reshape structured embeddings
                 flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)
+                
+                # TODO: adaptive average pooling TESTING
+                # flat_structured_encoded_x = self.encoder_adaptive_pool(structured_encoded_x)
+
                 combined_latent = torch.cat((flat_structured_encoded_x, unstructured_encoded_x), dim=1)
         
                 # get combined latent output
@@ -345,6 +346,7 @@ class AECNN(nn.Module):
             f.write("\nSee latent layers above.\n")
             f.write(str(self.unstructured_decoder))
 
+
     def old_forward(self, data: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         """        
         Push data through the encoder and decoder networks.
@@ -406,8 +408,6 @@ class AECNN(nn.Module):
             shared_latent_out = None
 
         return phy_decoded_x, char_decoded_x, unstructured_decoded_x, shared_latent_out
-
-
 
 
 # encoder classes

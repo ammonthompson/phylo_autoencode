@@ -4,24 +4,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as fun
 from typing import List, Dict, Tuple, Optional, Union
-import numpy as np
-import itertools
 import matplotlib.pyplot as plt
 
+# TODO: implement abstract autoencoder loss class. PhyLoss should be a child of this class.
+# in addition to forward, should perform: phy_recon_loss, aux_recon_loss, char_recon_loss, ntips_recon_loss, latent_loss
+#   these _loss functions should take in pred, true, weight and
+#   should return a tuple (weighted loss, unweighted loss)
+# additionaly: abstract fields and methods for setting, getting component losses
 
-
-class PhyLoss(object):
+class PhyLoss(nn.Module):
     """Statefull. performs loss calculation and holds batch and 
         epoch mean losses for all components.
-
-    Args:
-        object (_type_): _description_
-
-    Raises:
-        ValueError: _description_
-
-    Returns:
-        _type_: _description_
     """
     # holds component losses over epochs
     # to be called for an individual batch
@@ -29,23 +22,28 @@ class PhyLoss(object):
         # compute, stores, and returns component and total loss for val and train sets
         # plots loss curves
     def __init__(self, 
-                 weights : torch.Tensor, 
+                 weights : dict[str, torch.Tensor], 
                  ntax_cidx : int,
-                 char_type : torch.Tensor = None, 
+                 char_type : str = None, 
                  latent_layer_Type = "GAUSS",
                  device = "cpu",
                  validation  = False,
-                 rand_matrix : torch.Tensor = None,):
-        """_summary_
+                 rand_matrix : torch.Tensor = None,) -> None:
+        """Contains component losses and methods for computing component losses.
 
         Args:
-            weights (torch.Tensor): _description_
-            char_type (torch.Tensor, optional): _description_. Defaults to None.
+            weights (dict[str, torch.Tensor]): weights [0, inf] for component losses
+            ntax_cidx (int): column index of aux_data that contains \"num_taxa\"
+            char_type (str, optional):["categorical", "continuous"]. Defaults to None.
             latent_layer_Type (str, optional): _description_. Defaults to "GAUSS".
             device (str, optional): _description_. Defaults to "cpu".
+            validation (bool, optional): _description_. Defaults to False.
             rand_matrix (torch.Tensor, optional): _description_. Defaults to None.
         """
-        # TODO: fix: chartype is an instance variable, yet is passed into PhyLoss methods as a parameter
+
+        
+        super().__init__()
+        
         self.validation = validation
         self.ntax_cidx = ntax_cidx
         # weights for all components
@@ -58,7 +56,6 @@ class PhyLoss(object):
         self.epoch_phy_loss     = []
         self.epoch_char_loss    = []
         self.epoch_aux_loss     = []
-        self.epoch_ntips_loss   = [] # TODO: not implemented?
         self.epoch_mmd_loss     = []
         self.epoch_vz_loss      = []
         # batch losses 
@@ -66,11 +63,12 @@ class PhyLoss(object):
         self.batch_phy_loss     = []
         self.batch_char_loss    = []
         self.batch_aux_loss     = []
-        self.batch_ntips_loss   = [] # TODO: not implemented?
         self.batch_mmd_loss     = []
         self.batch_vz_loss      = []
+
         # loss weights TODO: make a dictionary
-        self.phy_w, self.char_w, self.aux_w, self.mmd_w, self.vz_w  = weights
+        # self.phy_w, self.char_w, self.aux_w, self.mmd_w, self.vz_w  = weights
+        self.set_weights(weights)
 
         self.char_type = char_type
         self.latent_layer_type = latent_layer_Type
@@ -83,21 +81,24 @@ class PhyLoss(object):
         self.mmd = MMDLoss(device)
         self.vz  = VZLoss(device)
         
-    def set_weights(self, weights : torch.Tensor):
+    def set_weights(self, weights : dict[str, torch.Tensor]):
         """
         Set the weights for the loss components. 
         Args:
             weights (torch.Tensor): A tensor containing the new weights for phy, char, 
                                     aux, mmd, and vz losses.
         """
-        self.phy_w  = weights['phy_weight']  if 'phy_weight'  in weights else self.phy_w
-        self.char_w = weights['char_weight'] if 'char_weight' in weights else self.char_w
-        self.aux_w  = weights['aux_weight']  if 'aux_weight'  in weights else self.aux_w
-        self.mmd_w  = weights['mmd_weight']  if 'mmd_weight'  in weights else self.mmd_w
-        self.vz_w   = weights['vz_weight']   if 'vz_weight'   in weights else self.vz_w
+        try:
+            self.phy_w  = weights['phy_loss_weight']
+            self.char_w = weights['char_loss_weight']
+            self.aux_w  = weights['aux_loss_weight']
+            self.mmd_w  = weights['mmd_loss_weight']
+            self.vz_w   = weights['vz_loss_weight']
+        except KeyError as e:
+            print(f"\nMissing loss weight parameter:\n {e}\n")
+            raise
 
-    # TODO: maybe make PhyLoss an nn.Module and turn this into a forward method
-    def minibatch_loss(self, pred : Tuple, true : Tuple, mask : Tuple):
+    def forward(self, pred : Tuple, true : Tuple, mask : Tuple):
         # appends to the self.losses and returns the current batch loss
         # pred is a tuple (dictionary maybe?) of predictions for a batch
         # true is a tuple of the true values for a batch
@@ -111,17 +112,19 @@ class PhyLoss(object):
 
         device = phy_hat.device
 
-        # TODO: Note: the aux_loss also contains a num_taxa loss, so loss appears twice. No big deal in my opinon.
-
+        # TODO: Note: the aux_loss also contains a num_taxa loss, so loss for numtips in 2 places. No big deal in my opinon.
         # recon loss
         phy_loss    = self._phy_recon_loss(phy_hat, phy, mask = tree_mask)
-        char_loss   = self._char_recon_loss(char_hat, char, self.char_type, char_mask) if char is not None else torch.tensor(0.).to(device)
+        char_loss   = self._char_recon_loss(char_hat, char, char_mask) \
+            if char is not None and self.char_w > 0. else torch.tensor(0.).to(device)
         aux_loss    = self._aux_recon_loss(aux_hat, aux)
         ntips_loss  = self._num_tips_recon_loss(aux_hat[:, self.ntax_cidx], aux[:, self.ntax_cidx])
 
         # latent loss
-        mmd_loss = self._mmd_loss(latent_hat, std_norm) if latent_hat is not None else torch.tensor(0.).to(device)
-        vz_loss  = self._vz_loss(latent_hat, std_norm)  if latent_hat is not None else torch.tensor(0.).to(device)
+        mmd_loss = self._mmd_loss(latent_hat, std_norm) \
+            if latent_hat is not None and self.mmd_w > 0. else torch.tensor(0.).to(device)
+        vz_loss  = self._vz_loss(latent_hat, std_norm)  \
+            if latent_hat is not None and self.vz_w > 0. else torch.tensor(0.).to(device)
 
         # computed weighted total loss
         total_loss =    self.phy_w  * phy_loss  + \
@@ -153,7 +156,6 @@ class PhyLoss(object):
         self.batch_phy_loss     = []
         self.batch_char_loss    = []
         self.batch_aux_loss     = []
-        self.batch_ntips_loss   = []
         self.batch_mmd_loss     = []
         self.batch_vz_loss      = []
 
@@ -216,7 +218,7 @@ class PhyLoss(object):
 
         return batch_mean_tree_loss + tip1_loss
 
-    def _char_recon_loss(self, x, y, char_type = "categorical", mask = None):
+    def _char_recon_loss(self, x, y, mask = None):
         """
         Compute the reconstruction loss for categorical character data.
 
@@ -232,7 +234,7 @@ class PhyLoss(object):
         """
         # TODO: instead of computing mask.sum() you can pass in num_tips 
 
-        if char_type == "categorical": 
+        if self.char_type == "categorical": 
             char_loss = fun.cross_entropy(x, y, reduction = 'none') 
         else:
             char_loss = fun.mse_loss(x, y, reduction = 'none')
@@ -256,7 +258,6 @@ class PhyLoss(object):
             torch.Tensor: Reconstruction loss for auxiliary data.
         """
         # Use mean squared error for auxiliary data
-        # first column is num tips and will loss will be handled separately
         aux_loss = fun.mse_loss(x, y) if x.shape[1] > 1 else torch.tensor(0.).to(x.device)
         # return fun.mse_loss(x, y)
         return aux_loss
@@ -265,6 +266,10 @@ class PhyLoss(object):
         # TODO: ordinal loss
         return fun.mse_loss(x, y)
 
+    # TODO: implement _latent_loss
+    def _latent_loss(self, latent_pred, std_norm, target = None):
+        pass
+        
     def _mmd_loss(self, latent_pred, target = None):
 
         x = latent_pred
@@ -288,7 +293,6 @@ class PhyLoss(object):
         VZ = self.vz(x,y)
 
         return VZ
-
 
 
 

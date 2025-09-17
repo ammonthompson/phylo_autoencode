@@ -10,35 +10,37 @@ import torch
 # from phyloencode import utils
 # from phyloencode.PhyLoss import PhyLoss
 from phyloencode.DataProcessors import AEData
+from phyloencode.PhyloAEModel import AECNN
+import phyloencode.utils as utils
 import time
 # import os
 from typing import List, Dict, Tuple, Optional, Union
 
 
 class PhyloAutoencoder(object):
+
     def __init__(self, 
-                 model, 
+                 model: AECNN, 
                  optimizer, 
                  *, lr_scheduler = None, batch_size=128, 
                  train_loss = None, val_loss = None):
-        """ Performs training and valdiation on an autoencoder object.
+        """Performs training and valdiation on an autoencoder object.
 
         Args:
-            model (nn.Module): Autoencoder model
-            optimizer (torch.optim): optimizer for sgd updating.
-            batch_size (int, optional): Minibatch size. Defaults to 128.
-            phy_loss_weight (float, optional): _description_. Defaults to 0.5.
-            char_weight (float, optional): _description_. Defaults to 0.5.
-            mmd_lambda (_type_, optional): _description_. Defaults to None.
-            vz_lambda (_type_, optional): _description_. Defaults to None.
+            model (AECNN): _description_
+            optimizer (_type_): _description_
+            lr_scheduler (_type_, optional): _description_. Defaults to None.
+            batch_size (int, optional): _description_. Defaults to 128.
+            train_loss (torch.nn.Module, optional): _description_. Defaults to None.
+            val_loss (torch.nn.Module optional): _description_. Defaults to None.
         """
         
         # TODO: define the model object better (autoencoder ...)
         # TODO: run checks that the model has the expected attributes
         # TODO: Update seed functionality
-        # TODO: create an aux_weight, change everything to "lambda" or "weight" for consistency
         # TODO: add track_grad to parameters
         # TODO: add checks that the loss objects are correct (contain certain fields and methods)
+        # TODO: fix checkpoints so starting w/pre-trained network can be used easilly.
 
         self.device       = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.batch_size   = batch_size
@@ -74,7 +76,10 @@ class PhyloAutoencoder(object):
 
     def train(self, num_epochs, seed = None):
 
-        # TODO: Train should raise an error if data loaders and loss function haven't been set up.
+        if self.train_loader is None:
+            raise ValueError("Must load training data.")
+        if self.train_loss is None:
+            raise ValueError("Must load loss layer.")
 
         if seed is not None:
             self.set_seed(seed)
@@ -164,7 +169,7 @@ class PhyloAutoencoder(object):
         pred = self.model((phy, aux))
 
         # compute and update loss fields in train_loss
-        loss = self.train_loss.minibatch_loss(pred, true, segmented_mask)
+        loss = self.train_loss(pred, true, segmented_mask)
 
         # compute gradient
         loss.backward()
@@ -185,7 +190,7 @@ class PhyloAutoencoder(object):
 
         
     def evaluate(self, phy: torch.Tensor, aux: torch.Tensor,
-                  mask: torch.Tensor = None, std_norm : torch.Tensor = None):
+                  mask: torch.Tensor = None, std_norm: torch.Tensor = None):
         
         # batch val loss        
         self.model.eval()
@@ -198,7 +203,7 @@ class PhyloAutoencoder(object):
         pred = self.model((phy, aux))
 
         # compute and update loss fields in val_loss
-        self.val_loss.minibatch_loss(pred, true, segmented_mask)
+        self.val_loss(pred, true, segmented_mask)
 
         
     def predict(self, phy: torch.Tensor, aux: torch.Tensor, *,
@@ -216,11 +221,19 @@ class PhyloAutoencoder(object):
 
     def set_data_loaders(self, train_loader : torch.utils.data.DataLoader, 
                                val_loader   : torch.utils.data.DataLoader = None):
+        
         self.train_loader = train_loader
         self.val_loader   = val_loader
 
+        if not isinstance(self.train_loader, torch.utils.data.DataLoader):
+            raise TypeError(f"train_loader must be a DataLoader, got {type(self.train_loader).__name__}.")
+
+        if not isinstance(self.val_loader, torch.utils.data.DataLoader):
+            raise TypeError(f"val_loader must be a DataLoader, got {type(self.train_loader).__name__}.")
+
+
     def set_losses(self, train_loss, val_loss):
-        self.train_loss = train_loss,
+        self.train_loss = train_loss
         self.val_loader = val_loss
 
     # def set_data(self, data : AEData, num_workers : int):
@@ -279,57 +292,12 @@ class PhyloAutoencoder(object):
     def get_latent_shape(self):
         return self.model.num_structured_latent_channels, self.model.reshaped_shared_latent_width
        
-    # TODO: abstract this function. PhyLoss should handle the particulars
     def plot_losses(self, out_prefix = "AElossplot", log = True, starting_epoch = 10):
-        # plot total losses
-        fig = plt.figure(figsize=(11, 8))
-        plt.plot(list(range(len(self.train_loss.epoch_total_loss)))[:starting_epoch],
-                 np.log10(self.train_loss.epoch_total_loss[:starting_epoch]), label='Training Loss', c="b")
-        if self.val_loader:
-            plt.plot(np.log10(self.val_loss.epoch_total_loss), label='Validation Loss', c='r')
-        plt.xlabel('Epochs')
-        plt.ylabel('log10 Loss')
-        plt.legend()        
-        plt.grid(True)
-        range_y = [min(np.log10(np.concat((self.train_loss.epoch_total_loss, 
-                                           self.val_loss.epoch_total_loss)))), 
-                   max(np.log10(np.concat((self.train_loss.epoch_total_loss, 
-                                           self.val_loss.epoch_total_loss))))]
-        plt.yticks(ticks = np.linspace(range_y[0], range_y[1], num = 20))
-        plt.xticks(ticks=np.arange(0, len(self.train_loss.epoch_total_loss), 
-                                   step=len(self.train_loss.epoch_total_loss) // 10))
-        plt.tight_layout()
-        plt.savefig(out_prefix + ".loss.pdf", bbox_inches='tight')
-        plt.close(fig)
 
-        # plot each loss separately (only validation losses are recorded). 
-        # create subplots for each loss component   
-        # # TODO: fix x-axis tick marks            
-        num_subplots = 6 if self.model.latent_layer_type == "GAUSS" else 4
-        fig, axs = plt.subplots(num_subplots//2, 2, figsize=(11, 8), sharex=True)
-        # axs = axs.flatten()
-        fig.subplots_adjust(hspace=0.4, wspace=0.4)
-        self._fill_in_loss_comp_fig(self.val_loss.epoch_total_loss, "combined", axs[0,0], starting_epoch)
-        self._fill_in_loss_comp_fig(self.val_loss.epoch_phy_loss, "phy", axs[0,1], starting_epoch)
-        self._fill_in_loss_comp_fig(self.val_loss.epoch_char_loss, "char", axs[1,1], starting_epoch)
-        self._fill_in_loss_comp_fig(self.val_loss.epoch_aux_loss, "aux", axs[1,0], starting_epoch)
-        if self.model.latent_layer_type == "GAUSS":
-            self._fill_in_loss_comp_fig(self.val_loss.epoch_mmd_loss, "mmd", axs[2,0], starting_epoch)
-            self._fill_in_loss_comp_fig(self.val_loss.epoch_vz_loss, "vz", axs[2,1], starting_epoch)
-        plt.savefig(out_prefix + ".component_loss.pdf", bbox_inches='tight')
-        plt.close(fig)
+        utils.make_loss_plots(self.train_loss, self.val_loss, 
+                                latent_layer_type=self.model.latent_layer_type,
+                                out_prefix=out_prefix, log=log, starting_epoch=starting_epoch)
 
-    def _fill_in_loss_comp_fig(self, val_losses, plot_label, ax, starting_epoch = 10):
-        ax.plot(list(range(len(val_losses)))[starting_epoch:], 
-                np.log10(val_losses[starting_epoch:]), label=plot_label, c="b")
-                # val_losses[starting_epoch:], label=plot_label, c="b")
-        ax.set_title(f"{plot_label} Loss")
-        ax.set_xlabel('Epochs')
-        ax.set_ylabel('Log10 Loss')
-        # ax.set_ylabel('Loss')
-        ax.grid(True)
-        ax.set_xticks(ticks=np.arange(0, len(val_losses), step=len(val_losses) // 10))
-        
     def _split_tree_char(self, phy : torch.Tensor, mask : torch.Tensor) -> Tuple[torch.Tensor, 
                                                                                  torch.Tensor,
                                                                                  torch.Tensor,       

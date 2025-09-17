@@ -2,25 +2,20 @@
 
 import torch
 from torch.optim import AdamW
-# import torch.utils.data as td
 import numpy  as np
 import pandas as pd
-# import sklearn as sk
 import phyloencode as ph
-# import sys
 import h5py
 import argparse
 from sklearn.model_selection import train_test_split
 
 import phyloencode as ph
-# from phyloencode import utils
 from phyloencode.PhyloAutoencoder   import PhyloAutoencoder
 from phyloencode.PhyloAEModel       import AECNN
 from phyloencode.DataProcessors     import AEData
 from phyloencode.PhyLoss            import PhyLoss
 import phyloencode.utils as utils
 
-# from phyloencode.utils            import get_num_tips
 
 def main():
 
@@ -85,11 +80,11 @@ def main():
         
     # create model
     # TODO: The trainer is an object that mutates a model, maybe it makes the most sense for the trainer to be an attribute of the model?
-    # TODO: model should know which aux variable is num tips???
     ae_model    = AECNN(
                         num_structured_input_channel  = ae_data.num_channels, 
                         structured_input_width        = ae_data.phy_width,
                         unstructured_input_width      = ae_data.aux_width,
+                        aux_numtips_idx               = ae_data.ntax_cidx,
                         stride                        = settings["stride"],
                         kernel                        = settings["kernel"],
                         out_channels                  = settings["out_channels"],
@@ -119,12 +114,8 @@ def main():
     
     # Loss objects (stateful)    
     # TODO: remove device from RBF class and PhyLoss, I dont think  I need it.
-        # loss weights
-    loss_weights = (settings["phy_loss_weight"], 
-                    settings["char_weight"], 
-                    1 - settings["phy_loss_weight"], 
-                    settings["mmd_lambda"], 
-                    settings["vz_lambda"])
+   
+    loss_weights = {k : v for k, v in settings.items() if k.count("_loss_weight") > 0}
 
     train_loss  = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
                                ae_model.latent_layer_type, "cuda")
@@ -238,16 +229,17 @@ def parse_arguments():
     parser.add_argument("-nw", "--num_workers",     required = False, type = int, help = "Number of workers. Default 0")
     parser.add_argument("-ne", "--num_epochs",      required = False, type = int, help = "Number of training epochs. Default 100")
     parser.add_argument("-b", "--batch_size",       required = False, type = int, help = "Batch size. Default 128")
-    parser.add_argument("-mmd", "--mmd_lambda",     required = False, type = float, help = "MMD lambda (>= 0). Default 1.0")
-    parser.add_argument("-vz", "--vz_lambda",       required = False, type = float, help = "VZ lambda (>= 0). Default 1.0")
+    parser.add_argument("-mmd","--mmd_loss_weight", required = False, type = float, help = "MMD lambda (>= 0). Default 1.0")
+    parser.add_argument("-vz", "--vz_loss_weight",  required = False, type = float, help = "VZ lambda (>= 0). Default 1.0")
+    parser.add_argument("-pw", "--phy_loss_weight", required = False, type = float, help = "Phylogenetic loss weight. Default 0.9")
+    parser.add_argument("-aw", "--aux_loss_weight", required = False, type = float, help = "Auxiliary loss weight. Default 0.1")
+    parser.add_argument("-cw", "--char_loss_weight",required = False, type = float, help = "how much weight to give to char loss. Default 0.0")
     parser.add_argument("-mt", "--max_tips",        required = False, type = float, help = "maximum number of tips.   Default 1000")
-    parser.add_argument("-w", "--phy_loss_weight",  required = False, type = float, help = "Phylogenetic loss weight (in [0,1]) . Default 0.9")
     parser.add_argument("-ns", "--num_subset",      required = False, type = int, help = "subset of data used for training/testing. Default 10000")
     parser.add_argument("-nchans", "--num_channels",  required = False, type = int, help = "number of data channels. Default 9")
     parser.add_argument("-num_chars", "--num_chars",  required = False, type = int, help = "number of characters. Default 5")
     parser.add_argument("-ld", "--latent_output_dim", required = False, type = int, help = "latent output dimension. Default None (determined by structured encoder output shape)")
     parser.add_argument("-l", "--latent_model_type",  required = False, help = "latent model type (GAUSS, DENSE, or CNN). Default GAUSS")
-    parser.add_argument("-cw", "--char_weight",     required = False, type = float, help = "how much weight to give to char loss. Default 0.0")
     parser.add_argument("-k", "--kernel",           required = False, type = int, help = "kernel size. Default 3,5,5")
     parser.add_argument("-r", "--stride",           required = False, type = int, help = "stride size. Default 2,4,4")
     parser.add_argument("-oc", "--out_channels",    required = False, type = int, help = "output channels. Default 32,32,128")
@@ -268,10 +260,11 @@ def get_default_settings():
         "num_chars": 0,
         "num_channels": 2,
         "max_tips": 1000,
-        "mmd_lambda": 1.0,
-        "vz_lambda": 1.0,
+        "mmd_loss_weight": 1.0,
+        "vz_loss_weight": 1.0,
         "phy_loss_weight": 0.9,
-        "char_weight": 0.1,
+        "aux_loss_weight": 0.1,
+        "char_loss_weight": 1.0,
         "latent_model_type": "GAUSS",
         "latent_output_dim": None,
         "stride": [2, 4, 8],
@@ -295,10 +288,11 @@ def update_settings_from_command_line(settings, args):
         "num_chars"     : args.num_chars,
         "num_channels"  : args.num_channels,
         "max_tips"      : args.max_tips,
-        "mmd_lambda"    : args.mmd_lambda,
-        "vz_lambda"     : args.vz_lambda,
+        "mmd_loss_weight" : args.mmd_loss_weight,
+        "vz_loss_weight"  : args.vz_loss_weight,
         "phy_loss_weight": args.phy_loss_weight,
-        "char_weight"   : args.char_weight,
+        "char_loss_weight" : args.char_loss_weight,
+        "aux_loss_weight": args.aux_loss_weight,
         "latent_model_type": args.latent_model_type,
         "latent_output_dim": args.latent_output_dim,
         "kernel"        : args.kernel,
@@ -319,11 +313,12 @@ def update_settings_from_command_line(settings, args):
             elif k in {"latent_output_dim", "num_channels", "num_chars", "num_subset", 
                        "num_epochs", "batch_size", "max_tips", "num_workers", "seed"}:
                 settings[k] = int(v)
-            elif k in {"mmd_lambda", "vz_lambda", "phy_loss_weight", "char_weight"}:
+            elif k in {"mmd_loss_weight", "vz_loss_weight", "aux_loss_weight", "phy_loss_weight", "char_loss_weight"}:
                 settings[k] = float(v)
             else:
                 settings[k] = v
 
+# TODO: should belong to PhyloAutoencoder
 def plot_gradient_norms(layer_grad_norms, out_file, plots_per_page = 4):
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_pdf import PdfPages
