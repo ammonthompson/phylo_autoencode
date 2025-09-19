@@ -13,17 +13,18 @@ from phyloencode.DataProcessors import AEData
 from phyloencode.PhyloAEModel import AECNN
 import phyloencode.utils as utils
 import time
+import random
 # import os
 from typing import List, Dict, Tuple, Optional, Union
 
 
 class PhyloAutoencoder(object):
 
-    def __init__(self, 
+    def __init__(self,
                  model: AECNN, 
                  optimizer, 
                  *, lr_scheduler = None, batch_size=128, 
-                 train_loss = None, val_loss = None):
+                 train_loss = None, val_loss = None, seed = None, device = "auto"):
         """Performs training and valdiation on an autoencoder object.
 
         Args:
@@ -37,12 +38,24 @@ class PhyloAutoencoder(object):
         
         # TODO: define the model object better (autoencoder ...)
         # TODO: run checks that the model has the expected attributes
-        # TODO: Update seed functionality
         # TODO: add track_grad to parameters
         # TODO: add checks that the loss objects are correct (contain certain fields and methods)
         # TODO: fix checkpoints so starting w/pre-trained network can be used easilly.
 
-        self.device       = 'cuda' if torch.cuda.is_available() else 'cpu'
+        if device == "auto":
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self.device = device
+        
+        # This class sets module level rng behavior through the set_seed method. 
+        # the Generator object is, as of 9/19/2025 only used for std_norm random variates in _mini_batch.
+
+        self.torch_g = None
+        self.seed = seed 
+        if self.seed is not None:
+            self.torch_g = torch.Generator(self.device).manual_seed(self.seed)
+            self.set_seed(self.seed)
+
         self.batch_size   = batch_size
         self.total_epochs = 0
         self.train_loader = None
@@ -81,7 +94,13 @@ class PhyloAutoencoder(object):
         if self.train_loss is None:
             raise ValueError("Must load loss layer.")
 
+        # If both local and instance seed are None, 
+        # then module level rng outside class governs random number generation
         if seed is not None:
+            # set seed to instance variable, self.seed (which might also be None)
+            self.set_seed(self.seed)
+        else:
+            # set seed to parameter seed
             self.set_seed(seed)
 
         for epoch in range(num_epochs):
@@ -142,7 +161,7 @@ class PhyloAutoencoder(object):
             aux_batch = aux_batch.to(self.device)
                
             # target latent distribution sample
-            self.std_norm = torch.randn(self.latent_shape).to(self.device) \
+            self.std_norm = torch.randn(self.latent_shape, device=self.device, generator=self.torch_g) \
                 if self.model.latent_layer_type == "GAUSS" else None
 
             # perform SGD step for batch
@@ -253,11 +272,17 @@ class PhyloAutoencoder(object):
             x_sample, y_sample = next(iter(self.train_loader))
             self.writer.add_graph(self.model, x_sample.to(self.device))
 
-    def set_seed(self, seed = 1):
+    def set_seed(self, seed = None):
+        if seed is None:
+                return  # use module-level RNGs as-is
+
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
-        torch.manual_seed(seed)
-        np.random.seed(seed)
 
     def save_checkpoint(self, filename):
         checkpoint = {'epoch':self.total_epochs,

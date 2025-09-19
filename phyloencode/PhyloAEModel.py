@@ -3,6 +3,7 @@ import torch.nn as nn
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Union
 from phyloencode import utils
+import random
 
 class AECNN(nn.Module):
     """ This class uses a CNN and a dense layer to encode structured and unstructured data respectively
@@ -25,7 +26,8 @@ class AECNN(nn.Module):
                  latent_output_dim = None, # if None, then controled by structured latent channels
                  latent_layer_type = "CNN",     # CNN, DENSE, GAUSS
                  out_prefix = "out",
-                 device = "auto"):         
+                 device = "auto",
+                 seed = None):         
         """Constructor sets up all layers needed for network.  
 
         Args:
@@ -50,6 +52,8 @@ class AECNN(nn.Module):
         """
 
         super().__init__()
+
+        self.set_seed(seed=seed)
 
         if device == "auto":
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -77,7 +81,8 @@ class AECNN(nn.Module):
         # convolution layers parameters
         self.layer_params = {"out_channels": out_channels,
                             "kernel"      : kernel,
-                            "stride"      : stride}
+                            "stride"      : stride,
+                            "latent_dim"  : latent_output_dim}
                 
         self.latent_layer_type = latent_layer_type
         self.latent_layer_dim = latent_output_dim
@@ -114,10 +119,6 @@ class AECNN(nn.Module):
         self.unstructured_encoder = DenseEncoder(self.unstructured_input_width, 
                                                  self.unstructured_latent_width)
 
-        # TESTING
-        # self.encoder_adaptive_pool = torch.nn.AdaptiveAvgPool1d(output_size= self.latent_layer_dim)
-
-
         # Structured Encoder
         print("Structured autoencoder shapes:")
         print((1, self.num_structured_input_channel, self.structured_input_width))
@@ -125,10 +126,10 @@ class AECNN(nn.Module):
                                              self.structured_input_width,
                                              self.layer_params)
         
-        # TODO: nn.adaptivepooling might be better than flattening cnn encoder outputs before latent layers
-
         # Calculate final structured output width after encoder
-        # get dims for latent shared concatenated layer
+        # get shape for latent shared concatenated layer
+        # TODO: utils.get_outshape here is just used to get the encoder out_width
+        #       this can instead be controled by using adaptive avg pooling's out_size
         self.struct_outshape = utils.get_outshape(self.structured_encoder.cnn_layers, 
                                                   self.num_structured_input_channel, 
                                                   self.structured_input_width)
@@ -148,13 +149,7 @@ class AECNN(nn.Module):
             self.latent_outwidth = self.combined_latent_inwidth
             self.latent_layer_decoder = LatentCNNDecoder(self.struct_outshape, kernel_size = self.layer_params['kernel'][-1])
 
-        elif self.latent_layer_type == "GAUSS":
-            self.reshaped_shared_latent_width = self.struct_outshape[2]
-            self.latent_outwidth = self.flat_struct_outwidth if self.latent_layer_dim is None else self.latent_layer_dim
-            self.latent_layer = LatentGauss(self.combined_latent_inwidth, self.latent_outwidth)
-            self.latent_layer_decoder = LatentDenseDecoder(self.latent_outwidth, self.flat_struct_outwidth)
-
-        elif self.latent_layer_type == "DENSE":
+        elif self.latent_layer_type in {"GAUSS", "DENSE"}:
             self.reshaped_shared_latent_width = self.struct_outshape[2]
             self.latent_outwidth = self.flat_struct_outwidth if self.latent_layer_dim is None else self.latent_layer_dim
             self.latent_layer = LatentDense(self.combined_latent_inwidth, self.latent_outwidth)
@@ -194,8 +189,7 @@ class AECNN(nn.Module):
         # Encode
         latent = self.encode(data[0], data[1])
         # Decode
-        (structured_decoded_x, 
-         unstructured_decoded_x) = self.decode(latent)
+        structured_decoded_x, unstructured_decoded_x = self.decode(latent)
 
         # separate the two type of structured decoded: tree and character data
         # maybe this should be done somewhere more downstream
@@ -232,11 +226,7 @@ class AECNN(nn.Module):
                 unstructured_encoded_x = self.unstructured_encoder(aux)  # (N, out_width)
 
                 # reshape structured embeddings
-                flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)
-                
-                # TODO: adaptive average pooling TESTING
-                # flat_structured_encoded_x = self.encoder_adaptive_pool(structured_encoded_x)
-
+                flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)                
                 combined_latent = torch.cat((flat_structured_encoded_x, unstructured_encoded_x), dim=1)
         
                 # get combined latent output
@@ -245,10 +235,7 @@ class AECNN(nn.Module):
                                                                     self.reshaped_shared_latent_width)
                     shared_latent_out = self.latent_layer(reshaped_shared_latent)
 
-                elif self.latent_layer_type == "GAUSS":
-                    shared_latent_out = self.latent_layer(combined_latent)
-
-                elif self.latent_layer_type == "DENSE":
+                elif self.latent_layer_type in {"GAUSS", "DENSE"}:
                     shared_latent_out = self.latent_layer(combined_latent)
 
             if inference and detach:
@@ -345,6 +332,18 @@ class AECNN(nn.Module):
             f.write(str(self.unstructured_encoder) + "\n")
             f.write("\nSee latent layers above.\n")
             f.write(str(self.unstructured_decoder))
+
+    def set_seed(self, seed = None):
+        if seed is None:
+                return  # use module-level RNGs as-is
+
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
     def old_forward(self, data: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -467,6 +466,15 @@ class CnnEncoder(nn.Module):
                     self.cnn_layers.add_module("conv_ReLU_" + str(i), nn.ReLU())
 
 
+        # TODO: adaptive average pooling TESTING
+        # out_size = layer_params['latent_dim'] // out_channels[-1]
+        # self.cnn_layers.add_module("adapt_avg_pool", torch.nn.AdaptiveAvgPool1d(output_size = out_size))
+        # conv_out_shape = utils.get_outshape(self.cnn_layers, data_channels, data_width)
+        # self.conv_out_width.append(conv_out_shape[2])
+        # print(conv_out_shape)
+
+
+
     def forward(self, x):
         return self.cnn_layers(x)
         
@@ -504,17 +512,6 @@ class CnnDecoder(nn.Module):
         self.num_chars          = num_chars
         self.data_channels      = data_channels
         nl = len(out_channels)
-
-
-        # TODO: right now there has to be at least 2 conv layers. 
-        # Implement this so one conv layer is possible
-        if nl == 1:
-            pass
-        elif nl == 2:
-            pass
-        else:
-            pass
-
 
         ########################
         # build decoder layers #
@@ -627,7 +624,6 @@ class CnnDecoder(nn.Module):
         return pad, outpad
     
 # Latent layer classes
-# TODO: Should probably remove LatentGauss and just use LatentDense
 class LatentCNN(nn.Module):
     def __init__(self, in_cnn_shape: Tuple[int, int], kernel_size = 9):
         # creates a tensor with shape (in_cnn_shape[1], in_cnn_shape[2] + 1)
@@ -650,19 +646,6 @@ class LatentDense(nn.Module):
         # Shared Latent Layer
         self.shared_layer = nn.Sequential(
             nn.Linear(in_width, out_width),
-        )
-        print((1, out_width))
-    
-    def forward(self, x):
-        return self.shared_layer(x)
-    
-class LatentGauss(nn.Module):
-    def __init__(self, in_width: int, out_width: int):
-        super().__init__()
-        # Shared Latent Layer
-        self.shared_layer = nn.Sequential(
-            nn.Linear(in_width, out_width),
-            # nn.BatchNorm1d(out_width),
             nn.ReLU(),
             nn.Linear(out_width, out_width),
         )
@@ -673,6 +656,32 @@ class LatentGauss(nn.Module):
     
     def __iter__(self):
         return iter(self.shared_layer)
+
+    
+# might be more work than its worth
+class LatentPool(nn.Module):
+    def __init__(self, 
+                 struct_encoder_out_shape : Tuple[int, int], 
+                 unstruct_encoder_out_width : int, 
+                 latent_dim: int):
+        super().__init__()
+        struct_flat_width = struct_encoder_out_shape[0] * struct_encoder_out_shape[1]
+        avg_pool_out_size = struct_flat_width // latent_dim
+        dense_in_width = avg_pool_out_size + unstruct_encoder_out_width
+        self.avg_pool_layer = nn.AdaptiveAvgPool1d(output_size=avg_pool_out_size)
+        self.shared_layer = nn.Sequential(
+                nn.Linear(dense_in_width, latent_dim),
+            )        
+        print((1, latent_dim))
+
+
+    def forward(self, struct, unstruct):
+        #
+        avg_pool = self.avg_pool_layer(struct)
+        flat_avg_pool = avg_pool.flatten(start_dim=1)                
+        combined_latent = torch.cat((flat_avg_pool, unstruct), dim=1)
+        return self.shared_layer(combined_latent)
+
     
 class LatentDenseDecoder(nn.Module): # same as LatentGauss
     def __init__(self, in_width: int, out_width: int):

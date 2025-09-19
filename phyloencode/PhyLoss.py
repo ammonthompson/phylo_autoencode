@@ -4,7 +4,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as fun
 from typing import List, Dict, Tuple, Optional, Union
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
+import random
+# import numpy as np
 
 # TODO: implement abstract autoencoder loss class. PhyLoss should be a child of this class.
 # in addition to forward, should perform: phy_recon_loss, aux_recon_loss, char_recon_loss, ntips_recon_loss, latent_loss
@@ -26,8 +28,9 @@ class PhyLoss(nn.Module):
                  ntax_cidx : int,
                  char_type : str = None, 
                  latent_layer_Type = "GAUSS",
-                 device = "cpu",
+                 device = "auto",
                  validation  = False,
+                 seed = None,
                  rand_matrix : torch.Tensor = None,) -> None:
         """Contains component losses and methods for computing component losses.
 
@@ -43,6 +46,17 @@ class PhyLoss(nn.Module):
 
         
         super().__init__()
+
+        if device == "auto":
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self.device = device
+
+        # self.np_rng = None
+        self.torch_g = None
+        self.seed = seed 
+        if self.seed is not None:
+            self.torch_g = torch.Generator(self.device).manual_seed(self.seed)
         
         self.validation = validation
         self.ntax_cidx = ntax_cidx
@@ -78,8 +92,8 @@ class PhyLoss(nn.Module):
 
         # latent loss
         # note, these two losses make use of two different samples of y from N(0, I)
-        self.mmd = MMDLoss(device)
-        self.vz  = VZLoss(device)
+        self.mmd = MMDLoss(self.device)
+        self.vz  = VZLoss(self.device)
         
     def set_weights(self, weights : dict[str, torch.Tensor]):
         """
@@ -274,22 +288,21 @@ class PhyLoss(nn.Module):
 
         x = latent_pred
         if target is None:
-            y = torch.randn(x.shape, requires_grad=False).to(x.device)
+            y = torch.randn(x.shape, requires_grad=False, 
+                            device=x.device, generator=self.torch_g)
         else:
             y = target[0:x.shape[0],:]
-        # MMD = MMDLoss(device)(x, y)
         MMD = self.mmd(x, y)
                 
         return MMD
 
     def _vz_loss(self, latent_pred, target = None):
-        device = latent_pred.device
         x = latent_pred
         if target is None:
-            y = torch.randn(x.shape).to(device)
+            y = torch.randn(x.shape, requires_grad=False, 
+                            device=x.device, generator=self.torch_g)
         else:
             y = target[0:x.shape[0],:]
-        # VZ = VZLoss(device)(x, y)
         VZ = self.vz(x,y)
 
         return VZ

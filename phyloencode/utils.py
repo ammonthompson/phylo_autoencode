@@ -367,6 +367,8 @@ def get_outshape(sequential: nn.Sequential, input_channels: int, input_width: in
         if isinstance(layer, nn.Conv1d):
             width = conv1d_layer_outwidth(layer, width)
             channels = layer.out_channels
+        elif isinstance(layer, torch.nn.AdaptiveAvgPool1d):
+            width = layer.output_size
         elif isinstance(layer, nn.ConvTranspose1d):
             width = tconv1d_layer_outwidth(layer, width)
             channels = layer.out_channels
@@ -552,3 +554,5 @@ def fill_in_loss_comp_fig(val_losses, plot_label, ax, starting_epoch = 10):
     # ax.set_ylabel('Loss')
     ax.grid(True)
     ax.set_xticks(ticks=np.arange(0, len(val_losses), step=len(val_losses) // 10))
+
+

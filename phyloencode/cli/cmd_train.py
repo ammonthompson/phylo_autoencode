@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import random
 import torch
 from torch.optim import AdamW
 import numpy  as np
@@ -16,7 +17,7 @@ from phyloencode.DataProcessors     import AEData
 from phyloencode.PhyLoss            import PhyLoss
 import phyloencode.utils as utils
 
-
+# TODO: create a utils.print_settings() function
 def main():
 
     # Training settings: Architecture, num epochs, batch size, etc.
@@ -37,13 +38,31 @@ def main():
     nc          = settings["num_channels"]
     num_test    = 1000
 
+    # Set seeds    
+    if settings['seed'] is None:
+        settings['seed'] = np.random.randint(0, 2**32 - 1)    
+
+    seed = settings['seed']
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    print("seed: ", seed)
+    if settings['testing']:
+        # torch does some random stuff for more efficient training. A
+        # causes slight differences despite same seed. Use below to prevent.
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+    device = settings['device']
 
     # get formated tree data
     with h5py.File(data_fn, "r") as f:
 
         # num tips is important for masking. 
         # TODO: Check a potential discrepency in num_taxa with phyddle --format output
-        # TODO: maybe move some of this to backend: the Data object from DataProcessors should maybe handle all this
+        # TODO: maybe move some of this to backend: the Data object from DataProcessors 
+        # should maybe handle all this
             
         phy_data_np = np.array(f['phy_data'][0:ns,...], dtype = np.float32)
         # extract the specified subset of channels ("num_channels")
@@ -58,8 +77,8 @@ def main():
 
         # split off test data
         (phy_data, test_phy_data, 
-         aux_data, test_aux_data) = train_test_split(phy_data, aux_data, 
-                                                     test_size=num_test, shuffle=True)
+         aux_data, test_aux_data) = train_test_split(phy_data, aux_data, test_size=num_test, 
+                                                     shuffle=True, random_state=seed)
 
 
     ###################################
@@ -73,13 +92,13 @@ def main():
                         prop_train       = settings['proportion_train'],  
                         num_channels     = settings["num_channels"], 
                         num_chars        = settings["num_chars"],
+                        device           = settings["device"]
                         )
     
     trn_loader, val_loader = ae_data.get_dataloaders(settings["batch_size"], shuffle = True, 
                                                     num_workers = settings["num_workers"])
         
     # create model
-    # TODO: The trainer is an object that mutates a model, maybe it makes the most sense for the trainer to be an attribute of the model?
     ae_model    = AECNN(
                         num_structured_input_channel  = ae_data.num_channels, 
                         structured_input_width        = ae_data.phy_width,
@@ -92,7 +111,8 @@ def main():
                         latent_layer_type             = settings["latent_model_type"],
                         num_chars                     = settings["num_chars"],
                         char_type                     = settings["char_type"],
-                        out_prefix                    = settings["out_prefix"]
+                        out_prefix                    = settings["out_prefix"],
+                        device           = settings["device"]
                         )
     
     # optimizer
@@ -115,12 +135,12 @@ def main():
     # Loss objects (stateful)    
     # TODO: remove device from RBF class and PhyLoss, I dont think  I need it.
    
-    loss_weights = {k : v for k, v in settings.items() if k.count("_loss_weight") > 0}
+    loss_weights = {k : v for k, v in settings.items() if "_loss_weight" in k}
 
     train_loss  = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
-                               ae_model.latent_layer_type, "cuda")
+                               ae_model.latent_layer_type, device = settings["device"])
     val_loss    = PhyLoss(loss_weights, ae_data.ntax_cidx,  ae_model.char_type,
-                               ae_model.latent_layer_type, "cuda", validation = True)
+                               ae_model.latent_layer_type, device = settings["device"], validation = True)
 
 
     # create model trainer and trained model container
@@ -131,7 +151,8 @@ def main():
                         lr_scheduler    = lr_schedlr,
                         batch_size      = settings["batch_size"],
                         train_loss      = train_loss,
-                        val_loss        = val_loss
+                        val_loss        = val_loss,
+                        device           = settings["device"]
                         )
     
 
@@ -139,7 +160,6 @@ def main():
     # Train model with data from ae_data ##
     #######################################
     # create and add data loaders to trainer and train model
-
     tree_ae.set_data_loaders(train_loader=trn_loader, val_loader=val_loader) 
     tree_ae.train(num_epochs = settings["num_epochs"], seed = settings["seed"])
     if tree_ae.track_grad:
@@ -247,14 +267,17 @@ def parse_arguments():
     parser.add_argument("-pt", "--proportion-train", required = False, type = float, help = "Proportion of num-subset used for training vs validation. Default 0.85")
     parser.add_argument("-lr", "--learning-rate",   required = False, type = float, help = "Optimizer learning rate. Default 1e-3")
     parser.add_argument("-wd", "--weight-decay",    required = False, type = float, help = "Optimizer weight decay. Default 1e-3")
+    parser.add_argument("-t", "--testing",    required = False, type = bool, help = "Testing mode sets torch trianing optimization behavior to deterministic. Default True")
+    parser.add_argument("-dv", "--device",    required = False, type = bool, help = "Device. Default auto")
     return parser.parse_args()
 
 def get_default_settings():
     return {
+        "testing": True,
         "out_prefix": "out",
         "num_subset": 10000,
         "num_workers": 0,
-        "seed": np.random.randint(0, 10000),
+        "seed": np.random.randint(0, 2**32 - 1),
         "num_epochs": 100,
         "batch_size": 128,
         "num_chars": 0,
@@ -273,12 +296,14 @@ def get_default_settings():
         "char_type": "categorical",
         "proportion_train" : 0.85,
         "learning_rate" : 1e-3,
-        "weight_decay"  : 1e-3
+        "weight_decay"  : 1e-3,
+        "device" : "auto"
     }
 
 def update_settings_from_command_line(settings, args):
 
     arg_map = {
+        "testing"       : args.testing,
         "out_prefix"    : args.out_prefix,
         "num_subset"    : args.num_subset,
         "num_workers"   : args.num_workers,
@@ -301,7 +326,8 @@ def update_settings_from_command_line(settings, args):
         "char_type"     : args.char_type,
         "proportion_train": args.proportion_train,
         "learning_rate" : args.learning_rate,
-        "weight_decay"  : args.weight_decay
+        "weight_decay"  : args.weight_decay,
+        "device"        : args.device
 
     }
 
@@ -317,6 +343,11 @@ def update_settings_from_command_line(settings, args):
                 settings[k] = float(v)
             else:
                 settings[k] = v
+
+def update_settings_from_config(settings : dict, config : dict):
+    for key in settings:
+        if key in config:
+            settings[key] = config[key]
 
 # TODO: should belong to PhyloAutoencoder
 def plot_gradient_norms(layer_grad_norms, out_file, plots_per_page = 4):
@@ -340,10 +371,6 @@ def plot_gradient_norms(layer_grad_norms, out_file, plots_per_page = 4):
             pdf.savefig(fig)
             plt.close(fig)
 
-def update_settings_from_config(settings : dict, config : dict):
-    for key in settings:
-        if key in config:
-            settings[key] = config[key]
 
 def split_params_by_wd(model, wd):
     # weight decay should be zero for bias and normalization variables

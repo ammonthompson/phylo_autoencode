@@ -5,6 +5,7 @@ import h5py
 import numpy as np
 import sklearn
 import joblib
+import random
 import sklearn.preprocessing as pp
 # from sklearn.preprocessing import StandardScaler
 # from sklearn.preprocessing import MinMaxScaler
@@ -35,7 +36,9 @@ class AEData(object):
                  prop_train : float, 
                  num_channels  : int,
                  char_data_type : str = "categorical", # "continuous" or "categorical"
-                 num_chars  : int = 0):
+                 num_chars  : int = 0,
+                 seed : int = None,
+                 device : str = "auto"):
         """
         Each tree in data is assumed to be flattend in column-major order
         of a matrix of dimensions (num_channels, max_tips).
@@ -53,6 +56,18 @@ class AEData(object):
             ValueError: _description_
         """
         # TODO: phy_data and aux_data should be np.ndarray. Let the TreeDataSet constructor convert to torch.Tensor
+        if device == "auto":
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self.device = device
+        
+        self.seed = seed
+        self.torch_g = None
+        self.seed = seed 
+        if self.seed is not None:
+            # self.np_rng = np.random.default_rng(self.seed)
+            self.torch_g = torch.Generator().manual_seed(self.seed)
+
 
         self.num_channels   = num_channels
         self.char_data_type = char_data_type
@@ -84,11 +99,14 @@ class AEData(object):
         self.num_tips = aux_data[:, self.ntax_cidx]
 
         # split data 
+        # note, num_tips is NOT output by the DataLoader's __getitem__(),
+        # it is used to make mask tensors which are output by __getitem__().
         num_train = int(self.prop_train * self.phy_data.shape[0])
         (train_phy_data, val_phy_data,
          train_aux_data, val_aux_data,
          train_num_tips, val_num_tips) = train_test_split(self.phy_data, self.aux_data, self.num_tips, 
-                                                          train_size = num_train, shuffle=True)
+                                                          train_size = num_train, shuffle=True,
+                                                          random_state = self.seed)
 
         # standardize train data
         if self.char_data_type == "continuous":
@@ -118,8 +136,14 @@ class AEData(object):
                                                         num_channels, 
                                                         int(self.norm_val_phy_data.shape[1]/num_channels)),
                                                         order = "F")
+        
         self.phy_width = self.norm_train_phy_data.shape[2]
         self.aux_width = self.norm_train_aux_data.shape[1]
+
+        self.norm_train_phy_data = torch.tensor(self.norm_train_phy_data, dtype=torch.float32, device=self.device)
+        self.norm_train_aux_data = torch.tensor(self.norm_train_aux_data, dtype=torch.float32, device=self.device)
+        self.norm_val_phy_data   = torch.tensor(self.norm_val_phy_data, dtype=torch.float32, device=self.device)
+        self.norm_val_aux_data   = torch.tensor(self.norm_val_aux_data, dtype=torch.float32, device=self.device)
 
         self.train_dataset = TreeDataSet(self.norm_train_phy_data, self.norm_train_aux_data, train_num_tips)
         self.val_dataset   = TreeDataSet(self.norm_val_phy_data,   self.norm_val_aux_data,   val_num_tips)
@@ -148,9 +172,11 @@ class AEData(object):
                                            batch_size   = batch_size, 
                                            shuffle      = shuffle, 
                                            num_workers  = num_workers,
-                                           drop_last    = drop_last)
+                                           drop_last    = drop_last,
+                                           generator    = self.torch_g)
         self.val_dataloader   = DataLoader(self.val_dataset, 
-                                           batch_size   = batch_size)
+                                           batch_size   = batch_size,
+                                           generator    = self.torch_g)
         
         return self.train_dataloader, self.val_dataloader
 
@@ -196,7 +222,7 @@ class TreeDataSet(Dataset):
             mask = np.zeros(self.phy_features.shape, dtype = bool)
             for i in range(self.phy_features.shape[0]):
                 mask[i, :, :num_tips[i]] = True                
-            self.mask = torch.tensor(mask, dtype=torch.bool)
+            self.mask = torch.tensor(mask, dtype=torch.bool, device=phy_features.device)
 
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         if self.mask is not None:
