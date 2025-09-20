@@ -27,7 +27,10 @@ class AECNN(nn.Module):
                  latent_layer_type = "CNN",     # CNN, DENSE, GAUSS
                  out_prefix = "out",
                  device = "auto",
-                 seed = None):         
+                 seed = None,
+                 phy_normalizer = None,
+                 aux_normalizer = None):
+                 
         """Constructor sets up all layers needed for network.  
 
         Args:
@@ -77,6 +80,14 @@ class AECNN(nn.Module):
         if not (len(stride) == len(kernel) == len(out_channels)):
             raise ValueError("stride, kernel  and out_channels array lengths should all be equal," + 
                              f" but got lengths {len(stride)}, {len(kernel)}, {len(out_channels)}.")
+
+        # normalizers; sklearn.base.BaseEstimator
+        self.phy_normalizer = phy_normalizer
+        self.aux_normalizer = aux_normalizer
+
+        ######################################
+        # Preliminaries for layer dimensions #
+        ######################################
 
         # convolution layers parameters
         self.layer_params = {"out_channels": out_channels,
@@ -129,7 +140,7 @@ class AECNN(nn.Module):
         # Calculate final structured output width after encoder
         # get shape for latent shared concatenated layer
         # TODO: utils.get_outshape here is just used to get the encoder out_width
-        #       this can instead be controled by using adaptive avg pooling's out_size
+        #       alternatively, this can be controled by using adaptive avg pooling's out_size
         self.struct_outshape = utils.get_outshape(self.structured_encoder.cnn_layers, 
                                                   self.num_structured_input_channel, 
                                                   self.structured_input_width)
@@ -251,6 +262,7 @@ class AECNN(nn.Module):
     
     def decode(self, z: torch.Tensor, *,
                inference = False, detach = False) -> Tuple[torch.Tensor, torch.Tensor]:
+        
         is_training = self.training
         z = z.to(self.device)
 
@@ -314,7 +326,45 @@ class AECNN(nn.Module):
         finally:
             self.train(is_training)
 
-    
+    def set_normalizers(self, phy_norm, aux_norm):
+        self.phy_normalizer = phy_norm
+        self.aux_normalizer = aux_norm
+
+    # inference machinery. Handles normalization too.
+    def norm_and_encode(self, phy: np.array, aux: np.array) -> np.array:
+        # phy shape = (N, nc, mt)
+        # normalize
+        # encode
+        flat_phy = phy.reshape((phy.shape[0], -1), order = "F")
+        flat_norm_phy = self.phy_normalizer.transform(flat_phy)
+        norm_phy = torch.tensor(flat_norm_phy.reshape((flat_norm_phy.shape[0], 
+                                          self.num_structured_input_channel, 
+                                          self.structured_input_width), order = "F"), 
+                                          dtype=torch.float32)
+        norm_aux = torch.tensor(self.aux_normalizer.transform(aux), dtype = torch.float32)
+        latent = self.encode(norm_phy, norm_aux, inference = True, detach = True)
+        return latent.cpu().numpy()
+
+    def decode_and_denorm(self, latent : np.array) -> Tuple[np.array, np.array]:
+        # decode
+        # inverse_transform
+        # phy output shape is (N, nc, mt)
+        latent = torch.tensor(latent, dtype = torch.float32)
+        norm_phy, norm_aux = self.decode(latent, inference = True, detach = True)
+        flat_norm_phy = norm_phy.cpu().numpy().reshape((norm_phy.shape[0], -1), order = "F")
+        phy = self.phy_normalizer.inverse_transform(flat_norm_phy)
+        aux = self.aux_normalizer.inverse_transform(norm_aux.cpu().numpy())
+        phy = phy.reshape(norm_phy.shape, order = "F")
+        return phy, aux
+
+    def norm_predict_denorm(self, phy : np.array, aux : np.array) -> Tuple[np.array, np.array]:
+        # phy shape = (N, nc, mt)
+        # phy output shape = (N, nc, mt)
+        phy = torch.tensor(phy, dtype = torch.float32)
+        aux = torch.tensor(aux, dtype = torch.float32)
+        return self.decode_and_denorm( self.norm_and_encode(phy, aux) )
+        
+
     def write_network_to_file(self, out_fn) -> None:
         """Write network architecture to simple text file.
 

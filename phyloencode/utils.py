@@ -26,24 +26,57 @@ class SoftClip(nn.Module):
 # these classes work with datasets output from the Format step in Phyddle
 # they are used to normalize the data before training
 # they are used to create a DataSet object. See phyloencode.TreeDataSet class
+class PositiveStandardScaler(BaseEstimator, TransformerMixin):
+    # this does not use zero-padded values for standardization.
+    def __init__(self):
+        super().__init__()
+        self.mean = None
+        self.std = None
+        self.mask = None
+    
+    def fit(self, X, y=None):
+        self.mask = X > 0
+        self.mask[:, 0:2] = True  # Always include the first elements
+
+        sum_X = np.sum(X * self.mask, axis=0)
+        num_nonzero = np.sum(self.mask, axis=0)
+
+        invalid = num_nonzero <= 1
+        num_nonzero_safe = np.where(invalid, 2, num_nonzero)
+
+        self.mean = sum_X / num_nonzero_safe
+
+        residuals = (X - self.mean) * self.mask
+        self.std = np.sqrt(np.sum(residuals ** 2, axis=0) / (num_nonzero_safe - 1))
+
+        self.mean[invalid] = 0.
+        self.std[invalid] = 1.
+        self.std[self.std == 0] = 1.0
+        return self
+
+    def transform(self, X):
+        return np.array((X - self.mean) / self.std, dtype=np.float32)
+    
+    def inverse_transform(self, X):
+        return np.array((X * self.std) + self.mean, dtype=np.float32)
+
 class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
     # this is a modified version of sklearn's StandardScaler. 
     # For one-hot encoded categorical data.
-    # normalizes the data to have mean 0 and std 1.
+    # normalizes the tree data to have mean 0 and std 1.
     # ignores the categorical data
-    # uses PositiveStandardScaler (see below)
-    # TODO: disambiguate between max_tips and num_tips
+    # uses PositiveStandardScaler (see above)
 
-    def __init__(self, num_chars, num_chans, num_tips):
+    def __init__(self, num_chars, num_chans, max_tips):
         super().__init__()
 
         self.cblv_scaler = PositiveStandardScaler()
 
         self.num_chars = num_chars
         self.num_chans = num_chans
-        self.num_tips   = num_tips
+        self.max_tips   = max_tips
 
-        dim1_idx = np.arange(0, num_chans * num_tips, num_chans)
+        dim1_idx = np.arange(0, num_chans * max_tips, num_chans)
         char_idx = np.arange(num_chans - num_chars, num_chans)
         phy_idx  = np.arange(0, num_chans - num_chars)
 
@@ -65,8 +98,8 @@ class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
         char_data = X[:, self.char_idxs]
 
         # reshape -> then concatenate X_cblv and chardata -> un-reshape
-        X_cblv    = X_cblv.reshape(X.shape[0], self.num_chans - self.num_chars, self.num_tips, order = "F")
-        char_data = char_data.reshape(X.shape[0], self.num_chars, self.num_tips, order= "F")
+        X_cblv    = X_cblv.reshape(X.shape[0], self.num_chans - self.num_chars, self.max_tips, order = "F")
+        char_data = char_data.reshape(X.shape[0], self.num_chars, self.max_tips, order= "F")
         X = np.concatenate((X_cblv, char_data), axis=1)
         X = X.reshape(X.shape[0], -1, order="F")
 
@@ -85,8 +118,8 @@ class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
         X_cblv = self.cblv_scaler.inverse_transform(X_cblv)
 
         # reshape before concatenating along axis=1 ( cblv-like data and character data)
-        X_cblv = X_cblv.reshape(X.shape[0], self.num_chans - self.num_chars, self.num_tips, order="F")
-        char_data = char_data.reshape(X.shape[0], self.num_chars, self.num_tips, order="F")
+        X_cblv = X_cblv.reshape(X.shape[0], self.num_chans - self.num_chars, self.max_tips, order="F")
+        char_data = char_data.reshape(X.shape[0], self.num_chars, self.max_tips, order="F")
 
         # Concatenate the cblv-like and character data
         X = np.concatenate((X_cblv, char_data), axis=1)
@@ -289,41 +322,6 @@ class LogStandardScaler(BaseEstimator, TransformerMixin):
 
         # Reverse the shift
         return X_exp - self.min_positive_values
-
-class PositiveStandardScaler(BaseEstimator, TransformerMixin):
-    # this does not use zero-padded values for standardization.
-    # doesn't use mask (any zero is left out)
-    def __init__(self):
-        super().__init__()
-        self.mean = None
-        self.std = None
-        self.mask = None
-    
-    def fit(self, X, y=None):
-        self.mask = X > 0
-        self.mask[:, 0:2] = True  # Always include the first elements
-
-        sum_X = np.sum(X * self.mask, axis=0)
-        num_nonzero = np.sum(self.mask, axis=0)
-
-        invalid = num_nonzero <= 1
-        num_nonzero_safe = np.where(invalid, 2, num_nonzero)
-
-        self.mean = sum_X / num_nonzero_safe
-
-        residuals = (X - self.mean) * self.mask
-        self.std = np.sqrt(np.sum(residuals ** 2, axis=0) / (num_nonzero_safe - 1))
-
-        self.mean[invalid] = 0.
-        self.std[invalid] = 1.
-        self.std[self.std == 0] = 1.0
-        return self
-
-    def transform(self, X):
-        return np.array((X - self.mean) / self.std, dtype=np.float32)
-    
-    def inverse_transform(self, X):
-        return np.array((X * self.std) + self.mean, dtype=np.float32)
 
 
 # other functions

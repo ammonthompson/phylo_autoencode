@@ -97,6 +97,9 @@ def main():
     
     trn_loader, val_loader = ae_data.get_dataloaders(settings["batch_size"], shuffle = True, 
                                                     num_workers = settings["num_workers"])
+    
+    phy_normalizer, aux_normalizer = ae_data.get_normalizers()
+
         
     # create model
     ae_model    = AECNN(
@@ -112,7 +115,9 @@ def main():
                         num_chars                     = settings["num_chars"],
                         char_type                     = settings["char_type"],
                         out_prefix                    = settings["out_prefix"],
-                        device           = settings["device"]
+                        device                        = settings["device"],
+                        phy_normalizer                = phy_normalizer,
+                        aux_normalizer                = aux_normalizer
                         )
     
     # optimizer
@@ -169,7 +174,7 @@ def main():
 
     # save model and normalizers
     tree_ae.save_model(settings["out_prefix"] + ".ae_trained.pt")
-    ae_data.save_normalizers(settings["out_prefix"])
+    # ae_data.save_normalizers(settings["out_prefix"])
 
     # make encoded tree file for 5,000 random trees from training data
     rand_idx        = np.random.randint(0, ae_data.prop_train * phy_data.shape[0], 
@@ -198,7 +203,6 @@ def main():
 
     # normalize test data
     # TODO: give ae_data functionality to do all this normalization and output phydat, auxdat
-    phy_normalizer, aux_normalizer = ae_data.get_normalizers()
     phydat = phy_normalizer.transform(test_phy_data)
     auxdat = aux_normalizer.transform(test_aux_data)
     phydat = phydat.reshape((phydat.shape[0], ae_data.num_channels, ae_data.phy_width), 

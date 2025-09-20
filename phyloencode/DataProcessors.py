@@ -55,7 +55,6 @@ class AEData(object):
         Raises:
             ValueError: _description_
         """
-        # TODO: phy_data and aux_data should be np.ndarray. Let the TreeDataSet constructor convert to torch.Tensor
         if device == "auto":
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
         else:
@@ -136,15 +135,17 @@ class AEData(object):
                                                         num_channels, 
                                                         int(self.norm_val_phy_data.shape[1]/num_channels)),
                                                         order = "F")
-        
+        # TODO: not the best
         self.phy_width = self.norm_train_phy_data.shape[2]
         self.aux_width = self.norm_train_aux_data.shape[1]
 
+        # convert to torch.Tensors
         self.norm_train_phy_data = torch.tensor(self.norm_train_phy_data, dtype=torch.float32, device=self.device)
         self.norm_train_aux_data = torch.tensor(self.norm_train_aux_data, dtype=torch.float32, device=self.device)
         self.norm_val_phy_data   = torch.tensor(self.norm_val_phy_data, dtype=torch.float32, device=self.device)
         self.norm_val_aux_data   = torch.tensor(self.norm_val_aux_data, dtype=torch.float32, device=self.device)
 
+        # create Dataset objects 
         self.train_dataset = TreeDataSet(self.norm_train_phy_data, self.norm_train_aux_data, train_num_tips)
         self.val_dataset   = TreeDataSet(self.norm_val_phy_data,   self.norm_val_aux_data,   val_num_tips)
 

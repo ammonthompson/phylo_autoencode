@@ -16,8 +16,8 @@ from phyloencode.utils import get_num_tips
 def main ():
     cmd = argparse.ArgumentParser(description="Encode phylogenetic trees and auxiliary data with trained autodencoder.")
     cmd.add_argument("-m", "--model", required=True, help="Path to the trained model.pt file")
-    cmd.add_argument("-p", "--phy-normalizer", required=True, help="Path to the phy_normalizer.pkl file")
-    cmd.add_argument("-a", "--aux-normalizer", required=True, help="Path to the aux_normalizer.pkl file")
+    # cmd.add_argument("-p", "--phy-normalizer", required=True, help="Path to the phy_normalizer.pkl file")
+    # cmd.add_argument("-a", "--aux-normalizer", required=True, help="Path to the aux_normalizer.pkl file")
     cmd.add_argument("-t", "--tree-data", required=True, help="Path to the phyddle formated tree CBLV(S). If using a phyddle -s F output hdf5, " \
     "use the key 'phy_data' for the tree data and 'aux_data' for the auxiliary data. If using csv, for the cblv tree data, then" \
         " use the -s [--aux-data] flag to specify the auxiliary data file.")
@@ -29,8 +29,8 @@ def main ():
     args = cmd.parse_args()
 
     ae_model_fn       = utils.file_exists(args.model)
-    phy_normalizer_fn = utils.file_exists(args.phy_normalizer)
-    aux_normalizer_fn = utils.file_exists(args.aux_normalizer)
+    # phy_normalizer_fn = utils.file_exists(args.phy_normalizer)
+    # aux_normalizer_fn = utils.file_exists(args.aux_normalizer)
     tree_data_fn      = utils.file_exists(args.tree_data)
     aux_data_fn       = utils.file_exists(args.aux_data) if args.aux_data is not None else None
     num_channels      = args.num_channels if args.num_channels is not None else None
@@ -40,8 +40,6 @@ def main ():
         raise ValueError("If using num_tips, then num_channels must also be specified. " \
         "If using num_channels, then num_tips must also be specified.")
 
-
-
     
     if args.out_prefix is None:
         out_file_prefix = tree_data_fn.split('/')[-1].split('.')[0]
@@ -50,16 +48,18 @@ def main ():
 
     # load trained model and normalizers and create PhyloAutoencoder object
     ae_model       = torch.load(ae_model_fn, weights_only=False)
-    phy_normalizer = joblib.load(phy_normalizer_fn)
-    aux_normalizer = joblib.load(aux_normalizer_fn)
+    # phy_normalizer = joblib.load(phy_normalizer_fn)
+    # aux_normalizer = joblib.load(aux_normalizer_fn)
 
     # import test data
     # test if file type is hdf5
     # if not, raise error
     if tree_data_fn.endswith('.hdf5') or tree_data_fn.endswith('.h5py'):
         with h5py.File(tree_data_fn, "r") as f:
-            test_phy_data = torch.tensor(f['phy_data'][...], dtype = torch.float32)
-            test_aux_data = torch.tensor(f['aux_data'][...], dtype = torch.float32)
+            # test_phy_data = torch.tensor(f['phy_data'][...], dtype = torch.float32)
+            # test_aux_data = torch.tensor(f['aux_data'][...], dtype = torch.float32)
+            test_phy_data = f['phy_data'][...]
+            test_aux_data = f['aux_data'][...]
 
             # TODO: Probably not necessary
             if len(test_aux_data.shape) == 1:
@@ -81,8 +81,8 @@ def main ():
                                     index_col = None).to_numpy(dtype=np.float32)
         test_aux_data = pd.read_csv(aux_data_fn, header = None, 
                                     index_col = None).to_numpy(dtype=np.float32)
-        test_phy_data = torch.tensor(test_phy_data, dtype = torch.float32)
-        test_aux_data = torch.tensor(test_aux_data, dtype = torch.float32)
+        # test_phy_data = torch.tensor(test_phy_data, dtype = torch.float32)
+        # test_aux_data = torch.tensor(test_aux_data, dtype = torch.float32)
     else:
         raise ValueError("Input file must be in hdf5 or csv format.")
     
@@ -92,21 +92,25 @@ def main ():
         if test_phy_data.shape[1] % max_tips != 0:
             raise ValueError("Number of tips does not match the number of tips in the trained model.")  
         # reshape, and then reduce the tensor to the number of channels desired (might be fewer than the original)
-        test_phy_data = test_phy_data.reshape(-1, max_tips, nc)[:, :, :num_channels].flatten(start_dim=1)
-    
-    # make predictions with trained model
-    tree_autoencoder = PhyloAutoencoder(model = ae_model, optimizer = torch.optim.Adam)
+        # test_phy_data = test_phy_data.reshape(-1, max_tips, nc)[:, :, :num_channels].flatten(start_dim=1)
+        test_phy_data = test_phy_data.reshape(-1, max_tips, nc)[:, :, :num_channels].reshape((test_phy_data.shape[0], -1))
+        test_phy_data = test_phy_data.reshape((test_phy_data.shape[0], ae_model.num_structured_input_channel, 
+                            int(test_phy_data.shape[1]/ae_model.num_structured_input_channel)), order = "F")
 
-    phydat = phy_normalizer.transform(test_phy_data)
-    auxdat = aux_normalizer.transform(test_aux_data)
-    phydat = phydat.reshape((phydat.shape[0], ae_model.num_structured_input_channel, 
-                            int(phydat.shape[1]/ae_model.num_structured_input_channel)), order = "F")
-    phydat = torch.Tensor(phydat)
-    auxdat = torch.Tensor(auxdat)
+    # make predictions with trained model
+    # tree_autoencoder = PhyloAutoencoder(model = ae_model, optimizer = torch.optim.Adam)
+
+    # phydat = phy_normalizer.transform(test_phy_data)
+    # auxdat = aux_normalizer.transform(test_aux_data)
+    # test_phy_data = test_phy_data.reshape((test_phy_data.shape[0], ae_model.num_structured_input_channel, 
+    #                         int(test_phy_data.shape[1]/ae_model.num_structured_input_channel)), order = "F")
+    # phydat = torch.Tensor(test_phy_data)
+    # auxdat = torch.Tensor(test_aux_data)
 
     # make encoded tree file
-    latent_dat = tree_autoencoder.tree_encode(phydat, auxdat, inference=True, detach=True)
-    latent_dat_df = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), columns = None, index = None)
+    # latent_dat = tree_autoencoder.tree_encode(phydat, auxdat, inference=True, detach=True)
+    latent_dat = ae_model.norm_and_encode(test_phy_data, test_aux_data)
+    latent_dat_df = pd.DataFrame(latent_dat, columns = None, index = None)
     latent_dat_df.to_csv(out_file_prefix + ".ae_encoded.csv", header = None, index = None)
 
     print("Wrote to: " + out_file_prefix + ".ae_encoded.csv")
