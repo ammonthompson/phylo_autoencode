@@ -12,7 +12,9 @@ from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 import os
 import argparse
-
+import dendropy as dp
+import re
+import pandas as pd
 
 # Soft clipping functionality
 class SoftClip(nn.Module):
@@ -30,35 +32,35 @@ class PositiveStandardScaler(BaseEstimator, TransformerMixin):
     # this does not use zero-padded values for standardization.
     def __init__(self):
         super().__init__()
-        self.mean = None
-        self.std = None
-        self.mask = None
-    
-    def fit(self, X, y=None):
-        self.mask = X > 0
-        self.mask[:, 0:2] = True  # Always include the first elements
+        self.mean_ = None
+        self.std_ = None
+        self.mask_ = None
 
-        sum_X = np.sum(X * self.mask, axis=0)
-        num_nonzero = np.sum(self.mask, axis=0)
+    def fit(self, X, y=None):
+        self.mask_ = X > 0
+        self.mask_[:, 0:2] = True  # Always include the first elements
+
+        sum_X = np.sum(X * self.mask_, axis=0)
+        num_nonzero = np.sum(self.mask_, axis=0)
 
         invalid = num_nonzero <= 1
         num_nonzero_safe = np.where(invalid, 2, num_nonzero)
 
-        self.mean = sum_X / num_nonzero_safe
+        self.mean_ = sum_X / num_nonzero_safe
 
-        residuals = (X - self.mean) * self.mask
-        self.std = np.sqrt(np.sum(residuals ** 2, axis=0) / (num_nonzero_safe - 1))
+        residuals = (X - self.mean_) * self.mask_
+        self.std_ = np.sqrt(np.sum(residuals ** 2, axis=0) / (num_nonzero_safe - 1))
 
-        self.mean[invalid] = 0.
-        self.std[invalid] = 1.
-        self.std[self.std == 0] = 1.0
+        self.mean_[invalid] = 0.
+        self.std_[invalid] = 1.
+        self.std_[self.std_ == 0] = 1.0
         return self
 
     def transform(self, X):
-        return np.array((X - self.mean) / self.std, dtype=np.float32)
+        return np.array((X - self.mean_) / self.std_, dtype=np.float32)
     
     def inverse_transform(self, X):
-        return np.array((X * self.std) + self.mean, dtype=np.float32)
+        return np.array(X * self.std_ + self.mean_, dtype=np.float32)
 
 class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
     # this is a modified version of sklearn's StandardScaler. 
@@ -74,7 +76,7 @@ class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
 
         self.num_chars = num_chars
         self.num_chans = num_chans
-        self.max_tips   = max_tips
+        self.max_tips  = max_tips
 
         dim1_idx = np.arange(0, num_chans * max_tips, num_chans)
         char_idx = np.arange(num_chans - num_chars, num_chans)
@@ -88,6 +90,8 @@ class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
         # Ensure X is a NumPy array
         X = np.asarray(X)
         self.cblv_scaler.fit(X[:, self.tree_idxs])
+        self.mean_ = self.cblv_scaler.mean_
+        self.std_  = self.cblv_scaler.std_
         return self
     
     def transform(self, X):
@@ -231,17 +235,17 @@ class LogitStandardScaler(BaseEstimator, TransformerMixin):
 class StandardMinMaxScaler(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         X = np.asarray(X)
-        self.mean = X.mean(axis=0)
-        self.std = X.std(axis=0)
-        self.std[np.where(self.std == 0)] = 1.
-        X_std = (X - self.mean) / self.std
+        self.mean_ = X.mean(axis=0)
+        self.std_ = X.std(axis=0)
+        self.std_[np.where(self.std_ == 0)] = 1.
+        X_std = (X - self.mean_) / self.std_
         self.min = X_std.min(axis=0)
         self.max = X_std.max(axis=0)
         return self
 
     def transform(self, X):
         X = np.asarray(X)
-        X_std = (X - self.mean) / self.std
+        X_std = (X - self.mean_) / self.std_
         # Avoid division by zero
         scale = np.where(self.max != self.min, self.max - self.min, 1)
         X_scaled = 2 * (X_std - self.min) / scale - 1
@@ -249,7 +253,7 @@ class StandardMinMaxScaler(BaseEstimator, TransformerMixin):
 
     def inverse_transform(self, X_scaled):
         X_std = ((X_scaled + 1) / 2) * (self.max - self.min) + self.min
-        return X_std * self.std + self.mean
+        return X_std * self.std_ + self.mean_
     
 class LogScaler(BaseEstimator, TransformerMixin):
     def __init__(self, min_pos = 1e-8):
@@ -415,31 +419,6 @@ def get_num_tips(phydata: np.ndarray, max_tips: int):
                        for x in range(phydata.shape[0])], dtype=torch.float32).view(-1,1)
     return nt + 1
 
-def set_pred_pad_to_zero(phy_pred: np.ndarray, pred_num_tips: np.ndarray) -> np.ndarray:
-    """
-    phy_pred: shape (batch_size, num_channels, max_tips)
-    pred_num_tips: shape (batch_size,) or (batch_size, 1)
-    """
-    bs, nc, mt = phy_pred.shape
-
-    # Ensure pred_num_tips is (bs, 1)
-    pred_num_tips = pred_num_tips.reshape(-1, 1)
-
-    # idx_grid: shape (bs, mt)
-    idx_grid = np.arange(mt).reshape(1, -1)  # (1, mt)
-    idx_grid = np.tile(idx_grid, (bs, 1))    # (bs, mt)
-
-    # Mask: True for valid tips, False for padding
-    ntip_mask = (idx_grid <= np.round(pred_num_tips, decimals = 0))   # (bs, mt)
-
-    # Expand mask to (bs, nc, mt)
-    ntip_mask = np.expand_dims(ntip_mask, axis=1)
-
-    # masked_phy_pred = phy_pred * ntip_mask
-    masked_phy_pred = np.where(ntip_mask, phy_pred, 0.0)
-
-    return masked_phy_pred
-
 def phylo_scatterplot(pred_phy_data, true_phy_data, 
                       pred_aux_data, true_aux_data, 
                       aux_names, output):
@@ -478,7 +457,7 @@ def phylo_scatterplot(pred_phy_data, true_phy_data,
             f.savefig(fig)
             plt.close()
 
-        #plot cblv(+s) data
+        #plot cblv data
         for i in range(pred_phy_data.shape[1] // 9):
             fig, ax = plt.subplots(3, 3, sharex=True, sharey=True)
             fig.tight_layout(pad=2., h_pad=2., w_pad = 2.)
@@ -530,27 +509,195 @@ def make_loss_plots(train_loss, val_loss = None,  *, latent_layer_type = None,
     # TODO: fix x-axis tick marks            
     num_subplots = 6 if latent_layer_type == "GAUSS" else 4
     fig, axs = plt.subplots(num_subplots//2, 2, figsize=(11, 8), sharex=True)
-    # axs = axs.flatten()
     fig.subplots_adjust(hspace=0.4, wspace=0.4)
-    fill_in_loss_comp_fig(val_loss.epoch_total_loss, "combined", axs[0,0], starting_epoch)
-    fill_in_loss_comp_fig(val_loss.epoch_phy_loss, "phy", axs[0,1], starting_epoch)
-    fill_in_loss_comp_fig(val_loss.epoch_char_loss, "char", axs[1,1], starting_epoch)
-    fill_in_loss_comp_fig(val_loss.epoch_aux_loss, "aux", axs[1,0], starting_epoch)
+    fill_in_loss_comp_fig((val_loss.epoch_total_loss, train_loss.epoch_total_loss), 
+                          "combined", axs[0,0], starting_epoch)
+    axs[0,0].legend()
+    fill_in_loss_comp_fig((val_loss.epoch_phy_loss, train_loss.epoch_phy_loss),
+                          "phy", axs[0,1], starting_epoch)
+    fill_in_loss_comp_fig((val_loss.epoch_char_loss, train_loss.epoch_char_loss),
+                          "char", axs[1,1], starting_epoch)
+    fill_in_loss_comp_fig((val_loss.epoch_aux_loss, train_loss.epoch_aux_loss),
+                          "aux", axs[1,0], starting_epoch)
     if latent_layer_type == "GAUSS":
-        fill_in_loss_comp_fig(val_loss.epoch_mmd_loss, "mmd", axs[2,0], starting_epoch)
-        fill_in_loss_comp_fig(val_loss.epoch_vz_loss, "vz", axs[2,1], starting_epoch)
+        fill_in_loss_comp_fig((val_loss.epoch_mmd_loss, train_loss.epoch_mmd_loss),
+                              "mmd", axs[2,0], starting_epoch)
+        fill_in_loss_comp_fig((val_loss.epoch_vz_loss, train_loss.epoch_vz_loss),
+                              "vz", axs[2,1], starting_epoch)
     plt.savefig(out_prefix + ".component_loss.pdf", bbox_inches='tight')
     plt.close(fig)
 
-def fill_in_loss_comp_fig(val_losses, plot_label, ax, starting_epoch = 10):
-    ax.plot(list(range(len(val_losses)))[starting_epoch:], 
-            np.log10(val_losses[starting_epoch:]), label=plot_label, c="b")
-            # val_losses[starting_epoch:], label=plot_label, c="b")
+def fill_in_loss_comp_fig(losses, plot_label, ax, starting_epoch = 10):
+    ax.plot(list(range(len(losses[0])))[starting_epoch:], 
+            np.log10(losses[0][starting_epoch:]), label="Validation", c="b")
+    ax.plot(list(range(len(losses[1])))[starting_epoch:], 
+            np.log10(losses[1][starting_epoch:]), label="Training", c="r")
     ax.set_title(f"{plot_label} Loss")
     ax.set_xlabel('Epochs')
     ax.set_ylabel('Log10 Loss')
     # ax.set_ylabel('Loss')
     ax.grid(True)
-    ax.set_xticks(ticks=np.arange(0, len(val_losses), step=len(val_losses) // 10))
+    ax.set_xticks(ticks=np.arange(0, len(losses[0]), step=len(losses[0]) // 10))
+
+def set_pred_pad_to_zero(phy_pred: np.ndarray, pred_num_tips: np.ndarray) -> np.ndarray:
+    """
+    phy_pred: shape (batch_size, num_channels, max_tips)
+    pred_num_tips: shape (batch_size,) or (batch_size, 1)
+    """
+    bs, nc, mt = phy_pred.shape
+
+    # Ensure pred_num_tips is (bs, 1)
+    pred_num_tips = pred_num_tips.reshape(-1, 1)
+
+    # idx_grid: shape (bs, mt)
+    idx_grid = np.arange(mt).reshape(1, -1)  # (1, mt)
+    idx_grid = np.tile(idx_grid, (bs, 1))    # (bs, mt)
+
+    # Mask: True for valid tips, False for padding
+    ntip_mask = (idx_grid <= np.round(pred_num_tips, decimals = 0))   # (bs, mt)
+
+    # Expand mask to (bs, nc, mt)
+    ntip_mask = np.expand_dims(ntip_mask, axis=1)
+
+    # masked_phy_pred = phy_pred * ntip_mask
+    masked_phy_pred = np.where(ntip_mask, phy_pred, 0.0)
+
+    return masked_phy_pred
+
+########################
+# cblv -> newixk/nexus #
+########################
+def _get_node_heights(y, num_tips, chars = None):
+    # y is a dataframe with shape (2, max_num_tips)
+    # inorder node heights
+    nodes = [ None ] * (2*num_tips - 1)
+
+    for i in range(num_tips):
+    
+        # node heights
+        int_height = y.iloc[1,i]
+        tip_height = y.iloc[0,i] + int_height
+        if(chars is not None):
+            tip_char = {"char_" + str(k) : str(np.round(v, decimals=2).item()) 
+                    for k,v in enumerate(chars[:,i])}
+
+        # make tip node
+        tip_nd = dp.Node(label=f't{i}')
+        tip_nd.height = tip_height
+        tip_nd.value = y.iloc[0,i]
+        tip_nd.index = 2*i
+        if chars is not None:
+            for key, value in tip_char.items():
+                tip_nd.annotations.add_new(key, value)
+
+
+       # Debugging: Print annotations for the tip node
+        # print(f"Tip Node {tip_nd.label} Annotations: {tip_nd.annotations}")
+
+
+        nodes[tip_nd.index] = tip_nd
+
+        # do not make int node for first tip
+        if i == 0:
+            continue
+        
+        # make int node
+        int_nd = dp.Node(label=f'n{i}')
+        int_nd.height = int_height
+        int_nd.value = y.iloc[1,i]
+        int_nd.index = 2*i - 1
+        nodes[int_nd.index] = int_nd
+
+    
+
+    return nodes
+
+# find oldest internal node from list
+def _find_oldest_int_node(nodes):
+    oldest = 1e6
+    index = -1
+    for i in range(1,len(nodes),2):
+        if nodes[i].height <= oldest:
+            index = i
+            oldest = nodes[i].height
+    return nodes[index]
+
+# build (left,right) node relationships
+def _recurse(nodes, nd):
+    
+    # tip node
+    # if len(nodes) == 1:
+    #     # do nothing
+    #     pass
+    if nd.label.startswith('t'):
+        return nd
+
+
+    # internal node
+    else:
+        # find left and right clades
+        idx = [ v.index for v in nodes ].index(nd.index)
+        nodes_left = nodes[:idx]
+        nodes_right = nodes[(idx+1):]
+
+        # find daughters
+        nd_left  = _find_oldest_int_node(nodes_left)
+        nd_right = _find_oldest_int_node(nodes_right)
+
+        # recurse
+        nd_left  = _recurse(nodes_left, nd_left)
+        nd_right = _recurse(nodes_right, nd_right)
+
+        # attach daughters
+        nd.add_child(nd_left)
+        nd.add_child(nd_right)
+
+        # update edge lengths
+        # for i,ch in enumerate(nd.child_nodes()):
+        for ch in nd.child_nodes():
+            ch.edge_length = ch.height - nd.height
+    
+    return nd
+
+# print newick strings to stdout
+def convert_to_newick(cblv, num_tips, char_data):
+    '''
+    Convert cblv format to newick format and print to stdout.
+    cblv: cblv format, shape = (N, P, W), P is num phy channels
+    num_tips: number of tips in each tree, shape = (N,)
+    char_data: shape = (N, K, W), K is num char channels
+    '''
+
+    # loop through each tree encoded in cblv format and 
+    # convert to newick string then print to stdout
+    newick = []
+    for i in range(cblv.shape[0]):
+        num_tips_i = int(round(num_tips[i], ndigits = 0))
+        if num_tips_i < 2:
+            raise ValueError(f"num tips = {num_tips_i}, but should should be > 1.")
+    
+        # cblv is first two channels
+        cblv_i = cblv[i, 0:2, 0:num_tips_i]
+
+        char_data_i = char_data[i, :, 0:num_tips_i]
+     
+        nodes = _get_node_heights(pd.DataFrame(cblv_i), num_tips_i, char_data_i)
+        heights = [ nd.height for nd in nodes ]        
+
+        # find root node with smallest height and is an internal node (label starts with 'n')
+        min_int_node = min([ nd.height for nd in nodes if nd.label.startswith('n') ])
+        idx_root = heights.index(min_int_node)
+        nd_root = nodes[idx_root]     
+        nd_root = _recurse(nodes, nd_root)
+
+        phy_decode = dp.Tree(seed_node=nd_root)
+
+        tree_string = phy_decode.as_string("newick", suppress_leaf_node_labels=False, 
+                                            suppress_annotations=False)
+
+        newick.append(tree_string) 
+        # newick.append(num_tips_i)    
+
+    return newick
 
 

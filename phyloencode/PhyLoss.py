@@ -14,6 +14,7 @@ import random
 #   should return a tuple (weighted loss, unweighted loss)
 # additionaly: abstract fields and methods for setting, getting component losses
 
+
 class PhyLoss(nn.Module):
     """Statefull. performs loss calculation and holds batch and 
         epoch mean losses for all components.
@@ -221,6 +222,7 @@ class PhyLoss(nn.Module):
         # if cblv-like data, use the first two channels in the loss
         # else if augmented cblv-like data, use the first four channels in the data
         # TODO: instead of computing mask.sum() you can pass in num_tips 
+        # TODO: 
         if mask is None:
             batch_mean_tree_loss = fun.mse_loss(x, y, reduction = "mean") 
         else:
@@ -238,7 +240,7 @@ class PhyLoss(nn.Module):
 
         Args:
         # TODO: fix this doc string (num_chars)
-            x (torch.Tensor): Reconstructed character data.
+            x (torch.Tensor): Reconstructed character data logits.
             y (torch.Tensor): Original character data.
             is_categorical (bool): Whether the character data is categorical.
             mask : tips that are just padding
@@ -249,7 +251,8 @@ class PhyLoss(nn.Module):
         # TODO: instead of computing mask.sum() you can pass in num_tips 
 
         if self.char_type == "categorical": 
-            char_loss = fun.cross_entropy(x, y, reduction = 'none') 
+            y_max_idx = y.argmax(dim=1)
+            char_loss = fun.cross_entropy(x, y_max_idx, reduction = 'none') 
         else:
             char_loss = fun.mse_loss(x, y, reduction = 'none')
 

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # test a pretrained model
-from phyloencode.PhyloAutoencoder import PhyloAutoencoder
+# from phyloencode.PhyloAutoencoder import PhyloAutoencoder
 import phyloencode.utils as utils
 import torch
-import joblib
-import h5py
+# import joblib
+# import h5py
 import numpy as np
 import pandas as pd
-import os
+# import os
 import argparse
 
 # takes in an encoded tree (encoded by the same trained model as the decoder)
@@ -18,17 +18,12 @@ import argparse
 def main ():
     cmd = argparse.ArgumentParser(description="Encode phylogenetic trees and auxiliary data with trained autodencoder.")
     cmd.add_argument("-m", "--model", required=True, help="Path to the trained model.pt file")
-    # cmd.add_argument("-p", "--phy-normalizer", required=True, help="Path to the phy_normalizer.pkl file")
-    # cmd.add_argument("-a", "--aux-normalizer", required=True, help="Path to the aux_normalizer.pkl file")
     cmd.add_argument("-e", "--encoded-data", required=True, help="Path to the model encoded data file")
-    # cmd.add_argument("-c", "--num-latent-channels", required=True, help="Number of channels in the encoded data (latent space)")
     cmd.add_argument("-o", "--out-prefix", required=False, help="Path to out file prefix")
 
     args = cmd.parse_args()
 
     ae_model_fn       = utils.file_exists(args.model)
-    # phy_normalizer_fn = utils.file_exists(args.phy_normalizer)
-    # aux_normalizer_fn = utils.file_exists(args.aux_normalizer)
     encoded_data_fn   = utils.file_exists(args.encoded_data)
     
     if args.out_prefix is None:
@@ -37,40 +32,12 @@ def main ():
         out_file_prefix = args.out_prefix
 
     # load trained model and normalizers and create PhyloAutoencoder object
-    ae_model       = torch.load(ae_model_fn, weights_only=False)
-    # phy_normalizer = joblib.load(phy_normalizer_fn)
-    # aux_normalizer = joblib.load(aux_normalizer_fn)
-
- 
-    # tree_ae = PhyloAutoencoder(model = ae_model, optimizer = torch.optim.Adam)
+    ae_model = torch.load(ae_model_fn, weights_only=False)
 
     # import test data
     encoded_data = pd.read_csv(encoded_data_fn, header = None, index_col = None).to_numpy(dtype=np.float32)
-    # encoded_data = torch.tensor(encoded_data, dtype = torch.float32)
-
-
-
 
     test_phy_data, test_aux_data = ae_model.decode_and_denorm(encoded_data)
-    # decode the encoded data
-    # test_phy_data, test_aux_data = tree_ae.latent_decode(encoded_data, inference=True, detach=True)
-
-    # test_phy_data = test_phy_data.detach().to('cpu').numpy()
-    # N, nc, mt = test_phy_data.shape
-
-    # test_phy_data = phy_normalizer.inverse_transform(test_phy_data.reshape((test_phy_data.shape[0], -1), order = "F"))
-    
-    # test_aux_data = test_aux_data.detach().to('cpu').numpy()
-    # test_aux_data = aux_normalizer.inverse_transform(test_aux_data)
-
-    # # set predicted padding to zero
-    # test_phy_data = test_phy_data.reshape((N, nc, mt), order = "F")
-
-    # test_phy_data, test_aux_data = ae_model.decode_and_denorm(encoded_data)
-
-
-
-
 
     test_phy_data = utils.set_pred_pad_to_zero(test_phy_data,  test_aux_data[:, ae_model.aux_numtips_idx])    
     test_phy_data = test_phy_data.reshape((test_phy_data.shape[0], -1), order = "F")

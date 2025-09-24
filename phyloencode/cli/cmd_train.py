@@ -17,7 +17,9 @@ from phyloencode.DataProcessors     import AEData
 from phyloencode.PhyLoss            import PhyLoss
 import phyloencode.utils as utils
 
-# TODO: create a utils.print_settings() function
+# TODO: take in a list of label key words to be included in aux dat eg. ['log_R0', 'log_sample',...]
+#       these should be stacked onto the aux variable, or should I create a labels subnetwork in the model?
+# TODO: includ min tips
 def main():
 
     # Training settings: Architecture, num epochs, batch size, etc.
@@ -40,8 +42,7 @@ def main():
 
     # Set seeds    
     if settings['seed'] is None:
-        settings['seed'] = np.random.randint(0, 2**32 - 1)    
-
+        settings['seed'] = np.random.randint(0, 2**32 - 1)   
     seed = settings['seed']
     random.seed(seed)
     np.random.seed(seed)
@@ -49,17 +50,16 @@ def main():
     torch.cuda.manual_seed_all(seed)
     print("seed: ", seed)
     if settings['testing']:
-        # torch does some random stuff for more efficient training. A
-        # causes slight differences despite same seed. Use below to prevent.
+        # torch does some random stuff for more efficient training. 
+        # causes slight differences despite same seed. Use below for exact.
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-    device = settings['device']
+    save_settings(settings, settings['out_prefix'] + "_settings.csv")
 
     # get formated tree data
     with h5py.File(data_fn, "r") as f:
 
-        # num tips is important for masking. 
         # TODO: Check a potential discrepency in num_taxa with phyddle --format output
         # TODO: maybe move some of this to backend: the Data object from DataProcessors 
         # should maybe handle all this
@@ -79,7 +79,7 @@ def main():
         (phy_data, test_phy_data, 
          aux_data, test_aux_data) = train_test_split(phy_data, aux_data, test_size=num_test, 
                                                      shuffle=True, random_state=seed)
-
+        
 
     ###################################
     # Set up network training objects #
@@ -157,14 +157,13 @@ def main():
                         batch_size      = settings["batch_size"],
                         train_loss      = train_loss,
                         val_loss        = val_loss,
-                        device           = settings["device"]
+                        device          = settings["device"]
                         )
     
 
-    #######################################
-    # Train model with data from ae_data ##
-    #######################################
-    # create and add data loaders to trainer and train model
+    #################################################################
+    # Train ae_model with data from ae_data using trainer, tree_ae ##
+    #################################################################
     tree_ae.set_data_loaders(train_loader=trn_loader, val_loader=val_loader) 
     tree_ae.train(num_epochs = settings["num_epochs"], seed = settings["seed"])
     if tree_ae.track_grad:
@@ -172,18 +171,18 @@ def main():
                             settings["out_prefix"] + ".layer_grad_norms.pdf")
             
 
-    # save model and normalizers
+    # save model with normalizers
     tree_ae.save_model(settings["out_prefix"] + ".ae_trained.pt")
-    # ae_data.save_normalizers(settings["out_prefix"])
 
     # make encoded tree file for 5,000 random trees from training data
     rand_idx        = np.random.randint(0, ae_data.prop_train * phy_data.shape[0], 
                                         size = min(5000, phy_data.shape[0]))
     rand_train_phy  = torch.Tensor(ae_data.norm_train_phy_data[rand_idx,...])
     rand_train_aux  = torch.Tensor(ae_data.norm_train_aux_data[rand_idx,...])
-    latent_dat      = tree_ae.tree_encode(rand_train_phy, rand_train_aux)
+    latent_dat      = ae_model.encode(rand_train_phy, rand_train_aux, 
+                                      inference=True, detach=True)
     latent_dat_df   = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), 
-                                 columns = None, index = None)
+                                    columns = None, index = None)
     latent_dat_df.to_csv(settings["out_prefix"] + ".traindat_latent.csv", 
                          header = False, index = False)
 
@@ -194,39 +193,21 @@ def main():
     #####################################################
 
     # save true values of test data in cblv format
-    phy_true_df = pd.DataFrame(test_phy_data.numpy())
-    aux_true_df = pd.DataFrame(test_aux_data.numpy())
+    phy_true_df = pd.DataFrame(test_phy_data)#.numpy())
+    aux_true_df = pd.DataFrame(test_aux_data)#.numpy())
     phy_true_df.to_csv(settings["out_prefix"] + ".phy_true.cblv.csv", 
                        header = False, index = False)
     aux_true_df.to_csv(settings["out_prefix"] + ".aux_true.csv", 
                        header = False, index = False)
 
-    # normalize test data
-    # TODO: give ae_data functionality to do all this normalization and output phydat, auxdat
-    phydat = phy_normalizer.transform(test_phy_data)
-    auxdat = aux_normalizer.transform(test_aux_data)
-    phydat = phydat.reshape((phydat.shape[0], ae_data.num_channels, ae_data.phy_width), 
-                            order = "F")
-    phydat = torch.Tensor(phydat)
-    auxdat = torch.Tensor(auxdat)
 
-    # make predictions for test data (latent and reconstructed)
-    test_latent_dat = tree_ae.tree_encode(phydat, auxdat)
-    latent_testdat_df = pd.DataFrame(test_latent_dat.detach().to('cpu').numpy(), 
-                                     columns = None, index = None)
+    test_latent_dat = ae_model.norm_and_encode(test_phy_data, test_aux_data)
+    latent_testdat_df = pd.DataFrame(test_latent_dat, columns = None, index = None)
     latent_testdat_df.to_csv(settings["out_prefix"] + ".testdat_latent.csv", 
                              header = False, index = False)
 
-    phy_pred, aux_pred = tree_ae.predict(phydat, auxdat, inference=True, detach = True)
-    
-
-    # transform and flatten predicted data
-    phy_pred  = phy_normalizer.inverse_transform(phy_pred.reshape((phy_pred.shape[0], -1), order = "F"))
-    aux_pred  = aux_normalizer.inverse_transform(aux_pred)
-
-
-    # set predicted padding to zeros  (using predicted num tips)
-    phy_pred = phy_pred.reshape((phy_pred.shape[0], ae_data.num_channels, ae_data.phy_width), order = "F")
+    # # set predicted padding to zeros  (using predicted num tips)
+    phy_pred, aux_pred = ae_model.norm_predict_denorm(test_phy_data, test_aux_data)
     phy_pred = utils.set_pred_pad_to_zero(phy_pred,  aux_pred[:,ae_data.ntax_cidx])    
     phy_pred = phy_pred.reshape((phy_pred.shape[0], -1), order = "F")
 
@@ -352,6 +333,13 @@ def update_settings_from_config(settings : dict, config : dict):
     for key in settings:
         if key in config:
             settings[key] = config[key]
+
+def save_settings(settings, out_file):
+    df_index= [x for x in settings.keys()]
+    df_val  = [str(x) for x in settings.values()]
+    df = pd.DataFrame(df_val, index=df_index, columns=None)
+    df.to_csv(out_file, sep="\t", header = False)
+    print("Settings saved to", out_file)
 
 # TODO: should belong to PhyloAutoencoder
 def plot_gradient_norms(layer_grad_norms, out_file, plots_per_page = 4):

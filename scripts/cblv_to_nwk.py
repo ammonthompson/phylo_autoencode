@@ -6,13 +6,14 @@ import pandas as pd
 import h5py
 import argparse
 import re
+import phyloencode.utils as utils
 
-from phyddle.format import Formatter as fmt
+# from phyddle.format import Formatter as fmt
 from string import ascii_lowercase, ascii_uppercase
 
 import sys
 
-
+# TODO: same functions are in utils now, prob can delete all through convert_to_newick
 # prepare inorder node heights
 def get_node_heights(y, num_tips, chars = None):
     # y is a dataframe with shape (2, max_num_tips)
@@ -120,7 +121,8 @@ def convert_to_newick(cblv, num_tips, char_data):
     num_tips: number of tips in each tree
     '''
 
-    # loop through each tree encoded in cblv format and convert to newick string then print to stdout
+    # loop through each tree encoded in cblv format and 
+    # convert to newick string then print to stdout
     for i in range(cblv.shape[0]):
         num_tips_i = int(num_tips[i])
     
@@ -142,7 +144,8 @@ def convert_to_newick(cblv, num_tips, char_data):
         phy_decode = dp.Tree(seed_node=nd_root)
 
              
-        print(phy_decode.as_string("newick", suppress_leaf_node_labels=False, suppress_annotations=False))
+        print(phy_decode.as_string("newick", suppress_leaf_node_labels=False, 
+                                   suppress_annotations=False))
 
 
 def main():
@@ -183,7 +186,8 @@ def main():
         num_tips = [int(args.max_tips) for i in range(phy_data.shape[0])]
 
     # convert to cblv format
-    cblvs = phy_data.reshape((phy_data.shape[0], phy_data.shape[1]//max_tips, max_tips), order = "F")
+    num_chans = phy_data.shape[1]//max_tips
+    cblvs = phy_data.reshape((phy_data.shape[0], num_chans, max_tips), order = "F")
 
     # get character data
     if cblvs.shape[1] < (num_chars + 2):
@@ -204,7 +208,10 @@ def main():
         num_trees = cblvs.shape[0]
 
     # print newick trees to stdout
-    convert_to_newick(cblvs[0:num_trees,...], num_tips[0:num_trees,...], char_data[0:num_trees,...])
+    nwk = utils.convert_to_newick(cblvs[0:num_trees,...], 
+                            num_tips[0:num_trees,...], 
+                            char_data[0:num_trees,...])
+    [print(t) for t in nwk]
 
 if __name__ == "__main__":
     main()

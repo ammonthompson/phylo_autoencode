@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 import h5py
 import numpy as np
@@ -32,10 +31,10 @@ def main():
                           default=0, help='csv file containging cblv encoded trees')
     cmd_args.add_argument('-aux', '--aux', type=int, required=False, 
                           default=0, help='csv file containging aux encoded trees')
-    cmd_args.add_argument('-max_tips', '--max-tips', type=int, required=True, 
+    cmd_args.add_argument('-mt', '--max-tips', type=int, required=True, 
                           help='max number of tips in the data. Default is 500.')
-    # trained model and normalizers prefix
-    cmd_args.add_argument('-m', '--model-prefix', type = str, required=True, 
+    # trained model
+    cmd_args.add_argument('-m', '--model', type = str, required=True, 
                           help='prefix of the model and normalizers.')
     cmd_args.add_argument('-o', '--out-prefix', type=str, required=False, 
                           default=None, help='Error output prefix for results files')
@@ -45,17 +44,13 @@ def main():
 
     # output file
     if args.out_prefix is None:
-        output = args.model_prefix
+        output = "out"
     else:
         output = args.out_prefix
 
     # import the model and normalizers
-    model_fn            = args.model_prefix + ".ae_trained.pt"
-    phy_normalizer_fn   = args.model_prefix + ".phy_normalizer.pkl"
-    aux_normalizer_fn   = args.model_prefix + ".aux_normalizer.pkl"
+    model_fn            = args.model
     model               = torch.load(utils.file_exists(model_fn), weights_only=False)
-    phy_normilzer       = joblib.load(utils.file_exists(phy_normalizer_fn))
-    aux_normilzer       = joblib.load(utils.file_exists(aux_normalizer_fn))
 
     # Model may only use a subset of the channels (e.g. 2 channels for phylogenetic data and ignore character data)
     num_channels    = model.num_structured_input_channel
@@ -101,49 +96,27 @@ def main():
                                  int(phy_data.shape[1]/max_tips), 
                                  max_tips), order='F')
     phy_data = phy_data[:, :num_channels,:]
+    # flatten
+    flat_phy_data = phy_data.reshape((phy_data.shape[0], -1), order='F')
 
-    # flatten before normalizing
-    phy_data = phy_data.reshape((phy_data.shape[0], -1), order='F')
-    norm_phy_data = phy_normilzer.transform(phy_data)
-    norm_aux_data = aux_normilzer.transform(aux_data)
 
-    # reshape subsetted phy data to (num_samples, num_channels, num_tips)
-    norm_phy_data = norm_phy_data.reshape((norm_phy_data.shape[0], num_channels, max_tips), order='F')
-
-    # convert to torch tensors
-    norm_phy_data = torch.tensor(norm_phy_data, dtype=torch.float32)
-    norm_aux_data = torch.tensor(norm_aux_data, dtype=torch.float32)
-    
-
-    # normalize test data and make predictions
-    # normalize -> predict -> denormalize
-    tree_autoencoder = PhyloAutoencoder(model = model, optimizer = torch.optim.Adam(model.parameters()))
-
-    # this outputs a tensor of shape (num_smaple, num_channels, num_tips)
-    pred_phy_data, pred_aux_data = tree_autoencoder.predict(norm_phy_data, norm_aux_data,
-                                                            inference=True, detach=True)
+    pred_phy_data, pred_aux_data = model.norm_predict_denorm(phy_data, aux_data)
     phy_shape = pred_phy_data.shape
 
-    # flatten and inverse transform
-    pred_phy_data = pred_phy_data.reshape((pred_phy_data.shape[0], -1), order='F')
-    pred_aux_data = pred_aux_data
-    pred_phy_data = phy_normilzer.inverse_transform(pred_phy_data)
-    pred_aux_data = aux_normilzer.inverse_transform(pred_aux_data)
-
     # set pading to zero
-    pred_phy_data = pred_phy_data.reshape(phy_shape, order = "F")
-    pred_phy_data = utils.set_pred_pad_to_zero(pred_phy_data,  pred_aux_data[:, model.aux_numtips_idx])    
-    pred_phy_data = pred_phy_data.reshape((pred_phy_data.shape[0], -1), order = "F")
+    pred_phy_data = utils.set_pred_pad_to_zero(pred_phy_data,  pred_aux_data[:, model.aux_numtips_idx])  
+    # Flatten  
+    flat_pred_phy_data = pred_phy_data.reshape((pred_phy_data.shape[0], -1), order = "F")
 
 
-    mask = np.zeros(phy_data.shape, dtype=bool)
+    mask = np.zeros(flat_phy_data.shape, dtype=bool)
     num_unmask = ntips[:,0] * num_channels
 
-    for t in range(pred_phy_data.shape[0]):
+    for t in range(flat_pred_phy_data.shape[0]):
         mask[t,0:int(num_unmask[t])] = True
 
     # calculate errors    
-    phy_abs_diff    = np.abs(phy_data - pred_phy_data) * mask
+    phy_abs_diff    = np.abs(flat_phy_data - flat_pred_phy_data) * mask
     phy_rmse        = np.sqrt(np.sum(phy_abs_diff ** 2, axis=1) / num_unmask)
     phy_mae         = np.sum(phy_abs_diff, axis=1) / num_unmask
     phy_mse         = np.sum(phy_abs_diff ** 2, axis=1) / num_unmask
@@ -154,7 +127,7 @@ def main():
                                 phy_mse.reshape(-1, 1)), axis=1)
 
     # save phy and aux errors to dataframes
-    phy_df = pd.DataFrame(phy_data, columns=None)
+    phy_df = pd.DataFrame(flat_phy_data, columns=None)
     phy_error_df = pd.DataFrame(phy_error, columns=['phy_rmse', 'phy_mae', 'phy_mse'])
 
     # save phy error results to single file
@@ -162,7 +135,8 @@ def main():
     phy_error_df.to_csv(output + '_phy_error.csv', index_label = "tree_number", index=True)
 
     # scatter plot comparing predicted cblv(+s) and true
-    utils.phylo_scatterplot(pred_phy_data, phy_data, 
+    utils.phylo_scatterplot(pred_phy_data[:,0:2,:].reshape((pred_phy_data.shape[0], -1), order = "F"), 
+                            phy_data[:, 0:2, :].reshape((phy_data.shape[0], -1), order = "F"), 
                             pred_aux_data, aux_data, 
                             aux_clabels, output)
 

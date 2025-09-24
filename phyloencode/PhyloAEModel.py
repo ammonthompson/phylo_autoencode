@@ -4,6 +4,7 @@ import numpy as np
 from typing import List, Dict, Tuple, Optional, Union
 from phyloencode import utils
 import random
+import sklearn
 
 class AECNN(nn.Module):
     """ This class uses a CNN and a dense layer to encode structured and unstructured data respectively
@@ -19,7 +20,7 @@ class AECNN(nn.Module):
                  unstructured_latent_width = None, # must be integer multiple of num_structured_latent_channels
                  aux_numtips_idx = None,
                  num_chars = 0,
-                 char_type = "categorical", # categorical, continuous
+                 char_type = "categorical", # categorical, continuous, integer (TODO: integer not implemented yet)
                  stride = [2,2],
                  kernel = [3,3],
                  out_channels = [16, 32],
@@ -67,6 +68,8 @@ class AECNN(nn.Module):
         self.char_type = char_type
         self.num_chars = num_chars
         self.aux_numtips_idx = aux_numtips_idx
+
+        self.char_start_idx = num_structured_input_channel - self.num_chars
         
         # check that num_chars and num_channels are compatible
         # TODO: fix this
@@ -82,8 +85,33 @@ class AECNN(nn.Module):
                              f" but got lengths {len(stride)}, {len(kernel)}, {len(out_channels)}.")
 
         # normalizers; sklearn.base.BaseEstimator
+        # if (not isinstance(phy_normalizer, utils.StandardScalerPhyCategorical) or 
+        #     not isinstance(aux_normalizer, sklearn.preprocessing.StandardScaler) ):
+        #     raise TypeError("Normalizers need to be StandardScalerPhyCategorical and StandardScaler")
         self.phy_normalizer = phy_normalizer
         self.aux_normalizer = aux_normalizer
+
+        # for ntips sigmoid layer in unstructured decoder (keep num tips within data bounds)
+        ntip_mu = self.aux_normalizer.mean_[aux_numtips_idx]
+        ntip_sd = np.sqrt(self.aux_normalizer.var_[aux_numtips_idx])
+        min_width = 2.
+        max_width = structured_input_width
+        self.ntip_base = (min_width - ntip_mu) / ntip_sd
+        self.ntip_scale = (max_width - min_width) / ntip_sd
+
+        # for cblv phy decoder sigmoid layer (or something else). Data range is in [0,1].
+        # transformed range is in [-mu/s, (1-mu)/s]
+        # find base and scale to in transformed data to guarentee inverse_transformed stays in bounds.
+        phy_mean = self.phy_normalizer.mean_.reshape((num_structured_input_channel - self.num_chars, 
+                                                                        max_width), order = "F")
+        phy_sd   = self.phy_normalizer.std_.reshape((num_structured_input_channel - self.num_chars, 
+                                                                        max_width), order = "F")
+
+        phy_lower_bound = torch.Tensor(-phy_mean / phy_sd).to(self.device)
+        phy_upper_bound = torch.Tensor((1 - phy_mean) / phy_sd).to(self.device)
+
+        self.phy_two_sided_ReLU = TwoSidedReLU(phy_lower_bound, phy_upper_bound)
+
 
         ######################################
         # Preliminaries for layer dimensions #
@@ -219,6 +247,17 @@ class AECNN(nn.Module):
 
     def encode(self, phy: torch.Tensor, aux: torch.Tensor, *,
                inference = False, detach = False ) -> torch.Tensor:
+        """_summary_
+
+        Args:
+            phy (torch.Tensor): _description_
+            aux (torch.Tensor): _description_
+            inference (bool, optional): _description_. Defaults to False.
+            detach (bool, optional): _description_. Defaults to False.
+
+        Returns:
+            torch.Tensor: _description_
+        """
         
         phy = phy.to(self.device)
         aux = aux.to(self.device)
@@ -262,6 +301,16 @@ class AECNN(nn.Module):
     
     def decode(self, z: torch.Tensor, *,
                inference = False, detach = False) -> Tuple[torch.Tensor, torch.Tensor]:
+        """_summary_
+
+        Args:
+            z (torch.Tensor): _description_
+            inference (bool, optional): _description_. Defaults to False.
+            detach (bool, optional): _description_. Defaults to False.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: _description_
+        """
         
         is_training = self.training
         z = z.to(self.device)
@@ -280,10 +329,30 @@ class AECNN(nn.Module):
                                                                                 self.reshaped_shared_latent_width) 
                 decoded_tree = self.structured_decoder(reshaped_decoded_latent_layer)
                 decoded_aux  = self.unstructured_decoder(decoded_latent_layer.flatten(start_dim=1))
-                if self.char_type == "categorical":
+
+                char_idx = self.char_start_idx
+                tip_idx = self.aux_numtips_idx
+
+                # clamp phy cblv to [-mu/s, (1-mu)/s] which is [0,1] in untransformed space
+                # see phyddle documentation for phyddle -s F
+                phy_clamp_left = self.phy_two_sided_ReLU(decoded_tree[:, :char_idx, :])
+                not_phy_right  = decoded_tree[:, char_idx:, :]
+                decoded_tree   = torch.cat([phy_clamp_left, not_phy_right], dim=1)
+
+                # ensure ntips in [2, max tips].
+                # TODO: look into two-sided clamp as above.
+                left  = decoded_aux[:, :tip_idx]
+                ntips = self.ntip_base + self.ntip_scale * torch.sigmoid(decoded_aux[:, tip_idx:tip_idx+1])
+                right = decoded_aux[:, tip_idx+1:]
+                decoded_aux = torch.cat([left, ntips, right], dim=1)
+
+                # char_start_idx = decoded_tree.shape[1] - self.num_chars
+                if inference and self.char_type == "categorical":
                     # softmax the char data
-                    char_start_idx = decoded_tree.shape[1] - self.num_chars
-                    decoded_tree[:,char_start_idx:,:] = torch.softmax(decoded_tree[:,char_start_idx:,:], dim = 1)
+                    not_char_left      = decoded_tree[:, :char_idx, :]
+                    char_softmax_right = torch.softmax(decoded_tree[:, char_idx:, :], dim = 1)
+                    decoded_tree       = torch.cat([not_char_left, char_softmax_right], dim = 1)
+
 
                 if inference and detach:
                     decoded_tree = decoded_tree.detach()
@@ -297,6 +366,17 @@ class AECNN(nn.Module):
     # TODO: should prob output torch.Tensors like everything else?
     def predict(self, phy: torch.Tensor, aux: torch.Tensor, *, 
                 inference = False, detach = False) -> Tuple[np.ndarray, np.ndarray]:
+        """_summary_
+
+        Args:
+            phy (torch.Tensor): _description_
+            aux (torch.Tensor): _description_
+            inference (bool, optional): _description_. Defaults to False.
+            detach (bool, optional): _description_. Defaults to False.
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: _description_
+        """
         
         # pushes data through full autoencoder
         is_training = self.training
@@ -335,6 +415,11 @@ class AECNN(nn.Module):
         # phy shape = (N, nc, mt)
         # normalize
         # encode
+        if isinstance(phy, torch.Tensor):
+            phy = phy.numpy()
+        if isinstance(aux, torch.Tensor):
+            aux = aux.numpy()
+
         flat_phy = phy.reshape((phy.shape[0], -1), order = "F")
         flat_norm_phy = self.phy_normalizer.transform(flat_phy)
         norm_phy = torch.tensor(flat_norm_phy.reshape((flat_norm_phy.shape[0], 
@@ -360,8 +445,6 @@ class AECNN(nn.Module):
     def norm_predict_denorm(self, phy : np.array, aux : np.array) -> Tuple[np.array, np.array]:
         # phy shape = (N, nc, mt)
         # phy output shape = (N, nc, mt)
-        phy = torch.tensor(phy, dtype = torch.float32)
-        aux = torch.tensor(aux, dtype = torch.float32)
         return self.decode_and_denorm( self.norm_and_encode(phy, aux) )
         
 
@@ -394,69 +477,6 @@ class AECNN(nn.Module):
 
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
-
-
-    def old_forward(self, data: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
-        """        
-        Push data through the encoder and decoder networks.
-
-        Args:
-            data (Tuple[torch.Tensor, torch.Tensor]): _description_
-
-        Returns:
-            Tuple[torch.Tensor, torch.Tensor]: _description_
-        """
-        
-
-        # data is a tuple (structured, unstructured)
-
-        # Encode
-        structured_encoded_x   = self.structured_encoder(data[0]) # (nbatch, nchannels, out_width)
-        unstructured_encoded_x = self.unstructured_encoder(data[1]) # (nbatch, out_width)
-
-        # TODO: THe latent Classes should be able to handle the reshaping of the data
-        # Combine encodings and reshape depending on the latent layer type
-        flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)
-        combined_latent           = torch.cat((flat_structured_encoded_x, unstructured_encoded_x), dim=1)  # aux latent last
-
-        if self.latent_layer_type == "CNN":
-            reshaped_shared_latent = combined_latent.view(-1, self.num_structured_latent_channels, 
-                                                              self.reshaped_shared_latent_width)
-            shared_latent_out      = self.latent_layer(reshaped_shared_latent)
-            structured_decoded_x   = self.structured_decoder(shared_latent_out)
-            unstructured_decoded_x = self.unstructured_decoder(shared_latent_out.flatten(start_dim=1))
-        
-        elif self.latent_layer_type == "GAUSS":
-            shared_latent_out   = self.latent_layer(combined_latent)
-
-            # testings
-            decoded_shared_latent_out = self.latent_layer_decoder(shared_latent_out)
-
-            reshaped_decoded_shared_latent_out = decoded_shared_latent_out.view(-1, self.num_structured_latent_channels, 
-                                                                                    self.reshaped_shared_latent_width) 
-            structured_decoded_x   = self.structured_decoder(reshaped_decoded_shared_latent_out)
-            unstructured_decoded_x = self.unstructured_decoder(decoded_shared_latent_out)
-        
-        elif self.latent_layer_type == "DENSE":
-            shared_latent_out   = self.latent_layer(combined_latent)            
-            reshaped_latent_out = shared_latent_out.view(-1, self.num_structured_latent_channels, 
-                                                                self.reshaped_shared_latent_width)
-            structured_decoded_x   = self.structured_decoder(reshaped_latent_out)
-            unstructured_decoded_x = self.unstructured_decoder(shared_latent_out)
-
-        # separate the two type of structured decoded: tree and character data
-        # maybe this should be done somewhere more downstream
-        if self.num_chars > 0:
-            phy_decoded_x = structured_decoded_x[:,:(structured_decoded_x.shape[1]-self.num_chars),:]
-            char_decoded_x = structured_decoded_x[:,(structured_decoded_x.shape[1]-self.num_chars):,:]
-        else:
-            phy_decoded_x = structured_decoded_x
-            char_decoded_x = None
-        # model should output the latent layer if layer type is "GAUSS"
-        if self.latent_layer_type != "GAUSS":
-            shared_latent_out = None
-
-        return phy_decoded_x, char_decoded_x, unstructured_decoded_x, shared_latent_out
 
 
 # encoder classes
@@ -534,6 +554,7 @@ class DenseDecoder(nn.Module):
     def __init__(self, in_width, out_width):
         super().__init__()
         self.unstructured_decoder = nn.Sequential(
+            # TODO: 10 probably should be controlled by a parameter...
             nn.Linear(in_width, 10),
             nn.ReLU(),
             nn.Linear(10, out_width)
@@ -768,7 +789,18 @@ class LatentCNNDecoder(nn.Module):
         return self.shared_layer(x)
 
 
+
 # Dev
+class TwoSidedReLU(nn.Module):
+    def __init__(self, min_val, max_val):
+        # shape of min_val and max_val is the same as the cblv tensor (N, C, W)
+        super().__init__()
+        self.min_val = min_val
+        self.max_val = max_val
+
+    def forward(self, x):
+        return torch.clamp(x, self.min_val, self.max_val)
+
 class SoftPower(nn.Module):
     def __init__(self, alpha = 1., power = 2):
         super().__init__()
