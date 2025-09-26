@@ -1,6 +1,10 @@
 # PhyloEncode 0.1
 ![status](https://img.shields.io/badge/status-active--development-orange)
 
+<!-- ![Demo GIF](docs/images/tree_morph.gif) -->
+<img src="docs/images/tree_morph.gif" width="500">
+
+
 **PhyloAutoEncode** is an **MMD-VAE** that uses **PyTorch**. PhyloAutoEncode is designed for **phylogenetic data, tip-associated data, and other unstructured datasets**. It is designed to represent a training set of trees and character data as an N-dimensional multivariate standard normal distribution with minimum loss of information. It is built to work with tree files formatted by **phyddle** ([phyddle.org](https://phyddle.org)).
 
 ---
