@@ -1,17 +1,18 @@
 # PhyloEncode 0.1
 ![status](https://img.shields.io/badge/status-active--development-orange)
 
-<!-- ![Demo GIF](docs/images/tree_morph.gif) -->
-<img src="docs/images/tree_morph.gif" width="500">
+<p align="center">
+    <img src="docs/images/latent.png" width="200" style="vertical-align: middle;" />
+    <img src="docs/images/tree_morph.gif" width="300" style="vertical-align: middle;" />
+</p>
 
-
-**PhyloAutoEncode** is an **MMD-VAE** that uses **PyTorch**. PhyloAutoEncode is designed for **phylogenetic data, tip-associated data, and other unstructured datasets**. It is designed to represent a training set of trees and character data as an N-dimensional multivariate standard normal distribution with minimum loss of information. It is built to work with tree files formatted by **phyddle** ([phyddle.org](https://phyddle.org)).
+**PhyloEncode** is a variational autoencoder with maximum mean discrepancy regularization (**MMD-VAE**) implemented in **PyTorch**. It is designed for joint representation of **phylogenetic data, tip-associated data, and other tree metadata**. It encodes these inputs into an N-dimensional multivariate standard normal distribution while minimizing information loss. Input data should be preformatted using **phyddle** ([phyddle.org](https://phyddle.org)).
 
 ---
 
 ## Features
 - Works with **phylogenies, tip data, and auxiliary datasets**.
-- Requires **HDF5-formatted** input data.
+- Requires [Phyddle](https://phyddle.org) generated **HDF5-formatted** input data.
 - Provides tools for **training, encoding, and extracting feature representations** from phylogenetic data.
 
 ---
@@ -26,7 +27,7 @@ pip install .
 ---
 
 ## Training
-To train the autoencoder, ensure your **phylogenetic and auxiliary data** are in **HDF5 format**. Use the phytrain command. There is also an example config file for network settings.
+To train the autoencoder, ensure your **phylogenetic and auxiliary data** are in **HDF5 format**. I recommend using Phyddle -s SF to create the data and file. Use the phytrain command. There is also an example config file for network settings.
 
 - **Example command:** `phytrain --trn_data train_data.hdf5 --config scripts/ph_config.py`  
 - Type `phytrain -h` for more info
@@ -34,13 +35,14 @@ To train the autoencoder, ensure your **phylogenetic and auxiliary data** are in
 ---
 
 ## Encoding with a Trained Autoencoder
-To encode and decode a set of phylogenetic trees, use the **`phyencode`** and **`phydecode`** commands:
+To encode and decode a set of phylogenetic trees, use the **`phyencode`** and **`phydecode`** commands. To generate new trees from the approximate tree distribution use **`phygen`**. This tool draws samples from $N(0,\mathbb{I})$ and transforms these draws to a tree, tip data and tree-associated metadata via the trained decoder.
 
 For more details on input formats and options, run:
 
 ```bash
 phyencode -h
 phydecode -h
+phygen -h
 ```
 
 ---
