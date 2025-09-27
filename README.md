@@ -3,7 +3,7 @@
 
 <p align="center">
     <img src="docs/images/latent.png" width="250" style="vertical-align: middle;" />
-    <img src="docs/images/tree_morph.gif" width="300" style="vertical-align: middle;" />
+    <img src="docs/images/tree_morph.gif" width="400" style="vertical-align: middle;" />
 </p>
 
 **PhyloEncode** is a variational autoencoder with maximum mean discrepancy regularization (**MMD-VAE**) implemented in **PyTorch**. It is designed for joint representation of **phylogenetic data, tip-associated data, and other tree metadata**. It encodes these inputs into an N-dimensional multivariate standard normal distribution while minimizing information loss. Input data should be preformatted using **phyddle** ([phyddle.org](https://phyddle.org)).
