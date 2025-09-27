@@ -2,7 +2,7 @@
 ![status](https://img.shields.io/badge/status-active--development-orange)
 
 <p align="center">
-    <img src="docs/images/latent.png" width="200" style="vertical-align: middle;" />
+    <img src="docs/images/latent.png" width="250" style="vertical-align: middle;" />
     <img src="docs/images/tree_morph.gif" width="300" style="vertical-align: middle;" />
 </p>
 
