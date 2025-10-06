@@ -27,9 +27,16 @@ pip install .
 ---
 
 ## Training
-To train the autoencoder, ensure your **phylogenetic and auxiliary data** are in **HDF5 format**. I recommend using Phyddle -s SF to create the data and file. Use the phytrain command. There is also an example config file for network settings.
+To train the autoencoder, ensure your **phylogenetic and auxiliary data** are in phyddle format which outputs the data in a **HDF5** file. I recommend using Phyddle -s SF to create the data and file. See example/phyddle_sim_data for phyddle scripts to generate a set of BISSE training trees. Data file will be in the format directory.
 
-- **Example command:** `phytrain --trn_data train_data.hdf5 --config scripts/ph_config.py`  
+```bash
+cd example/phyddle_sim_data
+phyddle -c phyddle_config.py
+```
+
+Once you have a training dataset, use the phytrain command. There is also an example phyloencode config file in the example dir for network settings.
+
+- **Example command:** `phytrain --trn_data example_train_data.hdf5 --config example_config.py`  
 - Type `phytrain -h` for more info
 
 ---
