@@ -10,7 +10,6 @@ import h5py
 import argparse
 from sklearn.model_selection import train_test_split
 
-import phyloencode as ph
 from phyloencode.PhyloAutoencoder   import PhyloAutoencoder
 from phyloencode.PhyloAEModel       import AECNN
 from phyloencode.DataProcessors     import AEData
@@ -19,6 +18,7 @@ import phyloencode.utils as utils
 
 # TODO: take in a list of label key words to be included in aux dat eg. ['log_R0', 'log_sample',...]
 #       these should be stacked onto the aux variable, or should I create a labels subnetwork in the model?
+#       -> then separate before creating predicted aux and label files.
 # TODO: includ min tips
 def main():
 
@@ -29,7 +29,7 @@ def main():
     args        = parse_arguments()
     update_settings_from_command_line(settings = settings, args = args)
     if args.config:
-        config = ph.utils.read_config(args.config)
+        config = utils.read_config(args.config)
         update_settings_from_config(settings = settings, config = config)
 
 
@@ -38,7 +38,7 @@ def main():
     ns          = settings["num_subset"]
     mt          = settings["max_tips"]
     nc          = settings["num_channels"]
-    num_test    = 1000
+    num_test    = 5000
 
     # Set seeds    
     if settings['seed'] is None:
@@ -63,13 +63,18 @@ def main():
         # TODO: Check a potential discrepency in num_taxa with phyddle --format output
         # TODO: maybe move some of this to backend: the Data object from DataProcessors 
         # should maybe handle all this
-            
-        phy_data_np = np.array(f['phy_data'][0:ns,...], dtype = np.float32)
+        # TODO: Eventually dataloaders need to load from disk, dont keep data in memory: load -> normalizer -> save
+        if ns is None:
+            phy_data_np = np.array(f['phy_data'][...], dtype = np.float32)
+            aux_data = torch.tensor(f['aux_data'][...], dtype = torch.float32)
+        else:            
+            phy_data_np = np.array(f['phy_data'][0:ns,...], dtype = np.float32)
+            aux_data = torch.tensor(f['aux_data'][0:ns,...], dtype = torch.float32)
+
         # extract the specified subset of channels ("num_channels")
         phy_data = get_channels(phy_data_np, nc, mt)
 
         # aux data must contain at least one column, "num_taxa"
-        aux_data = torch.tensor(f['aux_data'][0:ns,...], dtype = torch.float32)
         if len(aux_data.shape) != 2: # i.e. is an array but should be a matrix with 1 column
             aux_data = aux_data.reshape((aux_data.shape[0], 1))
 
@@ -137,18 +142,17 @@ def main():
                         cycle_momentum=False
                         )
     
-    # Loss objects (stateful)    
-    # TODO: remove device from RBF class and PhyLoss, I dont think  I need it.
-   
+    # Loss objects (stateful). These compute and store component
+    # and the weighted sum of component losses for the final objective. 
     loss_weights = {k : v for k, v in settings.items() if "_loss_weight" in k}
-
     train_loss  = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
-                               ae_model.latent_layer_type, device = settings["device"])
+                        ae_model.latent_layer_type, device = settings["device"])
     val_loss    = PhyLoss(loss_weights, ae_data.ntax_cidx,  ae_model.char_type,
-                               ae_model.latent_layer_type, device = settings["device"], validation = True)
+                        ae_model.latent_layer_type, device = settings["device"], 
+                        validation = True)
 
 
-    # create model trainer and trained model container
+    # create model trainer
     # the model, the data, and the loss come together here
     tree_ae     = PhyloAutoencoder(
                         model           = ae_model, 
@@ -161,9 +165,9 @@ def main():
                         )
     
 
-    #################################################################
-    # Train ae_model with data from ae_data using trainer, tree_ae ##
-    #################################################################
+    #########################################################
+    # Use tree_ae to train ae_model with data from ae_data ##
+    #########################################################
     tree_ae.set_data_loaders(train_loader=trn_loader, val_loader=val_loader) 
     tree_ae.train(num_epochs = settings["num_epochs"], seed = settings["seed"])
     if tree_ae.track_grad:
@@ -240,7 +244,7 @@ def parse_arguments():
     parser.add_argument("-aw", "--aux_loss_weight", required = False, type = float, help = "Auxiliary loss weight. Default 0.1")
     parser.add_argument("-cw", "--char_loss_weight",required = False, type = float, help = "how much weight to give to char loss. Default 0.0")
     parser.add_argument("-mt", "--max_tips",        required = False, type = float, help = "maximum number of tips.   Default 1000")
-    parser.add_argument("-ns", "--num_subset",      required = False, type = int, help = "subset of data used for training/testing. Default 10000")
+    parser.add_argument("-ns", "--num_subset",      required = False, type = int , help = "subset of data used for training/testing. Default None")
     parser.add_argument("-nchans", "--num_channels",  required = False, type = int, help = "number of data channels. Default 9")
     parser.add_argument("-num_chars", "--num_chars",  required = False, type = int, help = "number of characters. Default 5")
     parser.add_argument("-ld", "--latent_output_dim", required = False, type = int, help = "latent output dimension. Default None (determined by structured encoder output shape)")
@@ -260,7 +264,7 @@ def get_default_settings():
     return {
         "testing": True,
         "out_prefix": "out",
-        "num_subset": 10000,
+        "num_subset": "all",
         "num_workers": 0,
         "seed": np.random.randint(0, 2**32 - 1),
         "num_epochs": 100,

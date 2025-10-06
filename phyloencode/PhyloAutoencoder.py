@@ -23,9 +23,14 @@ class PhyloAutoencoder(object):
     def __init__(self,
                  model: AECNN, 
                  optimizer, 
-                 *, lr_scheduler = None, batch_size=128, 
-                 train_loss = None, val_loss = None, seed = None, device = "auto"):
-        """Performs training and valdiation on an autoencoder object.
+                 *, 
+                 lr_scheduler = None, 
+                 batch_size=128, 
+                 train_loss = None, 
+                 val_loss = None, 
+                 seed = None, 
+                 device = "auto"):
+        """Performs training and valdiation on an autoencoder model.
 
         Args:
             model (AECNN): _description_
@@ -34,6 +39,8 @@ class PhyloAutoencoder(object):
             batch_size (int, optional): _description_. Defaults to 128.
             train_loss (torch.nn.Module, optional): _description_. Defaults to None.
             val_loss (torch.nn.Module optional): _description_. Defaults to None.
+            seed (int): seed. Defaults to None.
+            device ({"cuda", "cpu"}) : device. Defaults to "auto"
         """
         
         # TODO: define the model object better (autoencoder ...)
@@ -71,7 +78,7 @@ class PhyloAutoencoder(object):
         self.char_type          = self.model.char_type
         self.phy_channels       = self.model.num_structured_input_channel
         self.num_tree_chans     = self.phy_channels - self.nchars
-        self.latent_shape       = (self.batch_size, self.model.latent_outwidth)
+        self.latent_shape       = (self.batch_size * 2, self.model.latent_outwidth)
 
         self.train_loss = train_loss
         self.val_loss   = val_loss
@@ -106,6 +113,12 @@ class PhyloAutoencoder(object):
         for epoch in range(num_epochs):
             self.total_epochs += 1
             epoch_time = time.time()
+
+            # target latent distribution sample
+            # self.std_norm = torch.randn(self.latent_shape, device=self.device, generator=self.torch_g) \
+            #     if self.model.latent_layer_type == "GAUSS" else None
+            self.std_norm = None
+
 
             # perform all mini batch steps for the epoch for training data
             self._mini_batch(validation=False)
@@ -161,8 +174,8 @@ class PhyloAutoencoder(object):
             aux_batch = aux_batch.to(self.device)
                
             # target latent distribution sample
-            self.std_norm = torch.randn(self.latent_shape, device=self.device, generator=self.torch_g) \
-                if self.model.latent_layer_type == "GAUSS" else None
+            # self.std_norm = torch.randn(self.latent_shape, device=self.device, generator=self.torch_g) \
+            #     if self.model.latent_layer_type == "GAUSS" else None
 
             # perform SGD step for batch
             step_function(phy_batch, aux_batch, mask_batch, self.std_norm)
@@ -188,6 +201,7 @@ class PhyloAutoencoder(object):
         pred = self.model((phy, aux))
 
         # compute and update loss fields in train_loss
+                
         loss = self.train_loss(pred, true, segmented_mask)
 
         # compute gradient
@@ -223,7 +237,6 @@ class PhyloAutoencoder(object):
 
         # compute and update loss fields in val_loss
         self.val_loss(pred, true, segmented_mask)
-
         
     def predict(self, phy: torch.Tensor, aux: torch.Tensor, *,
                 inference = False, detach = False) -> Tuple[np.ndarray, np.ndarray]:
@@ -253,7 +266,7 @@ class PhyloAutoencoder(object):
 
     def set_losses(self, train_loss, val_loss):
         self.train_loss = train_loss
-        self.val_loader = val_loss
+        self.val_loss = val_loss
 
     # def set_data(self, data : AEData, num_workers : int):
     #     self.data = data
@@ -301,6 +314,8 @@ class PhyloAutoencoder(object):
         self.val_losses = checkpoint['val_loss']
         self.model.train()
 
+    # TODO: instead save the model.state_dict along with epoch, optimizer state. Will require instantiating model object
+    # in downstream applications that use trained model.
     def save_model(self, filename):
         torch.save(self.model, filename)
 

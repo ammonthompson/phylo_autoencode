@@ -10,11 +10,15 @@ import h5py
 import sys
 
 
-# TODO: generate labels. The output needs to have tree, chars, aux, and labels files.
+# TODO: generate labels [optional]. The output needs to have tree, chars, aux, and labels files.
 # takes in a model and a number of samples
 # should be adaptable for a phyddle pipeline
+# I think the refactor this implies is change "aux" to unstructured, and only use "aux"
+# for input and output labels. What is currently called aux should be a combination of
+# aux and label values extracted from the phyddle training data file.
 def main():
     cmd = argparse.ArgumentParser(prog = "", usage = "")
+
     cmd.add_argument("-m", "--model", type=str, required=True, 
                     help="Path to trained autoencoder (.pt file) used for generating new samples.")
     cmd.add_argument("-n", "--num-samples", required=True, type=int, 
@@ -23,6 +27,11 @@ def main():
                     help="prefix Out file paths.")
     cmd.add_argument("-s", "--seed", required=False, type=int, default=None, 
                     help="Set the seed. Default is random")
+    
+
+    # dev
+    cmd.add_argument("-l", "--label", required=False, type=str, default=None,
+                     help="A comma separated list of label names found in the aux data.")
 
 
     args = cmd.parse_args()
@@ -75,7 +84,7 @@ def main():
             if gen_phy.shape[1] < (nchar + 2):
                 print("cblvs must be at least as long as nchar + 2.")
                 sys.exit(1)
-                
+
     gen_char = gen_phy[:, (nc - nchar):nc, :]
 
     # flatten and place in pd.dataframe

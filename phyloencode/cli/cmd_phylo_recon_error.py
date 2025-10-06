@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+
+import h5py
+import numpy as np
+# import os
+import sys
+# import time 
+import argparse
+import torch    
+import pandas as pd
+import joblib
+import matplotlib.pyplot as plt
+# import scipy
+# import phyloencode as ph
+from phyloencode import utils
+from phyloencode.PhyloAutoencoder import PhyloAutoencoder
+from phyloencode.utils            import get_num_tips
+
+
+'''
+    This is meant to work with the files from PhyloAutoecnoder
+'''
+
+def main():
+    cmd_args = argparse.ArgumentParser(description='Measure reconstruction error for test data')
+    # data can be either a single hdf5 file containing a 'phy_data' and 'aux_data' element
+    # or two csv files containing cblv and aux encoded trees
+    cmd_args.add_argument('-d', '--data', type=str, required=False, 
+                          default='test', help='dataset to use. hdf5 file')
+    cmd_args.add_argument('-cblv', '--cblv', type=int, required=False, 
+                          default=0, help='csv file containging cblv encoded trees')
+    cmd_args.add_argument('-aux', '--aux', type=int, required=False, 
+                          default=0, help='csv file containging aux encoded trees')
+    cmd_args.add_argument('-mt', '--max-tips', type=int, required=True, 
+                          help='max number of tips in the data. Default is 500.')
+    # trained model
+    cmd_args.add_argument('-m', '--model', type = str, required=True, 
+                          help='prefix of the model and normalizers.')
+    cmd_args.add_argument('-o', '--out-prefix', type=str, required=False, 
+                          default=None, help='Error output prefix for results files')
+
+
+    args = cmd_args.parse_args()
+
+    # output file
+    if args.out_prefix is None:
+        output = "out"
+    else:
+        output = args.out_prefix
+
+    # import the model and normalizers
+    model_fn            = args.model
+    model               = torch.load(utils.file_exists(model_fn), weights_only=False)
+
+    # Model may only use a subset of the channels (e.g. 2 channels for phylogenetic data and ignore character data)
+    num_channels    = model.num_structured_input_channel
+    num_chars       = model.num_chars
+    max_tips        = int(args.max_tips)
+
+    # check if data is provided
+    # if data is not provided, check if cblv and aux are provided
+    if args.data is None:
+        if args.cblv is not None and args.aux is not None:
+            utils.file_exists(args.cblv)
+            utils.file_exists(args.aux)
+            aux_data    = pd.read_csv(args.aux, header=None).values
+            aux_clabels = aux_data.keys()
+            ntips_idx   = np.where(aux_clabels == 'num_taxa')[0]
+            ntips       = aux_data.iloc['num_taxa'].to_numpy()
+        else:
+            print('Please provide at least one of the following: -d, or both -cblv and -aux')
+            sys.exit(1)
+    else: # if all data are in a single hdf5 file
+        # give warning if both -d and -cblv/-aux are provided
+        if args.cblv is not None or args.aux is not None:
+            print('Warning: -d will override -cblv and -aux. Proceeding with -d only.')
+
+        utils.file_exists(args.data)
+        with h5py.File(args.data, 'r') as f:
+            phy_data    = f['phy_data'][:]
+            aux_data    = f['aux_data'][:]
+            aux_clabels = np.array([x.decode() for x in f['aux_data_names'][:][0]])
+
+            # get the num tips
+            try:
+                ntips_idx = np.where(aux_clabels == 'num_taxa')[0][0]
+                ntips = aux_data[:, ntips_idx].reshape((-1,1))
+            except(KeyError, IndexError) as e:
+                print(f"Error while getting num_taxa info: {e}\n" +
+                      "Make sure \"num_taxa\" is present in aux_data.\n" )
+                raise
+
+
+    # subset phy_data to include only channels specified in the model
+    phy_data = phy_data.reshape((phy_data.shape[0], 
+                                 int(phy_data.shape[1]/max_tips), 
+                                 max_tips), order='F')
+    phy_data = phy_data[:, :num_channels,:]
+    # flatten
+    flat_phy_data = phy_data.reshape((phy_data.shape[0], -1), order='F')
+
+
+    pred_phy_data, pred_aux_data = model.norm_predict_denorm(phy_data, aux_data)
+    phy_shape = pred_phy_data.shape
+
+    # set pading to zero
+    pred_phy_data = utils.set_pred_pad_to_zero(pred_phy_data,  pred_aux_data[:, model.aux_numtips_idx])  
+    # Flatten  
+    flat_pred_phy_data = pred_phy_data.reshape((pred_phy_data.shape[0], -1), order = "F")
+
+
+    mask = np.zeros(flat_phy_data.shape, dtype=bool)
+    num_unmask = ntips[:,0] * num_channels
+
+    for t in range(flat_pred_phy_data.shape[0]):
+        mask[t,0:int(num_unmask[t])] = True
+
+    # calculate errors    
+    phy_abs_diff    = np.abs(flat_phy_data - flat_pred_phy_data) * mask
+    phy_rmse        = np.sqrt(np.sum(phy_abs_diff ** 2, axis=1) / num_unmask)
+    phy_mae         = np.sum(phy_abs_diff, axis=1) / num_unmask
+    phy_mse         = np.sum(phy_abs_diff ** 2, axis=1) / num_unmask
+
+    # concatenate phy errors (one mean error per tree)
+    phy_error = np.concatenate((phy_rmse.reshape(-1, 1), 
+                                phy_mae.reshape(-1, 1), 
+                                phy_mse.reshape(-1, 1)), axis=1)
+
+    # save phy and aux errors to dataframes
+    phy_df = pd.DataFrame(flat_phy_data, columns=None)
+    phy_error_df = pd.DataFrame(phy_error, columns=['phy_rmse', 'phy_mae', 'phy_mse'])
+
+    # save phy error results to single file
+    phy_df.to_csv(output + '_phy_data.cblv.csv', index=True, header = None)
+    phy_error_df.to_csv(output + '_phy_error.csv', index_label = "tree_number", index=True)
+
+    # scatter plot comparing predicted cblv(+s) and true
+    utils.phylo_scatterplot(pred_phy_data[:,0:2,:].reshape((pred_phy_data.shape[0], -1), order = "F"), 
+                            phy_data[:, 0:2, :].reshape((phy_data.shape[0], -1), order = "F"), 
+                            pred_aux_data, aux_data, 
+                            aux_clabels, output)
+
+    # print average errors
+    print(f'avg. phy_rmse: {phy_rmse.mean()}')
+    print(f'avg. phy_mae:  {phy_mae.mean()}')    
+
+
+if __name__ == '__main__':
+    main()  
