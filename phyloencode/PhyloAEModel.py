@@ -208,8 +208,11 @@ class AECNN(nn.Module):
                                              num_chars            = self.num_chars,
                                              char_type            = self.char_type)
         
+         
 
         self.write_network_to_file(out_prefix + ".network.txt")
+
+        self.to(self.device)
         
  
     def forward(self, data: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -331,10 +334,10 @@ class AECNN(nn.Module):
                 decoded_aux  = self.unstructured_decoder(decoded_latent_layer.flatten(start_dim=1))
 
                 char_idx = self.char_start_idx
-                tip_idx = self.aux_numtips_idx
+                tip_idx  = self.aux_numtips_idx
 
                 # clamp phy cblv to [-mu/s, (1-mu)/s] which is [0,1] in untransformed space
-                # see phyddle documentation for phyddle -s F
+                # see phyddle documentation for output format of phyddle -s F
                 phy_clamp_left = self.phy_two_sided_ReLU(decoded_tree[:, :char_idx, :])
                 not_phy_right  = decoded_tree[:, char_idx:, :]
                 decoded_tree   = torch.cat([phy_clamp_left, not_phy_right], dim=1)
@@ -346,8 +349,7 @@ class AECNN(nn.Module):
                 right = decoded_aux[:, tip_idx+1:]
                 decoded_aux = torch.cat([left, ntips, right], dim=1)
 
-                # char_start_idx = decoded_tree.shape[1] - self.num_chars
-                if inference and self.char_type == "categorical":
+                if inference and self.char_type == "categorical" and self.num_chars > 0:
                     # softmax the char data
                     not_char_left      = decoded_tree[:, :char_idx, :]
                     char_softmax_right = torch.softmax(decoded_tree[:, char_idx:, :], dim = 1)
@@ -530,9 +532,9 @@ class CnnEncoder(nn.Module):
                 conv_out_shape = utils.get_outshape(self.cnn_layers, data_channels, data_width)
                 self.conv_out_width.append(conv_out_shape[2])  # bookkeeping           
                 print(conv_out_shape)
-                self.cnn_layers.add_module("norm_" + str(i), nn.BatchNorm1d(out_channels[i]))
 
                 if i < (nl-1):
+                    self.cnn_layers.add_module("norm_" + str(i), nn.BatchNorm1d(out_channels[i]))
                     self.cnn_layers.add_module("conv_ReLU_" + str(i), nn.ReLU())
 
 
@@ -654,6 +656,11 @@ class CnnDecoder(nn.Module):
                                         output_padding = outpad
                                         ))
         
+        # for character logit rescaling
+        # self.phy_head_out = Head(data_channels - num_chars, data_width)
+        self.char_head_out = Head(num_chars, data_width)
+
+        
         # print out shape
         print(utils.get_outshape(self.tcnn_layers, num_cnn_latent_channels, latent_width))
 
@@ -661,14 +668,17 @@ class CnnDecoder(nn.Module):
         decoded_x = self.tcnn_layers(x)
         char_start_idx = decoded_x.shape[1] - self.num_chars
 
-        # decoded_phylo = torch.sigmoid(decoded_x[:, :char_start_idx, :])
-        decoded_phylo =decoded_x[:, :char_start_idx, :]
+        decoded_phylo = decoded_x[:, :char_start_idx, :]
+        # decoded_phylo = self.phy_head_out(decoded_x[:, :char_start_idx, :])
 
-        # If has categorical character data, add a logistic layer
+
+        # If has categorical character data, add layers for scaling for logit outputs then
         # concatenate categorical output to phhylo output        
         if self.char_type == "categorical" and self.num_chars > 0 and self.data_channels > 2:
-            decoded_cat = decoded_x[:, char_start_idx:, :]
-            final_decoded_x = torch.cat((decoded_phylo, decoded_cat), dim = 1)
+            # decoded_char = decoded_x[:, char_start_idx:, :]
+            decoded_char = self.char_head_out(decoded_x[:, char_start_idx:, :])
+            # print(self.head_out.Lin[2].weight[50:51,50:60])
+            final_decoded_x = torch.cat((decoded_phylo, decoded_char), dim = 1)
         else:
             final_decoded_x = torch.cat((decoded_phylo, decoded_x[:, char_start_idx:, :]), dim = 1)
 
@@ -693,7 +703,30 @@ class CnnDecoder(nn.Module):
             outpad = s-1
 
         return pad, outpad
+
+class Head(nn.Module):
+    def __init__(self, c, w):
+        super().__init__()
+        self.c = c
+        self.w = w
+        self.scale = nn.Parameter(torch.ones(c * w))
+        # self.head = nn.Linear(d, d)
+        # self.head = nn.Sequential(nn.Linear(d, d),
+        #                          nn.ReLU(),
+        #                          nn.Linear(d,d))
+
+
+    def forward(self, x):
+        # print(torch.max(self.scale))
+        flat_x = x.view((x.shape[0], self.c * self.w))
+        scaled_flat_x = self.scale * flat_x
+        scaled_x = scaled_flat_x.view(x.shape[0], self.c, self.w)
+        return scaled_x
+        # print(torch.max(self.Lin.weight))
+        # return(self.head(x))
     
+
+
 # Latent layer classes
 class LatentCNN(nn.Module):
     def __init__(self, in_cnn_shape: Tuple[int, int], kernel_size = 9):
