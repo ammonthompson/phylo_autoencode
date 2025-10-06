@@ -27,6 +27,12 @@ phydecode = "phyloencode.cli.cmd_decode:main"
 phytrain  = "phyloencode.cli.cmd_train:main"
 phygen    = "phyloencode.cli.cmd_generate:main"
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.hatch.build]
 exclude = ["sandbox/**", "phyloencode.egg-info/**", "__pycache__/**", "*.pyc", "*.pyo", "*.log", ".git/**", "tests/**", "dev/**", ".vscode/**"]
 
