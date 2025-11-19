@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Union
 from phyloencode import utils
@@ -8,7 +9,7 @@ import sklearn
 
 class AECNN(nn.Module):
     """ This class uses a CNN and a dense layer to encode structured and unstructured data respectively
-        The encodings are are concatenated in a latent layer which then gets decoded by a transpose CNN 
+        The encodings are concatenated in a latent layer which then gets decoded by a transpose CNN 
         and dense layer in parallel.
     """
 
@@ -508,7 +509,8 @@ class CnnEncoder(nn.Module):
                                              out_channels = out_channels[0], 
                                              kernel_size  = kernel[0], 
                                              stride       = stride[0], 
-                                             padding      = kernel[0]// 2))  # padding = kernel_size // 2 for same padding
+                                             padding      = kernel[0]// 2,
+                                             bias         = False))  # padding = kernel_size // 2 for same padding
                                         
         conv_out_shape = utils.get_outshape(self.cnn_layers, data_channels, data_width)
         self.conv_out_width = [conv_out_shape[2]]
@@ -527,7 +529,8 @@ class CnnEncoder(nn.Module):
                                                       out_channels = out_channels[i], 
                                                       kernel_size  = kernel[i], 
                                                       stride       = stride[i], 
-                                                      padding      = kernel[i]// 2))                                                     
+                                                      padding      = kernel[i]// 2,
+                                                      bias         = i >= (nl-1)))                                                     
                 
                 conv_out_shape = utils.get_outshape(self.cnn_layers, data_channels, data_width)
                 self.conv_out_width.append(conv_out_shape[2])  # bookkeeping           
@@ -604,7 +607,8 @@ class CnnDecoder(nn.Module):
                                         kernel_size     = kernel[nl-1], 
                                         stride          = stride[nl-1], 
                                         padding         = npad,
-                                        output_padding  = noutpad 
+                                        output_padding  = noutpad,
+                                        bias            = (nl - 2) <= 0 
                                         ))
  
         outshape = utils.get_outshape(self.tcnn_layers,  num_cnn_latent_channels, latent_width)
@@ -628,7 +632,8 @@ class CnnDecoder(nn.Module):
                                             kernel_size     = kernel[i], 
                                             stride          = stride[i], 
                                             padding         = npad,
-                                            output_padding  = noutpad
+                                            output_padding  = noutpad,
+                                            bias            = i <= 1
                                             ))  
                       
             print(utils.get_outshape(self.tcnn_layers, num_cnn_latent_channels, latent_width))
@@ -848,7 +853,7 @@ class SamePadConv1d(nn.Module):
         super().__init__()
         self.k = kernel_size
         self.s = stride
-        self.conv = nn.Conv1d( in_channels , out_channels, kernel_size=kernel_size, stride=stride, padding=0)
+        self.conv = nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=0)
 
     def forward(self, x):
         input_len = x.shape[-1]
@@ -859,3 +864,4 @@ class SamePadConv1d(nn.Module):
         pad_right = total_pad - pad_left
         x = nn.functional.pad(x, (pad_left, pad_right))
         return self.conv(x)
+    

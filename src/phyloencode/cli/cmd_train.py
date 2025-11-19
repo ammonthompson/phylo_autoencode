@@ -165,9 +165,10 @@ def main():
                         )
     
 
-    #########################################################
-    # Use tree_ae to train ae_model with data from ae_data ##
-    #########################################################
+    #################################
+    # Use tree_ae to train ae_model #
+    # with data from ae_data.       #
+    #################################
     tree_ae.set_data_loaders(train_loader=trn_loader, val_loader=val_loader) 
     tree_ae.train(num_epochs = settings["num_epochs"], seed = settings["seed"])
     if tree_ae.track_grad:
@@ -177,6 +178,9 @@ def main():
 
     # save model with normalizers
     tree_ae.save_model(settings["out_prefix"] + ".ae_trained.pt")
+    # plot loss curves
+    tree_ae.plot_losses(settings["out_prefix"])
+
 
     # make encoded tree file for 5,000 random trees from training data
     rand_idx        = np.random.randint(0, ae_data.prop_train * phy_data.shape[0], 
@@ -192,8 +196,8 @@ def main():
 
 
     #####################################################
-    # Test Data Prediction 
-    # make predictions with trained model on test data
+    # Test Data Prediction                              #
+    # make predictions with trained model on test data  #
     #####################################################
 
     # save true values of test data in cblv format
@@ -224,8 +228,6 @@ def main():
     aux_pred_df.to_csv(settings["out_prefix"] + ".aux_pred.csv", 
                        header  = False, index = False)
 
-    # plot loss curves
-    tree_ae.plot_losses(settings["out_prefix"])
 
 
 
@@ -253,11 +255,11 @@ def parse_arguments():
     parser.add_argument("-r", "--stride",           required = False, type = int, help = "stride size. Default 2,4,4")
     parser.add_argument("-oc", "--out_channels",    required = False, type = int, help = "output channels. Default 32,32,128")
     parser.add_argument("-ct", "--char_type",       required = False, help = "character type (categorical or continuous). Default categorical")
-    parser.add_argument("-pt", "--proportion-train", required = False, type = float, help = "Proportion of num-subset used for training vs validation. Default 0.85")
+    parser.add_argument("-pt", "--proportion-train",required = False, type = float, help = "Proportion of num-subset used for training vs validation. Default 0.85")
     parser.add_argument("-lr", "--learning-rate",   required = False, type = float, help = "Optimizer learning rate. Default 1e-3")
     parser.add_argument("-wd", "--weight-decay",    required = False, type = float, help = "Optimizer weight decay. Default 1e-3")
-    parser.add_argument("-t", "--testing",    required = False, type = bool, help = "Testing mode sets torch trianing optimization behavior to deterministic. Default True")
-    parser.add_argument("-dv", "--device",    required = False, type = bool, help = "Device. Default auto")
+    parser.add_argument("-t", "--testing",          required = False, type = bool, help = "Testing mode sets torch trianing optimization behavior to deterministic. Default True")
+    parser.add_argument("-dv", "--device",          required = False, type = bool, help = "Device. Default auto")
     return parser.parse_args()
 
 def get_default_settings():
