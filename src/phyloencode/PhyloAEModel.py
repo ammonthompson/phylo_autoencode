@@ -865,3 +865,74 @@ class SamePadConv1d(nn.Module):
         x = nn.functional.pad(x, (pad_left, pad_right))
         return self.conv(x)
     
+
+class ResidualBlockCNN(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride):
+        super().__init__()
+        self.cnn_layers = nn.Sequential(
+            nn.Conv1d(in_channels, out_channels, 
+                      kernel_size=kernel_size, stride=stride, 
+                      padding="same", bias=False),
+            nn.BatchNorm1d(out_channels),
+            nn.ReLU(),            
+            # no change dims
+            nn.Conv1d(out_channels, out_channels, 
+                      kernel_size=kernel_size, stride=1, 
+                      padding="same", bias=False),
+            nn.BatchNorm1d(out_channels)
+        )
+        if stride == 1 and in_channels == out_channels:
+            self.skip = nn.Identity()
+        else:
+            self.skip = nn.Sequential(
+                nn.Conv1d(in_channels, out_channels, 
+                          kernel_size=1, stride=stride, 
+                          padding="same", bias=False),
+                nn.BatchNorm1d(out_channels)
+            )
+
+    def forward(self, x):
+        out = self.cnn_layers(x)
+        out = F.relu(out + self.skip(x))
+        return(out)
+    
+class ResidualBlockTransposeCNN(nn.Module):
+    def __init__(self, in_channels, out_channels,
+                 kernel_size, stride, padding, output_padding):
+        super().__init__()
+
+        self.tcnn_layers = nn.Sequential(
+            # Upsample
+            nn.ConvTranspose1d(in_channels, out_channels,
+                kernel_size=kernel_size, stride=stride,
+                padding=padding,
+                output_padding=output_padding,
+                bias=False,
+            ),
+            nn.BatchNorm1d(out_channels),
+            nn.ReLU(),  # keep it non-inplace for safety
+            # no change dims
+            nn.Conv1d(out_channels, out_channels,
+                kernel_size=kernel_size, stride=1,
+                padding="same", bias=False,
+            ),
+            nn.BatchNorm1d(out_channels),
+        )
+
+        if stride == 1 and in_channels == out_channels:
+            self.skip = nn.Identity()
+        else:
+            # Match both channels and (when stride>1) length
+            self.skip = nn.Sequential(
+                nn.ConvTranspose1d(in_channels, out_channels,
+                    kernel_size=1, stride=stride,
+                    padding=0, output_padding=output_padding,
+                    bias=False,
+                ),
+                nn.BatchNorm1d(out_channels),
+            )
+
+    def forward(self, x):
+        out = self.tcnn_layers(x)
+        out = F.relu(out + self.skip(x))
+        return out
