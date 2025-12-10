@@ -4,6 +4,7 @@ import torch.nn as nn
 # import torch.nn.functional as fun
 # from torch.utils.data import Dataset, DataLoader, TensorDataset
 from typing import List, Dict, Tuple, Optional, Union
+import math
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.preprocessing import StandardScaler
@@ -370,19 +371,54 @@ def get_outshape(sequential: nn.Sequential, input_channels: int, input_width: in
             width = conv1d_layer_outwidth(layer, width)
             channels = layer.out_channels
         elif isinstance(layer, torch.nn.AdaptiveAvgPool1d):
-            width = layer.output_size
+            width = layer.output_size if isinstance(layer.output_size, int) else layer.output_size[0]
         elif isinstance(layer, nn.ConvTranspose1d):
             width = tconv1d_layer_outwidth(layer, width)
             channels = layer.out_channels
+        elif layer.__class__.__name__ == "ResidualBlockCNN":
+            width = residual_block_outwidth(layer, width)
+            channels = layer.cnn_layers[0].out_channels
+        elif layer.__class__.__name__ == "ResidualBlockTransposeCNN":
+            width = residual_block_transpose_outwidth(layer, width)
+            channels = layer.tcnn_layers[0].out_channels
+        elif isinstance(layer, nn.Sequential):
+            # handle nested containers
+            _, channels, width = get_outshape(layer, channels, width)
      
     return batch_size, channels, width
+
+def residual_block_outwidth(block, input_width):
+    first_conv = block.cnn_layers[0]
+    return conv1d_layer_outwidth(first_conv, input_width)
+
+def residual_block_transpose_outwidth(block, input_width):
+    first_tconv = block.tcnn_layers[0]
+    return tconv1d_layer_outwidth(first_tconv, input_width)
+
+def _resolve_padding(padding):
+    if isinstance(padding, str):
+        return padding
+    if isinstance(padding, tuple):
+        if len(padding) > 0 and isinstance(padding[0], str):
+            return "".join(padding)
+        return padding[0]
+    return padding
 
 def conv1d_layer_outwidth(layer, input_width):
     # Extract Conv1d parameters
     kernel_size = layer.kernel_size[0]
     stride      = layer.stride[0]
-    padding     = layer.padding[0]
+    padding     = _resolve_padding(layer.padding)
     dilation    = layer.dilation[0]
+
+    if isinstance(padding, str):
+        padding_lower = padding.lower()
+        if padding_lower == "same":
+            return math.ceil(input_width / stride)
+        if padding_lower == "valid":
+            padding = 0
+        else:
+            raise ValueError(f"Unsupported padding '{padding}' for Conv1d layer")
 
     # Compute output width using the Conv1d formula
     width = (input_width + 2 * padding - dilation * (kernel_size - 1) - 1) // stride + 1
@@ -392,9 +428,19 @@ def tconv1d_layer_outwidth(layer, input_width):
     # Extract ConvTranspose1d parameters
     kernel_size    = layer.kernel_size[0]
     stride         = layer.stride[0]
-    padding        = layer.padding[0]
-    output_padding = layer.output_padding[0]
+    padding        = _resolve_padding(layer.padding)
+    output_padding = layer.output_padding[0] if isinstance(layer.output_padding, tuple) else layer.output_padding
     dilation       = layer.dilation[0]
+
+    if isinstance(padding, str):
+        padding_lower = padding.lower()
+        if padding_lower == "same":
+            return input_width * stride
+        if padding_lower == "valid":
+            padding = 0
+        else:
+            raise ValueError(f"Unsupported padding '{padding}' for ConvTranspose1d layer")
+
     # Compute output width using the ConvTranspose1d formula
     width = (input_width - 1) * stride - 2 * padding + dilation * (kernel_size - 1) + output_padding + 1
     return width
@@ -699,5 +745,4 @@ def convert_to_newick(cblv, num_tips, char_data):
         # newick.append(num_tips_i)    
 
     return newick
-
 
