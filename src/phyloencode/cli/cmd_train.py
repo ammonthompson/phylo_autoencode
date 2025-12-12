@@ -55,7 +55,6 @@ def main():
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-    save_settings(settings, settings['out_prefix'] + "_settings.csv")
 
     # get formated tree data
     with h5py.File(data_fn, "r") as f:
@@ -84,6 +83,16 @@ def main():
         (phy_data, test_phy_data, 
          aux_data, test_aux_data) = train_test_split(phy_data, aux_data, test_size=num_test, 
                                                      shuffle=True, random_state=seed)
+
+    num_train = int(settings["proportion_train"] * phy_data.shape[0])
+    num_val = phy_data.shape[0] - num_train
+    settings["train_phy_shape"] = (num_train, phy_data.shape[1])
+    settings["val_phy_shape"] = (num_val, phy_data.shape[1])
+    settings["test_phy_shape"] = tuple(test_phy_data.shape)
+    settings["train_aux_shape"] = (num_train, aux_data.shape[1])
+    settings["val_aux_shape"] = (num_val, aux_data.shape[1])
+    settings["test_aux_shape"] = tuple(test_aux_data.shape)
+    save_settings(settings, settings['out_prefix'] + "_settings.csv")
         
 
     ###################################

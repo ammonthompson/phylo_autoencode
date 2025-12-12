@@ -31,7 +31,7 @@ class ResCnnEncoder(nn.Module):
                         bias        = False,
                     ),
                 )
-            else: # if final layer, simple convolution layer
+            else: # if final layer, simple convolution layer (no norm or relu)
                 self.cnn_layers.add_module(
                     f"conv1d_{i}",
                     nn.Conv1d(
@@ -52,7 +52,6 @@ class ResCnnEncoder(nn.Module):
 
     def forward(self, x):
         return self.cnn_layers(x)
-    
 
 
 class ResCnnDecoder(nn.Module):
@@ -167,7 +166,6 @@ class ResCnnDecoder(nn.Module):
             outpad = s-1
 
         return pad, outpad
-
        
 
 class ResidualBlockCNN(nn.Module):
