@@ -17,8 +17,19 @@ import random
 # TODO: experiment with time-dependent loss weights. Annealing strategies.
 
 class PhyLoss(nn.Module):
-    """Statefull. performs loss calculation and holds batch and 
-        epoch mean losses for all components.
+    """Stateful composite loss for training phylogenetic autoencoders.
+
+    This loss object computes a weighted sum of several components and stores both
+    per-batch and per-epoch summaries for logging:
+
+    - Structured reconstruction loss (tree/phy channels).
+    - Character reconstruction loss (optional; categorical via cross-entropy or continuous via MSE).
+    - Auxiliary reconstruction loss (MSE; optionally skipped when aux has a single column).
+    - Latent regularization losses (MMD / VZ) when a latent representation is provided.
+
+    The ``forward()`` method appends component losses to internal ``batch_*`` buffers. Call
+    ``append_mean_batch_loss()`` once per epoch to compute epoch means and clear the batch
+    buffers. Use ``print_epoch_losses()`` to print the latest epoch summary.
     """
     # holds component losses over epochs
     # to be called for an individual batch
@@ -34,16 +45,32 @@ class PhyLoss(nn.Module):
                  validation  = False,
                  seed = None,
                  rand_matrix : torch.Tensor = None,) -> None:
-        """Contains component losses and methods for computing component losses.
+        """Initialize a stateful loss accumulator.
 
         Args:
-            weights (dict[str, torch.Tensor]): weights [0, inf] for component losses
-            ntax_cidx (int): column index of aux_data that contains \"num_taxa\"
-            char_type (str, optional):["categorical", "continuous"]. Defaults to None.
-            latent_layer_Type (str, optional): _description_. Defaults to "GAUSS".
-            device (str, optional): _description_. Defaults to "cpu".
-            validation (bool, optional): _description_. Defaults to False.
-            rand_matrix (torch.Tensor, optional): _description_. Defaults to None.
+            weights (dict[str, torch.Tensor]): Mapping of component-weight names to scalar
+                weights. Expected keys are:
+
+                - ``"phy_loss_weight"``
+                - ``"char_loss_weight"``
+                - ``"aux_loss_weight"``
+                - ``"mmd_loss_weight"``
+                - ``"vz_loss_weight"``
+
+            ntax_cidx (int): Column index in the auxiliary tensor corresponding to the
+                number of taxa/tips (e.g. ``num_taxa``). Used for the separate num-tips loss.
+            char_type (Optional[str]): Character type, typically ``"categorical"`` or
+                ``"continuous"``. Defaults to None.
+            latent_layer_Type (str): Latent layer type string (used for bookkeeping/logging).
+                Defaults to ``"GAUSS"``.
+            device (str): ``"auto"``, ``"cpu"``, or ``"cuda"``. If ``"auto"``, selects CUDA
+                when available. Defaults to ``"auto"``.
+            validation (bool): If True, ``print_epoch_losses()`` labels output as validation.
+                Defaults to False.
+            seed (Optional[int]): Optional seed used to initialize an internal Torch generator.
+                Defaults to None.
+            rand_matrix (Optional[torch.Tensor]): Optional matrix used by experimental losses.
+                Defaults to None.
         """
 
         
@@ -100,11 +127,14 @@ class PhyLoss(nn.Module):
         self.vz  = VZLoss(generator=self.torch_g)
         
     def set_weights(self, weights : dict[str, torch.Tensor]):
-        """
-        Set the weights for the loss components. 
+        """Set loss weights from a mapping.
+
         Args:
-            weights (torch.Tensor): A tensor containing the new weights for phy, char, 
-                                    aux, mmd, and vz losses.
+            weights (dict[str, torch.Tensor]): Mapping containing the required weight keys
+                (see ``__init__``). Values should be scalar tensors or floats.
+
+        Raises:
+            KeyError: If any required weight key is missing.
         """
         try:
             self.phy_w  = weights['phy_loss_weight']
@@ -117,6 +147,36 @@ class PhyLoss(nn.Module):
             raise
 
     def forward(self, pred : Tuple, true : Tuple, mask : Tuple):
+        """Compute the weighted loss for a batch and update internal buffers.
+
+        Expected tuple formats (as used by ``phyloencode.PhyloAutoencoder.PhyloAutoencoder``):
+
+        - ``pred``: ``(phy_hat, char_hat, aux_hat, latent_hat)``
+        - ``true``: ``(phy, char, aux, std_norm)``
+        - ``mask``: ``(tree_mask, char_mask)``
+
+        Shapes:
+            - ``phy_hat`` and ``phy``: ``(N, C_tree, W)``
+            - ``char_hat`` and ``char``: ``(N, C_char, W)`` or None
+            - ``aux_hat`` and ``aux``: ``(N, A)``
+            - ``latent_hat``: ``(N, D)`` or None
+            - masks: boolean tensors matching the corresponding structured tensors
+
+        Notes:
+            - A separate num-tips loss is computed from ``aux_hat[:, ntax_cidx]`` and
+              ``aux[:, ntax_cidx]`` and is added to the total loss. It is not stored as a
+              separate tracked component.
+            - The ``std_norm``/``target`` argument is currently ignored by the latent losses
+              in this implementation (closed-form prior terms are used instead).
+
+        Args:
+            pred (Tuple): Model outputs for the batch.
+            true (Tuple): Ground-truth targets for the batch.
+            mask (Tuple): ``(tree_mask, char_mask)`` masks (each element may be None).
+
+        Returns:
+            torch.Tensor: Scalar loss tensor for backpropagation.
+        """
         # appends to the self.losses and returns the current batch loss
         # pred is a tuple (dictionary maybe?) of predictions for a batch
         # true is a tuple of the true values for a batch
@@ -160,6 +220,7 @@ class PhyLoss(nn.Module):
         return total_loss
 
     def append_mean_batch_loss(self):
+        """Aggregate the current batch buffers into epoch means and reset them."""
         # averages the batch loss arrays and return 
         mean_total_loss = torch.mean(torch.stack(self.batch_total_loss)).item()
         mean_phy_loss   = torch.mean(torch.stack(self.batch_phy_loss)).item()
@@ -180,6 +241,11 @@ class PhyLoss(nn.Module):
         self.batch_vz_loss      = []
 
     def print_epoch_losses(self, elapsed_time):
+        """Print the most recent epoch loss summary.
+
+        Args:
+            elapsed_time (float): Elapsed time for the epoch, in seconds.
+        """
         if self.validation:
             loss_type = "Val loss:   "
         else:
@@ -214,15 +280,20 @@ class PhyLoss(nn.Module):
         self.epoch_vz_loss.append(vz_loss)
 
     def _phy_recon_loss(self, x, y, mask = None):
-        """
-        Compute the reconstruction loss for phylogenetic data.
+        """Compute reconstruction loss for structured phylogenetic channels.
 
         Args:
-            x (torch.Tensor): Reconstructed phylogenetic data in cblv-like format.
-            y (torch.Tensor): Original phylogenetic data in same format.
+            x (torch.Tensor): Reconstructed structured tensor, shape ``(N, C_tree, W)``.
+            y (torch.Tensor): Ground-truth structured tensor, shape ``(N, C_tree, W)``.
+            mask (Optional[torch.Tensor]): Optional boolean/0-1 mask with the same shape as
+                ``x``/``y``. When provided, loss is averaged over unmasked elements per sample.
 
         Returns:
-            torch.Tensor: Reconstruction loss for phylogenetic data.
+            torch.Tensor: Scalar batch-mean reconstruction loss.
+
+        Notes:
+            In addition to the masked/unmasked MSE, an extra penalty term is added on the
+            first position of the first two channels (``0.1 * MSE(x[:, 0:2, 0], y[:, 0:2, 0])``).
         """
         # if cblv-like data, use the first two channels in the loss
         # else if augmented cblv-like data, use the first four channels in the data
@@ -240,18 +311,19 @@ class PhyLoss(nn.Module):
         return batch_mean_tree_loss + tip1_loss
 
     def _char_recon_loss(self, x, y, mask = None):
-        """
-        Compute the reconstruction loss for categorical character data.
+        """Compute reconstruction loss for character channels.
 
         Args:
-        # TODO: fix this doc string (num_chars)
-            x (torch.Tensor): Reconstructed character data logits.
-            y (torch.Tensor): Original character data.
-            is_categorical (bool): Whether the character data is categorical.
-            mask : tips that are just padding
+            x (torch.Tensor): Predicted character tensor, shape ``(N, C_char, W)``. For
+                categorical characters this is interpreted as logits.
+            y (torch.Tensor): Target character tensor, shape ``(N, C_char, W)``. For categorical
+                characters this is typically one-hot (or a probability simplex) over channels.
+            mask (Optional[torch.Tensor]): Optional boolean/0-1 mask with shape ``(N, C_char, W)``
+                indicating which tips are present (padding tips are False). When provided, the
+                mask from the first channel is used as a per-tip mask.
 
         Returns:
-            torch.Tensor: Reconstruction loss for character data.
+            torch.Tensor: Scalar batch-mean character reconstruction loss.
         """
         # TODO: instead of computing mask.sum() you can pass in num_tips 
 
@@ -269,15 +341,15 @@ class PhyLoss(nn.Module):
         return pb_char_loss.mean()
 
     def _aux_recon_loss(self, x, y):
-        """
-        Compute the reconstruction loss for auxiliary data.       
+        """Compute reconstruction loss for auxiliary features.
 
         Args:
-            x (torch.Tensor): Reconstructed auxiliary data.
-            y (torch.Tensor): Original auxiliary data.
+            x (torch.Tensor): Predicted auxiliary tensor, shape ``(N, A)``.
+            y (torch.Tensor): Target auxiliary tensor, shape ``(N, A)``.
 
         Returns:
-            torch.Tensor: Reconstruction loss for auxiliary data.
+            torch.Tensor: Scalar MSE loss. If ``A == 1``, returns 0 (the single column is
+            typically the num-tips field, which is handled separately).
         """
         # Use mean squared error for auxiliary data
         aux_loss = fun.mse_loss(x, y) if x.shape[1] > 1 else torch.tensor(0.).to(x.device)
@@ -285,10 +357,29 @@ class PhyLoss(nn.Module):
         return aux_loss
     
     def _num_tips_recon_loss(self, x, y):
+        """Compute reconstruction loss for the num-tips auxiliary field.
+
+        Args:
+            x (torch.Tensor): Predicted num-tips values, shape ``(N,)`` or ``(N, 1)``.
+            y (torch.Tensor): Target num-tips values, shape ``(N,)`` or ``(N, 1)``.
+
+        Returns:
+            torch.Tensor: Scalar MSE loss.
+        """
         # TODO: ordinal loss
         return fun.mse_loss(x, y)
 
     def _mmd_loss(self, latent_pred, target = None):
+        """Compute MMD-based latent regularization.
+
+        Args:
+            latent_pred (torch.Tensor): Latent tensor, shape ``(N, D)``.
+            target (Optional[torch.Tensor]): Ignored in the current implementation (kept for
+                backward compatibility).
+
+        Returns:
+            torch.Tensor: Scalar latent loss.
+        """
 
         x = latent_pred
         # if target is None:
@@ -302,6 +393,16 @@ class PhyLoss(nn.Module):
         return MMD
 
     def _vz_loss(self, latent_pred, target = None):
+        """Compute VZ latent regularization.
+
+        Args:
+            latent_pred (torch.Tensor): Latent tensor, shape ``(N, D)``.
+            target (Optional[torch.Tensor]): Ignored in the current implementation (kept for
+                backward compatibility).
+
+        Returns:
+            torch.Tensor: Scalar latent loss.
+        """
         x = latent_pred
         # if target is None:
         #     y = torch.randn(x.shape, requires_grad=False, 
@@ -317,11 +418,12 @@ class PhyLoss(nn.Module):
 
     # Experimental
     def _rdp_loss(self, Z_batch: torch.Tensor, X_batch: torch.Tensor, rand_matrix: torch.Tensor, n_pairs: int):
-        """
-        Computes the average Random Distance Prediction (RDP) loss for a batch
-        by sampling 2 * n_pairs distinct indices and splitting them into i and j.
-        This guarantees i != j for each pair, and distinct indices across the sampled set.
-        Described here: 10.48550/arXiv.1912.12186
+        """Compute the Random Distance Prediction (RDP) loss (experimental).
+
+        This samples ``2 * n_pairs`` unique indices, splits them into paired indices ``(i, j)``,
+        and computes a distance-prediction loss between latent-space and data-space distances.
+
+        Reference: ``10.48550/arXiv.1912.12186``.
         """
         batch_size = Z_batch.shape[0]
         X_batch = X_batch.permute(0, 2, 1).reshape(batch_size, -1)  # equivalent to np.reshape(X_batch, (batch_size, -1), order = 'F')
@@ -539,22 +641,21 @@ class PhyLoss(nn.Module):
 
 # this version uses deterministic kernel values for each term involving standard normal comparison
 class MMDLoss(nn.Module):
-    """
-    MMD^2(X, N(0, I)) or MMD(X, N(0, I)) with multi-kernel RBF (mean over kernels) and closed-form prior terms.
-    see Briol et al. (2025) https://doi.org/10.48550/arXiv.2504.18830 
-        "A Dictionary of Closed-Form Kernel Mean Embeddings"
+    """Multi-kernel RBF MMD loss against a standard normal prior.
 
-    Kernel convention: k(x,y) = exp(-||x - y||^2 / bw)
+    Computes a Maximum Mean Discrepancy (MMD) between a batch ``X`` and ``N(0, I)`` using an
+    RBF kernel ``k(x, y) = exp(-||x - y||^2 / bw)`` and closed-form expectations for the prior
+    terms (no Monte Carlo sampling of the prior needed).
 
-    Bandwidth:
-      - If bw is provided: use it as the base bandwidth (scalar).
-      - Else estimate from the batch (default: median heuristic on off-diagonal L2 distances).
+    The base bandwidth is either fixed or estimated from the batch, then expanded into a
+    geometric grid of bandwidths (multi-kernel MMD).
 
-    Args:
-      n_kernels (int): number of kernels in geometric grid
-      mul_factor (float): ratio between adjacent bandwidths (e.g., 2.0)
-      bw (float|None): fixed base bandwidth; if None, estimate from batch
-      bw_mode (str): 'median' (default) or 'mean' for base bandwidth heuristic
+    Notes:
+        This implementation returns ``sqrt(MMD^2)`` (clipped to a small epsilon for numerical
+        stability).
+
+    References:
+        Briol et al. (2025), ``10.48550/arXiv.2504.18830``.
     """
     def __init__(self,
                  n_kernels: int = 5,
@@ -571,9 +672,17 @@ class MMDLoss(nn.Module):
 
     @torch.no_grad()
     def _estimate_base_bw(self, X: torch.Tensor) -> torch.Tensor:
-        """
-        Estimate a scalar base bandwidth from pairwise squared distances.
-        Falls back to variance if all off-diagonal distances are zero.
+        """Estimate a base RBF bandwidth from the batch.
+
+        Uses pairwise squared distances and either a median or mean heuristic (configured by
+        ``bw_mode``). If all off-diagonal distances are zero, falls back to a variance-based
+        estimate.
+
+        Args:
+            X (torch.Tensor): Input tensor with shape ``(m, d)``.
+
+        Returns:
+            torch.Tensor: Scalar base bandwidth (same dtype/device as ``X``).
         """
         delta = 1e-8
         m = X.shape[0]
@@ -596,22 +705,27 @@ class MMDLoss(nn.Module):
 
     @torch.no_grad()
     def _bws_from_x(self, X: torch.Tensor) -> torch.Tensor:
-        """
-        Create vector of bandwidths = base_bw * multipliers.
+        """Create the per-kernel bandwidth vector from a batch.
+
+        Args:
+            X (torch.Tensor): Input tensor with shape ``(m, d)``.
+
+        Returns:
+            torch.Tensor: Bandwidths with shape ``(K,)`` where ``K == n_kernels``.
         """
         base = self.fixed_bw.to(X.device, X.dtype) if self.fixed_bw is not None else self._estimate_base_bw(X)
         return base * self.bw_multipliers.to(X.device, X.dtype)  # (K,)
 
     def forward(self, X: torch.Tensor, Y: torch.Tensor | None = None) -> torch.Tensor:
-        """
-        Compute MMD^2(X, N(0, I)).
+        """Compute MMD between ``X`` and ``N(0, I)``.
 
         Args:
-          X: (m, d) latent batch
-          Y: ignored (kept for backward compatibility). Was drawn from N(0, I), now using analytical solutions
+            X (torch.Tensor): Latent batch with shape ``(m, d)``.
+            Y (Optional[torch.Tensor]): Ignored (kept for backward compatibility). Older
+                versions accepted a sampled prior batch here.
 
         Returns:
-          scalar tensor: MMD^2
+            torch.Tensor: Scalar MMD value (``sqrt(MMD^2)``).
         """
         m, d = X.shape
         bws = self._bws_from_x(X)  # (K,)
@@ -625,7 +739,7 @@ class MMDLoss(nn.Module):
         Kxx.fill_diagonal_(0.0)
         mean_Kxx = Kxx.sum() / (m * (m - 1))                # avgerage over all distances
 
-        # see Briol et al. (2025) https://doi.org/10.48550/arXiv.2504.18830 
+        # see Briol et al. (2025) https://doi.org/10.48550/arXiv.2504.18830 equation 15
         # "A Dictionary of Closed-Form Kernel Mean Embeddings"
 
         # Prior–prior closed form: 
@@ -670,9 +784,14 @@ class MMDLoss(nn.Module):
 
 
 class VZLoss(nn.Module):
-    """ 
-    THis Loss helps push the latent dims to be orthogonal but at the cost of Normality. Usually dont use.
+    """Latent regularizer combining per-dimension MMD variance and decorrelation.
 
+    The loss is:
+
+    - ``var_j MMD^2(z_j, N(0, 1))`` (encourages similar marginal distributions across latent dims),
+    - plus a correlation penalty on the latent covariance matrix (encourages decorrelation).
+
+    This is primarily experimental and is usually disabled in typical training runs.
     """
 
     def __init__(self,
@@ -682,17 +801,20 @@ class VZLoss(nn.Module):
                  corr_weight: float = 0.1,
                  shuffle_pairs: bool = True,
                  generator: torch.Generator | None = None):
-        """
-        non-iid penalty:
-      loss = var_j MMD^2(z_j, N(0,1))  +  corr_weight * decorrelation
+        """Initialize the VZ latent regularizer.
 
         Args:
-            n_kernels (int, optional): Number of RBF kernels. Defaults to 5.
-            mul_factor (float, optional): base for bw scaling. Defaults to 2.0.
-            bw (float | torch.Tensor | None, optional): 2 sigma^2 of RBF. Defaults to None.
-            corr_weight (float, optional): weight of loss due to correlation between latent dims. Defaults to 0.1.
-            shuffle_pairs (bool, optional): _description_. Defaults to True.
-            generator (torch.Generator | None, optional): _description_. Defaults to None.
+            n_kernels (int, optional): Number of bandwidths in the geometric grid. Defaults to 5.
+            mul_factor (float, optional): Ratio between adjacent bandwidths. Defaults to 2.0.
+            bw (Optional[float or torch.Tensor]): Optional fixed base bandwidth. If a scalar, the
+                same base is used for all latent dims; if a tensor, it must have shape ``(d,)``.
+                If None, the base bandwidth is estimated from the batch as ``2 * Var(z_j)`` per
+                dimension. Defaults to None.
+            corr_weight (float, optional): Weight for the decorrelation penalty. Defaults to 0.1.
+            shuffle_pairs (bool, optional): If True, randomly pairs samples for the linear-time
+                MMD estimator. Defaults to True.
+            generator (Optional[torch.Generator]): Optional RNG used when ``shuffle_pairs`` is True.
+                Defaults to None.
         """
         
         super().__init__()
@@ -711,9 +833,13 @@ class VZLoss(nn.Module):
 
     @torch.no_grad()
     def _per_dim_bandwidths(self, z: torch.Tensor) -> torch.Tensor:  # (d, K)
-        """
-        Build per-dimension, per-kernel bandwidths: (d, K)
-        base_j * multipliers_k, where base_j is either fixed or estimated.
+        """Compute per-dimension, per-kernel bandwidths.
+
+        Args:
+            z (torch.Tensor): Latent batch with shape ``(B, d)``.
+
+        Returns:
+            torch.Tensor: Bandwidth tensor with shape ``(d, K)``.
         """
         B, d = z.shape
         K = self.bw_multipliers.numel()
@@ -735,10 +861,14 @@ class VZLoss(nn.Module):
         return bws  # (d, K)
 
     def forward(self, z: torch.Tensor, z_prime: torch.Tensor | None = None) -> torch.Tensor:
-        """
-        z: (B, d) latent batch
-        z_prime: ignored (kept for backward compatibility)
-        returns: scalar ( var_j MMD^2(z_j, N(0,1)) + corr_weight * decorrelation )
+        """Compute the VZ regularizer value.
+
+        Args:
+            z (torch.Tensor): Latent batch with shape ``(B, d)``.
+            z_prime (Optional[torch.Tensor]): Ignored (kept for backward compatibility).
+
+        Returns:
+            torch.Tensor: Scalar loss ``var_j MMD^2(z_j, N(0,1)) + corr_weight * decorrelation``.
         """
         B, d = z.shape
         device = z.device

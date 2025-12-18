@@ -9,9 +9,28 @@ import random
 import sklearn
 
 class AECNN(nn.Module):
-    """ This class uses a CNN and a dense layer to encode structured and unstructured data respectively
-        The encodings are concatenated in a latent layer which then gets decoded by a transpose CNN 
-        and dense layer in parallel.
+    """Autoencoder for structured phylogenetic tensors plus auxiliary features.
+
+    The model encodes:
+
+    - Structured input (e.g. CBLV-like tree tensors) with a 1D CNN (``CnnEncoder``).
+    - Unstructured/auxiliary input with a small MLP (``DenseEncoder``).
+
+    The two embeddings are concatenated and passed through a shared latent layer, then
+    decoded back into:
+
+    - Structured output with a 1D transposed CNN (``CnnDecoder``).
+    - Auxiliary output with a small MLP (``DenseDecoder``).
+
+    Character channels:
+        If ``num_chars > 0``, the last ``num_chars`` structured channels are treated as
+        "character" channels. In ``forward()``, the structured output is split into
+        ``(phy_decoded, char_decoded)``.
+
+    Normalization:
+        Training typically expects inputs already normalized with the provided scalers.
+        Use ``norm_and_encode()``, ``decode_and_denorm()``, or ``norm_predict_denorm()`` when
+        you want the model to handle normalization/denormalization.
     """
 
     def __init__(self, 
@@ -37,24 +56,49 @@ class AECNN(nn.Module):
         """Constructor sets up all layers needed for network.  
 
         Args:
-            num_structured_input_channel (int): e.g. at least 2 for cblv formated trees
-            structured_input_width (int): e.g. num tips for trees
-            unstructured_latent_width (int, optional): number of auxiliary statistics or metadata. Defaults to None.
-            num_chars (int, optional): number of channels that are characters (< num_chars). defaults to 0.
-            char_type (str, optional): options are ["categorical", "continuous"]; int or float. Defaults to "categorical".
-            stride (list, optional): stride at each CNN layer for structured data encoder. Defaults to [2,2].
-            kernel (list, optional): kernel width for each layer for structured data encoder. Defaults to [3,3].
-            out_channels (list, optional): number of channels for output for each layer for structured data encoder. Defaults to [16, 32].
-            latent_output_dim (int, optional): Latent encoding dimension. Defaults to None.
-            latent_layer_type (str, optional): options are ["CNN", "DENSE", "GAUSS"]. Defaults to "CNN".
-            out_prefix (str, optional): prefix for output files. Defaults to "out".
+            num_structured_input_channel (int): Number of structured channels.
+                For CBLV-like tree tensors this is typically ``>= 2`` (more when including
+                extra features and/or character channels).
+            structured_input_width (int): Structured input width (e.g., maximum number of tips).
+            unstructured_input_width (int): Number of auxiliary features per sample.
+            unstructured_latent_width (Optional[int]): Width of the auxiliary embedding produced
+                by the unstructured encoder. If ``latent_layer_type == "CNN"``, this must be an
+                integer multiple of the final structured latent channel count (``out_channels[-1]``).
+                If None, defaults to ``out_channels[-1]`` for CNN latent layers, otherwise 10.
+            aux_numtips_idx (Optional[int]): Column index in the auxiliary vector that contains
+                the number of taxa/tips (e.g. ``num_taxa``). Required (cannot be None): used to
+                constrain the decoded value to ``[2, structured_input_width]`` in normalized space.
+            num_chars (int): Number of character channels in the structured input. If > 0, the
+                last ``num_chars`` channels are treated as character channels. Defaults to 0.
+            char_type (str): Character data type. Common values are ``"categorical"`` and
+                ``"continuous"``. If ``"categorical"`` and ``inference=True``, character channels
+                are softmaxed in ``decode()``. Defaults to ``"categorical"``.
+            stride (List[int]): Convolution stride for each structured encoder layer. Defaults to
+                ``[2, 2]``.
+            kernel (List[int]): Convolution kernel size for each structured encoder layer. Defaults
+                to ``[3, 3]``.
+            out_channels (List[int]): Output channels for each structured encoder layer. Defaults to
+                ``[16, 32]``.
+            latent_output_dim (Optional[int]): Size of the shared latent vector when
+                ``latent_layer_type`` is ``"DENSE"`` or ``"GAUSS"``. If None, defaults to the
+                flattened structured embedding width.
+            latent_layer_type (str): Shared latent layer type: ``"CNN"``, ``"DENSE"``, or ``"GAUSS"``.
+                Defaults to ``"CNN"``.
+            out_prefix (str): Prefix for output files written during initialization (currently the
+                ``.network.txt`` architecture dump). Defaults to ``"out"``.
+            device (str): ``"auto"``, ``"cpu"``, or ``"cuda"``. If ``"auto"``, selects CUDA when
+                available. Defaults to ``"auto"``.
+            seed (Optional[int]): Random seed for Python, NumPy, and PyTorch. Defaults to None.
+            phy_normalizer: Required. Fitted scaler for structured data with ``mean_`` and ``std_``
+                attributes and ``transform``/``inverse_transform`` methods (sklearn-like).
+            aux_normalizer: Required. Fitted scaler for auxiliary data with ``mean_`` and ``var_``
+                attributes and ``transform``/``inverse_transform`` methods (sklearn-like).
 
         Raises:
-            ValueError: if the stride array length does not equal the kernel array length
-            ValueError: _description_
-            ValueError: _description_
-            Warning: num_chars > 0 but data_channesl <= 2. num_chars set to zero automatically.
-            ValueError: _description_
+            ValueError: If ``stride``, ``kernel``, and ``out_channels`` lengths differ.
+            ValueError: If ``latent_layer_type == "CNN"`` and ``unstructured_latent_width`` is not
+                divisible by ``out_channels[-1]``.
+            ValueError: If ``latent_layer_type`` is not one of ``{"CNN", "DENSE", "GAUSS"}``.
         """
 
         super().__init__()
@@ -218,15 +262,22 @@ class AECNN(nn.Module):
         
  
     def forward(self, data: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
-        """        
-        Push data through the encoder and decoder networks.
+        """Run a full autoencoder pass: encode then decode.
 
         Args:
-            data (Tuple[torch.Tensor, torch.Tensor]): _description_
+            data (Tuple[torch.Tensor, torch.Tensor]): ``(phy, aux)`` input tensors. ``phy`` has
+                shape ``(N, C, W)`` and ``aux`` has shape ``(N, A)``. Inputs are moved to
+                ``self.device`` inside ``encode()``.
 
         Returns:
-            Tuple[torch.Tensor, torch.Tensor]: _description_
-        """       
+            Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor, Optional[torch.Tensor]]:
+            ``(phy_decoded, char_decoded, aux_decoded, latent)`` where:
+
+            - ``phy_decoded``: Phylogeny reconstruction excluding character channels.
+            - ``char_decoded``: Character reconstruction (or None if ``num_chars == 0``).
+            - ``aux_decoded``: Auxiliary reconstruction.
+            - ``latent``: The latent representation if ``latent_layer_type == "GAUSS"``, otherwise None.
+        """
 
         # data is a tuple (structured, unstructured)
 
@@ -252,16 +303,18 @@ class AECNN(nn.Module):
 
     def encode(self, phy: torch.Tensor, aux: torch.Tensor, *,
                inference = False, detach = False ) -> torch.Tensor:
-        """_summary_
+        """Encode structured and auxiliary inputs into a shared latent representation.
 
         Args:
-            phy (torch.Tensor): _description_
-            aux (torch.Tensor): _description_
-            inference (bool, optional): _description_. Defaults to False.
-            detach (bool, optional): _description_. Defaults to False.
+            phy (torch.Tensor): PHylogeny + charecter (cblv+s) input tensor with shape ``(N, C, W)``.
+            aux (torch.Tensor): Auxiliary input tensor with shape ``(N, A)``.
+            inference (bool, optional): If True, runs in eval mode and disables gradients
+                for the duration of the call. Defaults to False.
+            detach (bool, optional): If True (and ``inference`` is True), detaches the returned
+                latent tensor from the computation graph. Defaults to False.
 
         Returns:
-            torch.Tensor: _description_
+            torch.Tensor: Latent tensor with shape ``(N, latent_dim)`` (flattened).
         """
         
         phy = phy.to(self.device)
@@ -306,15 +359,27 @@ class AECNN(nn.Module):
     
     def decode(self, z: torch.Tensor, *,
                inference = False, detach = False) -> Tuple[torch.Tensor, torch.Tensor]:
-        """_summary_
+        """Decode a latent representation back to structured and auxiliary outputs.
+
+        Decoding applies a few constraints in normalized space:
+
+        - Structured phylogenetic channels are clamped so their inverse-transformed values
+          remain within the original ``[0, 1]`` bounds.
+        - The auxiliary "num tips" field (``aux_numtips_idx``) is passed through a sigmoid-based
+          transform to keep it within ``[2, structured_input_width]`` after inverse transform.
+        - If ``inference=True`` and ``char_type == "categorical"``, character channels are softmaxed.
 
         Args:
-            z (torch.Tensor): _description_
-            inference (bool, optional): _description_. Defaults to False.
-            detach (bool, optional): _description_. Defaults to False.
+            z (torch.Tensor): Latent tensor with shape ``(N, latent_dim)``.
+            inference (bool, optional): If True, runs in eval mode and disables gradients
+                for the duration of the call. Defaults to False.
+            detach (bool, optional): If True (and ``inference`` is True), detaches the returned
+                tensors from the computation graph. Defaults to False.
 
         Returns:
-            Tuple[torch.Tensor, torch.Tensor]: _description_
+            Tuple[torch.Tensor, torch.Tensor]: ``(decoded_structured, decoded_aux)`` where
+            ``decoded_structured`` has shape ``(N, C, W)`` and includes both phylogenetic and
+            (optionally) character channels, and ``decoded_aux`` has shape ``(N, A)``.
         """
         
         is_training = self.training
@@ -370,16 +435,24 @@ class AECNN(nn.Module):
     # TODO: should prob output torch.Tensors like everything else?
     def predict(self, phy: torch.Tensor, aux: torch.Tensor, *, 
                 inference = False, detach = False) -> Tuple[np.ndarray, np.ndarray]:
-        """_summary_
+        """Reconstruct inputs and return NumPy arrays on CPU.
+
+        This is a convenience wrapper around calling the module directly and converting
+        outputs to NumPy. Outputs are in the same (typically normalized) space as the model
+        was trained in; use ``norm_predict_denorm()`` if you want predictions in the original
+        input scale.
 
         Args:
-            phy (torch.Tensor): _description_
-            aux (torch.Tensor): _description_
-            inference (bool, optional): _description_. Defaults to False.
-            detach (bool, optional): _description_. Defaults to False.
+            phy (torch.Tensor): Structured input tensor with shape ``(N, C, W)``.
+            aux (torch.Tensor): Auxiliary input tensor with shape ``(N, A)``.
+            inference (bool, optional): If True, runs in eval mode and disables gradients.
+                Defaults to False.
+            detach (bool, optional): If True (and ``inference`` is True), detaches the outputs
+                before converting to NumPy. Defaults to False.
 
         Returns:
-            Tuple[np.ndarray, np.ndarray]: _description_
+            Tuple[np.ndarray, np.ndarray]: ``(phy_pred, aux_pred)`` arrays on CPU. ``phy_pred`` has
+            shape ``(N, C, W)`` and ``aux_pred`` has shape ``(N, A)``.
         """
         
         # pushes data through full autoencoder
@@ -411,11 +484,26 @@ class AECNN(nn.Module):
             self.train(is_training)
 
     def set_normalizers(self, phy_norm, aux_norm):
+        """Set the fitted normalizers used by the inference helpers.
+
+        Args:
+            phy_norm: Structured-data normalizer (sklearn-like).
+            aux_norm: Auxiliary-data normalizer (sklearn-like).
+        """
         self.phy_normalizer = phy_norm
         self.aux_normalizer = aux_norm
 
     # inference machinery. Handles normalization too.
     def norm_and_encode(self, phy: np.array, aux: np.array) -> np.array:
+        """Normalize raw inputs and return their latent encoding.
+
+        Args:
+            phy (np.ndarray or torch.Tensor): Structured input with shape ``(N, C, W)``.
+            aux (np.ndarray or torch.Tensor): Auxiliary input with shape ``(N, A)``.
+
+        Returns:
+            np.ndarray: Latent encodings with shape ``(N, latent_dim)``.
+        """
         # phy shape = (N, nc, mt)
         # normalize
         # encode
@@ -435,6 +523,15 @@ class AECNN(nn.Module):
         return latent.cpu().numpy()
 
     def decode_and_denorm(self, latent : np.array) -> Tuple[np.array, np.array]:
+        """Decode latent vectors and inverse-transform to original data space.
+
+        Args:
+            latent (np.ndarray or torch.Tensor): Latent vectors with shape ``(N, latent_dim)``.
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: ``(phy, aux)`` in the original (inverse-transformed)
+            scale. ``phy`` has shape ``(N, C, W)`` and ``aux`` has shape ``(N, A)``.
+        """
         # decode
         # inverse_transform
         # phy output shape is (N, nc, mt)
@@ -447,6 +544,15 @@ class AECNN(nn.Module):
         return phy, aux
 
     def norm_predict_denorm(self, phy : np.array, aux : np.array) -> Tuple[np.array, np.array]:
+        """Normalize inputs, run the autoencoder, and inverse-transform outputs.
+
+        Args:
+            phy (np.ndarray or torch.Tensor): Structured input with shape ``(N, C, W)``.
+            aux (np.ndarray or torch.Tensor): Auxiliary input with shape ``(N, A)``.
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: ``(phy_pred, aux_pred)`` in the original input scale.
+        """
         # phy shape = (N, nc, mt)
         # phy output shape = (N, nc, mt)
         return self.decode_and_denorm( self.norm_and_encode(phy, aux) )
@@ -456,7 +562,7 @@ class AECNN(nn.Module):
         """Write network architecture to simple text file.
 
         Args:
-            out_fn (_type_): _description_
+            out_fn (str): Output path for the text file.
         """
 
         with open(out_fn, "w") as f:  
@@ -471,6 +577,15 @@ class AECNN(nn.Module):
             f.write(str(self.unstructured_decoder))
 
     def set_seed(self, seed = None):
+        """Seed Python, NumPy, and PyTorch RNGs for reproducibility.
+
+        Notes:
+            This mutates global RNG state (``random``, ``numpy.random``, and ``torch``) and sets
+            cuDNN to deterministic mode.
+
+        Args:
+            seed (Optional[int]): Seed value. If None, this is a no-op. Defaults to None.
+        """
         if seed is None:
                 return  # use module-level RNGs as-is
 
@@ -485,6 +600,7 @@ class AECNN(nn.Module):
 
 # encoder classes
 class DenseEncoder(nn.Module):
+    """Small MLP encoder for auxiliary (unstructured) features."""
     def __init__(self, in_width, out_width):
         super().__init__()
         self.unstructured_encoder = nn.Sequential(
@@ -495,9 +611,18 @@ class DenseEncoder(nn.Module):
             nn.BatchNorm1d(out_width)
         )
     def forward(self, x):
+        """Encode auxiliary inputs.
+
+        Args:
+            x (torch.Tensor): Auxiliary tensor of shape ``(N, in_width)``.
+
+        Returns:
+            torch.Tensor: Encoded auxiliary tensor of shape ``(N, out_width)``.
+        """
         return self.unstructured_encoder(x)
 
 class CnnEncoder(nn.Module):
+    """1D CNN encoder for structured inputs (e.g. phylogenetic tensors)."""
     def __init__(self, data_channels, data_width, layer_params):
         super().__init__()
         out_channels = layer_params['out_channels']
@@ -552,11 +677,20 @@ class CnnEncoder(nn.Module):
 
 
     def forward(self, x):
+        """Encode structured inputs.
+
+        Args:
+            x (torch.Tensor): Structured tensor of shape ``(N, C, W)``.
+
+        Returns:
+            torch.Tensor: Encoded structured tensor of shape ``(N, out_channels[-1], W_out)``.
+        """
         return self.cnn_layers(x)
         
 
 # decoder classes
 class DenseDecoder(nn.Module):
+    """Small MLP decoder for auxiliary (unstructured) features."""
     def __init__(self, in_width, out_width):
         super().__init__()
         self.unstructured_decoder = nn.Sequential(
@@ -566,9 +700,23 @@ class DenseDecoder(nn.Module):
             nn.Linear(10, out_width)
         )
     def forward(self, x):
+        """Decode auxiliary outputs.
+
+        Args:
+            x (torch.Tensor): Decoded latent tensor of shape ``(N, in_width)``.
+
+        Returns:
+            torch.Tensor: Reconstructed auxiliary tensor of shape ``(N, out_width)``.
+        """
         return self.unstructured_decoder(x)
     
 class CnnDecoder(nn.Module):
+    """1D transposed-CNN decoder for structured outputs.
+
+    This decoder mirrors the structured encoder and uses ``torch.nn.ConvTranspose1d`` layers with
+    computed padding/output-padding to hit requested intermediate widths and the final
+    ``data_width``.
+    """
     def __init__(self, 
                  encoder_layer_widths, 
                  latent_width, 
@@ -671,6 +819,15 @@ class CnnDecoder(nn.Module):
         print(utils.get_outshape(self.tcnn_layers, num_cnn_latent_channels, latent_width))
 
     def forward(self, x):
+        """Decode structured outputs from a structured latent tensor.
+
+        Args:
+            x (torch.Tensor): Structured latent tensor of shape
+                ``(N, out_channels[-1], latent_width)``.
+
+        Returns:
+            torch.Tensor: Reconstructed structured tensor of shape ``(N, data_channels, data_width)``.
+        """
         decoded_x = self.tcnn_layers(x)
         char_start_idx = decoded_x.shape[1] - self.num_chars
 
@@ -691,6 +848,18 @@ class CnnDecoder(nn.Module):
         return final_decoded_x
 
     def _get_paddings(self, w_out_target, w_in, s, k, d=1):
+        """Compute ``padding`` and ``output_padding`` for ``torch.nn.ConvTranspose1d``.
+
+        Args:
+            w_out_target (int): Desired output width.
+            w_in (int): Input width to the transpose convolution.
+            s (int): Stride.
+            k (int): Kernel size.
+            d (int, optional): Dilation. Defaults to 1.
+
+        Returns:
+            Tuple[int, int]: ``(padding, output_padding)`` values.
+        """
         # convtranspose1d formulat: 
         # w_out_target = (w_in - 1)s + d(k-1) + 1 + outpad - 2pad
         # returns the paddings necessary for target output width 
@@ -711,6 +880,10 @@ class CnnDecoder(nn.Module):
         return pad, outpad
 
 class Head(nn.Module):
+    """Learned per-element scaling for structured output channels.
+
+    Used to rescale character logits before concatenation with phylogenetic channels.
+    """
     def __init__(self, c, w):
         super().__init__()
         self.c = c
@@ -723,6 +896,14 @@ class Head(nn.Module):
 
 
     def forward(self, x):
+        """Scale an input tensor elementwise.
+
+        Args:
+            x (torch.Tensor): Tensor of shape ``(N, c, w)``.
+
+        Returns:
+            torch.Tensor: Tensor of shape ``(N, c, w)`` with learned scaling applied.
+        """
         # print(torch.max(self.scale))
         flat_x = x.view((x.shape[0], self.c * self.w))
         scaled_flat_x = self.scale * flat_x
@@ -735,6 +916,7 @@ class Head(nn.Module):
 
 # Latent layer classes
 class LatentCNN(nn.Module):
+    """CNN latent layer that preserves ``(channels, width)`` shape."""
     def __init__(self, in_cnn_shape: Tuple[int, int], kernel_size = 9):
         # creates a tensor with shape (in_cnn_shape[1], in_cnn_shape[2] + 1)
         super().__init__()
@@ -748,9 +930,18 @@ class LatentCNN(nn.Module):
         )
     
     def forward(self, x):
+        """Apply the latent CNN.
+
+        Args:
+            x (torch.Tensor): Tensor of shape ``(N, C, W)``.
+
+        Returns:
+            torch.Tensor: Tensor of shape ``(N, C, W)``.
+        """
         return self.shared_layer(x)
     
 class LatentDense(nn.Module):
+    """Dense latent layer operating on flattened embeddings."""
     def __init__(self, in_width: int, out_width: int):
         super().__init__()
         # Shared Latent Layer
@@ -762,6 +953,14 @@ class LatentDense(nn.Module):
         print((1, out_width))
     
     def forward(self, x):
+        """Apply the latent MLP.
+
+        Args:
+            x (torch.Tensor): Tensor of shape ``(N, in_width)``.
+
+        Returns:
+            torch.Tensor: Tensor of shape ``(N, out_width)``.
+        """
         return self.shared_layer(x)
     
     def __iter__(self):
@@ -770,6 +969,7 @@ class LatentDense(nn.Module):
     
 # might be more work than its worth
 class LatentPool(nn.Module):
+    """Experimental latent layer using adaptive average pooling plus a linear map."""
     def __init__(self, 
                  struct_encoder_out_shape : Tuple[int, int], 
                  unstruct_encoder_out_width : int, 
@@ -786,6 +986,15 @@ class LatentPool(nn.Module):
 
 
     def forward(self, struct, unstruct):
+        """Apply pooled latent mapping.
+
+        Args:
+            struct (torch.Tensor): Structured embedding tensor.
+            unstruct (torch.Tensor): Unstructured embedding tensor.
+
+        Returns:
+            torch.Tensor: Latent tensor of shape ``(N, latent_dim)``.
+        """
         #
         avg_pool = self.avg_pool_layer(struct)
         flat_avg_pool = avg_pool.flatten(start_dim=1)                
@@ -794,6 +1003,7 @@ class LatentPool(nn.Module):
 
     
 class LatentDenseDecoder(nn.Module): # same as LatentGauss
+    """Dense decoder that expands the latent vector back to a flattened structured embedding."""
     def __init__(self, in_width: int, out_width: int):
         super().__init__()
         self.shared_layer = nn.Sequential(
@@ -807,12 +1017,21 @@ class LatentDenseDecoder(nn.Module): # same as LatentGauss
         print((1, out_width))
     
     def forward(self, x):
+        """Decode latent vectors.
+
+        Args:
+            x (torch.Tensor): Tensor of shape ``(N, in_width)``.
+
+        Returns:
+            torch.Tensor: Tensor of shape ``(N, out_width)``.
+        """
         return self.shared_layer(x)
     
     def __iter__(self):
         return iter(self.shared_layer)
     
 class LatentCNNDecoder(nn.Module):
+    """CNN decoder counterpart to ``LatentCNN`` that preserves ``(channels, width)`` shape."""
     def __init__(self, in_cnn_shape: Tuple[int, int], kernel_size = 9):
         super().__init__()
         odd_kernel = kernel_size - kernel_size % 2 + 1
@@ -825,12 +1044,21 @@ class LatentCNNDecoder(nn.Module):
         )
     
     def forward(self, x):
+        """Apply the latent CNN decoder.
+
+        Args:
+            x (torch.Tensor): Tensor of shape ``(N, C, W)``.
+
+        Returns:
+            torch.Tensor: Tensor of shape ``(N, C, W)``.
+        """
         return self.shared_layer(x)
 
 
 
 # Dev
 class TwoSidedReLU(nn.Module):
+    """Clamp an input tensor elementwise between per-element min/max bounds."""
     def __init__(self, min_val, max_val):
         # shape of min_val and max_val is the same as the cblv tensor (N, C, W)
         super().__init__()
