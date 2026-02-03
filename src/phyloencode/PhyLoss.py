@@ -547,7 +547,7 @@ class PhyLoss(nn.Module):
 
 # class MMDLoss(nn.Module):
 #     ''' Derived from: https://github.com/yiftachbeer/mmd_loss_pytorch/blob/master/mmd_loss.py'''
-#     def __init__(self, device):
+#     def __init__(self, device = "cuda"):
 #         super().__init__()
 #         self.kernel = RBF(device, n_kernels=5)
 
@@ -571,72 +571,7 @@ class PhyLoss(nn.Module):
 #         # return MMD_loss
 #         return MMD2_loss
     
-# this version uses deterministic kernel values for each term involving standard normal comparison
-# this also uses the RBF class. which I dont like.
-# class MMDLoss(nn.Module):
-#     """
-#     Computes MMD^2 between a batch X and the standard normal prior N(0, I)
-#     using an RBF kernel with multi-kernel averaging. The two "prior" terms
-#     are computed in closed form (no Monte Carlo Y needed).
 
-#     Notes:
-#       - Matches RBF convention: k(x,y) = exp(-||x-y||^2 / bw).
-#       - Uses the same bandwidth grid as RBF via bw_multipliers and
-#         a base bandwidth estimated from the batch (median/mean heuristic
-#         depending on RBF.get_bw implementation).
-#       - Returns MMD^2 (not the square root).
-#     """
-#     def __init__(self, device, n_kernels=5, mul_factor=2.0, bw=None):
-#         super().__init__()
-#         # Reuse existing RBF class
-#         self.kernel = RBF(device, n_kernels=n_kernels, mul_factor=mul_factor, bw=bw)
-
-#     def _bws_from_x(self, X: torch.Tensor) -> torch.Tensor:
-#         # Mirror RBF bandwidth logic for consistency
-#         with torch.no_grad():
-#             L2_xx = torch.cdist(X, X) ** 2
-#             bw_base = self.kernel.get_bw(L2_xx)                 # scalar
-#         return (bw_base * self.kernel.bw_multipliers).to(X.device)  # (K,)
-
-#     def forward(self, X: torch.Tensor, Y: torch.Tensor | None = None) -> torch.Tensor:
-#         """
-#         Args:
-#             X: (m, d) latent batch
-#             Y: (ignored) kept for backward compatibility
-
-#         Returns:
-#             scalar tensor with MMD^2(X, N(0, I))
-#         """
-#         m, d = X.shape
-#         device = X.device
-#         bws = self._bws_from_x(X)                           # (K,)
-
-#         # --- Data–data term (unbiased), averaged over kernels ---
-#         L2_xx = torch.cdist(X, X) ** 2                      # (m, m)
-#         Kxx_k = torch.exp(-L2_xx[None, :, :] / bws[:, None, None])  # (K, m, m)
-#         Kxx = Kxx_k.mean(dim=0)                             # (m, m)
-#         if m > 1:
-#             Kxx.fill_diagonal_(0.0)
-#             term_xx = Kxx.sum() / (m * (m - 1))
-#         else:
-#             term_xx = torch.zeros((), device=device, dtype=X.dtype)
-
-#         # --- Closed-form E[k(Z,Z')] per kernel; then mean over kernels ---
-#         # E[k(z,z')] = (bw / (bw + 4))^(d/2)
-#         Ezz_k = (bws / (bws + 4.0)).pow(d / 2.0)            # (K,)
-#         term_zz = Ezz_k.mean()
-
-#         # --- Closed-form mixed term (1/m) sum_i E[k(x_i, Z)], then mean over kernels ---
-#         # E[k(x, Z)] = (bw/(bw+2))^(d/2) * exp(-||x||^2 / (bw+2))
-#         x2 = (X * X).sum(dim=1, keepdim=True)               # (m, 1)
-#         c1 = (bws / (bws + 2.0)).pow(d / 2.0)               # (K,)
-#         Ez_xz = torch.exp(-x2 / (bws + 2.0)) * c1           # (m, K) via broadcasting
-#         term_xz = Ez_xz.mean()                               # mean over i and kernels
-
-#         mmd2 = term_xx + term_zz - 2.0 * term_xz
-#         # If strict non-negativity:
-#         # mmd2 = mmd2.clamp_min(0.0)
-#         return mmd2
 
 
 # this version uses deterministic kernel values for each term involving standard normal comparison
@@ -728,8 +663,8 @@ class MMDLoss(nn.Module):
             torch.Tensor: Scalar MMD value (``sqrt(MMD^2)``).
         """
         m, d = X.shape
-        bws = self._bws_from_x(X)  # (K,)
-        delta = 1e-8
+        bws = self._bws_from_x(X)  # (K,)  bws = 2 * l_i^2 in Briol et al. 2025
+        delta = 1e-6
 
         # Data–data term (unbiased) averaged over kernels
         #  E[k(x, x')] = 1/m(m-1) * sum_{i =\= j}^m(exp(-||x_i - x'_j||^2 / bw))
@@ -745,13 +680,13 @@ class MMDLoss(nn.Module):
         # Prior–prior closed form: 
         #   E[k(z,z')] = (bw / (bw + 4))^(d/2) 
         # Note: this only depends on bws which is not optimized by SGD (in torch.no_grad context)
-        # Note: since bw = 2 sigma^2 in the RBF => 4.0 in the denominator
+        # Note: since l_i^2 = bws/2;   l_i^2 / (l_i^2 + 2 * sigma^2) = bws/(bws + 4)
         mean_Kzz = (bws / (bws + 4.0)).pow(d / 2.0).mean()
 
-        # Mixed closed form: 
+        # Mixed closed form (semi-analytic): 
         #   E[k(x, z)] = (bw/(bw+2))^(d/2) * exp(-||x||^2 / (bw + 2)) 
-        x2 = (X * X).sum(dim=1, keepdim=True)                # (m, 1)
         c1 = (bws / (bws + 2.0)).pow(d / 2.0)                # (K,)
+        x2 = (X * X).sum(dim=1, keepdim=True)                # (m, 1)
         Ez_xz = c1 * torch.exp(-x2 / (bws + 2.0))            # (m, K) via broadcasting
         mean_Kxz = Ez_xz.mean()                               # mean over samples and kernels
 
@@ -924,6 +859,171 @@ class VZLoss(nn.Module):
         return var_mmd + self.corr_weight * corr_loss
 
 
+class exprm_VZLoss(nn.Module):
+    """Latent regularizer that matches mean and covariance to ``N(0, I)``.
+
+    This explicitly penalizes *full-covariance* rank collapse (e.g. a near-zero eigenvalue)
+    that can slip through marginal/IMQ/RBF regularizers.
+
+    By default it uses the Gaussian moment KL:
+
+        ``0.5 * (tr(C) - logdet(C) - d)``
+
+    where ``C`` is the batch covariance of ``z``. Optionally divides by ``d`` so the scale is
+    roughly independent of latent dimension.
+    """
+
+    def __init__(self,
+                 cov_weight: float = 1.0,
+                 mean_weight: float = 1.0,
+                 normalize_by_dim: bool = True,
+                 eps: float = 1e-6,
+                 unbiased_cov: bool = True,
+                 generator: torch.Generator | None = None):
+        super().__init__()
+        self.cov_weight = float(cov_weight)
+        self.mean_weight = float(mean_weight)
+        self.normalize_by_dim = bool(normalize_by_dim)
+        self.eps = float(eps)
+        self.unbiased_cov = bool(unbiased_cov)
+        self.generator = generator  # kept for drop-in compatibility (unused)
+
+    def forward(self, z: torch.Tensor, z_prime: torch.Tensor | None = None) -> torch.Tensor:
+
+        B, d = z.shape
+
+        if B < 2:
+            return z.sum() * 0.0  # correct dtype/device zero
+
+        # Compute in fp32 for numerical stability (keep gradients).
+        z_work = z.float() if z.dtype in (torch.float16, torch.bfloat16) else z
+
+        mu = z_work.mean(dim=0)
+        zc = z_work - mu
+
+        denom = (B - 1) if self.unbiased_cov else B
+        denom = max(int(denom), 1)
+        cov = (zc.T @ zc) / denom
+        cov = 0.5 * (cov + cov.T)  # enforce symmetry
+
+        eye = torch.eye(d, device=z_work.device, dtype=z_work.dtype)
+        cov_eps = cov + self.eps * eye
+
+        # Stable logdet via Cholesky on the jittered covariance.
+        # (Fallback to eigvals if Cholesky fails for numerical reasons.)
+        try:
+            chol = torch.linalg.cholesky(cov_eps)
+            logdet = 2.0 * torch.log(torch.diagonal(chol)).sum()
+        except RuntimeError:
+            eigvals = torch.linalg.eigvalsh(cov).clamp_min(self.eps)
+            logdet = eigvals.log().sum()
+
+        cov_kl = 0.5 * (cov.diag().sum() - logdet - float(d))
+        mean_pen = 0.5 * mu.pow(2).sum()
+
+        if self.normalize_by_dim:
+            cov_kl = cov_kl / float(d)
+            mean_pen = mean_pen / float(d)
+
+        loss = self.cov_weight * cov_kl + self.mean_weight * mean_pen
+        return loss
+
+
 
 
     # DEVELOPMENT
+
+
+class MMD_IMQ_Loss(nn.Module):
+    """Multi-kernel IMQ MMD loss against a standard normal prior.
+
+    Uses an inverse multiquadratic kernel
+        k(x, y) = c / (c + ||x - y||^2)
+    with a geometric grid of ``c`` values (multi-kernel MMD). The prior batch is sampled as
+    ``z ~ N(0, I)`` with the same shape as ``X``.
+
+    Returns ``sqrt(MMD^2)`` (clipped to a small epsilon for stability), matching the API and
+    output behavior of ``MMDLoss`` above (``Y`` is accepted but ignored).
+    """
+    def __init__(self,
+                 n_kernels: int = 5,
+                 mul_factor: float = 2.0,
+                 bw: float | None = None,
+                 bw_mode: str = "median"):
+        super().__init__()
+        self.bw_mode = bw_mode
+        self.register_buffer(
+            "bw_multipliers",
+            (mul_factor ** (torch.arange(n_kernels) - n_kernels // 2)).float()
+        )
+        self.fixed_bw = None if bw is None else torch.tensor(float(bw))
+
+    @staticmethod
+    def _sq_cdist(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        x2 = (x * x).sum(dim=1, keepdim=True)
+        y2 = (y * y).sum(dim=1, keepdim=True).T
+        # numerical clamp avoids tiny negatives from fp roundoff
+        return (x2 + y2 - 2.0 * (x @ y.T)).clamp_min(0.0)
+
+    @torch.no_grad()
+    def _estimate_base_bw_from_l2(self, L2_xx: torch.Tensor, X: torch.Tensor) -> torch.Tensor:
+        delta = 1e-8
+        m = X.shape[0]
+
+        iu = torch.triu_indices(m, m, offset=1, device=X.device)
+        vals = L2_xx[iu[0], iu[1]]
+        vals = vals[vals > 0]
+
+        if vals.numel() > 0:
+            if self.bw_mode == "mean":
+                base = vals.mean()
+            else:  # "median"
+                base = torch.quantile(vals, 0.5)
+        else:
+            base = X.var(dim=0, unbiased=False).sum()
+
+        return base.to(device=X.device, dtype=X.dtype).clamp(min=delta)
+
+    def forward(self, X: torch.Tensor, Y: torch.Tensor | None = None) -> torch.Tensor:
+        m, d = X.shape
+        delta = 1e-8
+
+        if m < 2:
+            return X.sum() * 0.0
+
+        # Sample prior (no grad needed)
+        Z = torch.randn_like(X)
+
+        # Pairwise squared distances (avoid torch.cdist sqrt)
+        L2_xx = self._sq_cdist(X, X)
+        L2_zz = self._sq_cdist(Z, Z)
+        L2_xz = self._sq_cdist(X, Z)
+        L2_xx.fill_diagonal_(0.0)
+        L2_zz.fill_diagonal_(0.0)
+
+        # Kernel scales (treated as constants for stability/speed)
+        with torch.no_grad():
+            base = self.fixed_bw.to(X.device, X.dtype) if self.fixed_bw is not None \
+                   else self._estimate_base_bw_from_l2(L2_xx.detach(), X)
+            cs = base * self.bw_multipliers.to(X.device, X.dtype)  # (K,)
+
+        # IMQ kernel: c / (c + ||x - y||^2)
+        denom_xx = cs[:, None, None] + L2_xx[None, :, :]
+        denom_zz = cs[:, None, None] + L2_zz[None, :, :]
+        denom_xz = cs[:, None, None] + L2_xz[None, :, :]
+
+        Kxx_k = cs[:, None, None] / denom_xx  # (K, m, m)
+        Kzz_k = cs[:, None, None] / denom_zz  # (K, m, m)
+        Kxz_k = cs[:, None, None] / denom_xz  # (K, m, m)
+
+        # Unbiased within-sample terms (exclude diagonal); diag entries are 1 after L2 diag = 0
+        sum_offdiag_xx = Kxx_k.sum(dim=(1, 2)) - float(m)
+        sum_offdiag_zz = Kzz_k.sum(dim=(1, 2)) - float(m)
+        mean_Kxx = sum_offdiag_xx.mean() / (m * (m - 1))
+        mean_Kzz = sum_offdiag_zz.mean() / (m * (m - 1))
+
+        # Mixed term uses all pairs
+        mean_Kxz = Kxz_k.mean()
+
+        mmd2 = mean_Kxx + mean_Kzz - 2.0 * mean_Kxz
+        return torch.sqrt(mmd2.clamp(min=delta))

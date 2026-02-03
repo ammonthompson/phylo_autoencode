@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
+import matplotlib.font_manager as fm
 import numpy as np
 import pandas as pd
 import os
@@ -9,6 +10,22 @@ import scipy.stats as stats
 
 ''' Create qqplots for each column in a file of latent encodings. 
     This is to check if the latent encodings are N(0,1) distributed.'''
+
+AXIS_FONT_SCALE = 1.5
+
+
+def _scaled_fontsize(value):
+    return fm.FontProperties(size=value).get_size_in_points() * AXIS_FONT_SCALE
+
+
+plt.rcParams.update(
+    {
+        "axes.labelsize": _scaled_fontsize(plt.rcParams["axes.labelsize"]),
+        "axes.titlesize": _scaled_fontsize(plt.rcParams["axes.titlesize"]),
+        "xtick.labelsize": _scaled_fontsize(plt.rcParams["xtick.labelsize"]),
+        "ytick.labelsize": _scaled_fontsize(plt.rcParams["ytick.labelsize"]),
+    }
+)
 
 cmd_params = parg.ArgumentParser()
 cmd_params.add_argument("-f", "--infile", required=True, help = "File of latent encoding of training data sample.")
@@ -55,8 +72,7 @@ with PdfPages(args.outfile) as pdf:
     plt.ylabel("Frequency")
     # vertical line for significance of ks test for standand normal of size encoded_dat.shape[1]    
     plt.axvline(x=1.96/np.sqrt(len(encoded_dat[i])), color='r', linestyle='--')
-    plt.text(1.01 * (1.96/np.sqrt(len(encoded_dat[i]))), 0.9 * max(np.histogram([x.statistic for x in ks_stats], bins = 20)[0]),    
-             f"Significance: {1.96/np.sqrt(len(encoded_dat[i])):.2f}", fontsize=8, c="red")
+    plt.tight_layout()
     pdf.savefig()
     plt.close()
 
@@ -67,6 +83,7 @@ with PdfPages(args.outfile) as pdf:
     plt.title("Distribution of KS P-values")
     plt.xlabel("P-value")
     plt.ylabel("Frequency")
+    plt.tight_layout()
     pdf.savefig()
     plt.close()
 
@@ -84,9 +101,7 @@ with PdfPages(args.outfile) as pdf:
     plt.title("Distribution of Relative Wasserstein Distances")
     plt.xlabel("Relative Wasserstein Distance")
     plt.ylabel("Frequency")
-     # add text to show the value of the 5% upper quantile
-    plt.text(1.01 * scaled_wass_q95, 0.9 * max(np.histogram(scaled_wass_ref_set, bins = 20)[0]),
-             f"5% upper quantile: {scaled_wass_q95:.2f}", fontsize=8, c="red")
+    plt.tight_layout()
     pdf.savefig()
     plt.close()
 
@@ -97,6 +112,7 @@ with PdfPages(args.outfile) as pdf:
     plt.title("Distribution of Relative Wasserstein Distances P-values")
     plt.xlabel("P-value")
     plt.ylabel("Frequency")
+    plt.tight_layout()
     pdf.savefig()
     plt.close()
     
@@ -110,9 +126,10 @@ with PdfPages(args.outfile) as pdf:
     plt.figure()
     plt.hist(mahalanobis, bins = 50, density = True, color = "blue", )
     plt.plot(x, y, linestyle = "-", color = "red")
-    plt.title("Distribution of Mahalanobis distance")
-    plt.xlabel("Mahal. dist.")
+    plt.title("Distribution of Squared Mahalanobis distance")
+    plt.xlabel("Squared Mahal. dist.")
     plt.ylabel("Density")
+    plt.tight_layout()
     pdf.savefig()
     plt.close()
 
@@ -140,7 +157,7 @@ with PdfPages(args.outfile) as pdf:
         stdnorm_quantiles = stats.norm.ppf(q)
         # plot quantiles
         plt.scatter(stdnorm_quantiles, dat_quantiles, c="black", s=20)  # Set point size to 20 points^2
-        plt.title(f"QQPlot for dim {i}", fontsize=8)        
+        plt.title(f"QQPlot for dim {i}", fontsize=12)
         text_col = "red" if ks_pvals[i] < 0.05 else "black"
         plt.text(min(stdnorm_quantiles), 0.9 * max(dat_quantiles), f"KS Statistic: {ks_stats[i].statistic:.2f}", fontsize=7, c=text_col)    
         plt.text(min(stdnorm_quantiles), 0.8 * max(dat_quantiles), f"P-value: {ks_pvals[i]:.3f}", fontsize=5, c=text_col)    
@@ -152,18 +169,20 @@ with PdfPages(args.outfile) as pdf:
         plt.plot([min_val, max_val], [min_val, max_val], 'r--')  # Red dashed line
         # equal mean point
         plt.plot([0], [0], '+', markersize = 10, linewidth=2, c="blue")  # Blue plus sign at origin
-        plt.xlabel("N(0,1)", fontsize=6)
-        plt.ylabel(f"Dim {i}", fontsize=6)
+        plt.xlabel("N(0,1)", fontsize=9)
+        plt.ylabel(f"Dim {i}", fontsize=9)
 
 
         if i == len(encoded_dat.columns) - 1:
             # plotting is finished
+            plt.tight_layout()
             pdf.savefig()
             plt.close() 
             break
         else:
             if (i+1) % 4 == 0:
                 # save the figure
+                plt.tight_layout()
                 pdf.savefig()
                 plt.close()
                 # start a new page

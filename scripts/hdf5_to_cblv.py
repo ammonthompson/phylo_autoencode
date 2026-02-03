@@ -15,7 +15,11 @@ outfile = args.outfile
 
 with h5py.File(infile, "r") as f:
     cblv_data = f['phy_data'][...]
-
+    ntips = f['aux_data'][:,14]
 data_df = pd.DataFrame(cblv_data, columns = None)
 data_df.to_csv(outfile, index = False, header = False)
+
+ntips_df = pd.DataFrame(ntips, columns = None)
+ntips_df.to_csv(outfile + ".ntips", index = False, header = False)
+
 print(f"Converted {infile} to {outfile}")

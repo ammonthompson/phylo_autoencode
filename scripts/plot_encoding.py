@@ -2,6 +2,7 @@
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
+import matplotlib.font_manager as fm
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 import numpy as np
@@ -9,6 +10,22 @@ import pandas as pd
 import argparse
 import os
 import seaborn as sns
+
+AXIS_FONT_SCALE = 1.5
+
+
+def _scaled_fontsize(value):
+    return fm.FontProperties(size=value).get_size_in_points() * AXIS_FONT_SCALE
+
+
+plt.rcParams.update(
+    {
+        "axes.labelsize": _scaled_fontsize(plt.rcParams["axes.labelsize"]),
+        "axes.titlesize": _scaled_fontsize(plt.rcParams["axes.titlesize"]),
+        "xtick.labelsize": _scaled_fontsize(plt.rcParams["xtick.labelsize"]),
+        "ytick.labelsize": _scaled_fontsize(plt.rcParams["ytick.labelsize"]),
+    }
+)
 
 
 def plot_contour(df_1, df_2, percent_variance = None):
@@ -21,10 +38,10 @@ def plot_contour(df_1, df_2, percent_variance = None):
     pc_percent_variance = f"({percent_variance[0]:.1f}%, {percent_variance[1]:.1f}%)" if percent_variance is not None else ""
     plt.title(
         f"Contour Plot of {df_1.columns[0]} vs {df_1.columns[1]} {pc_percent_variance}",
-        fontsize=14
+        fontsize=21
     )
-    plt.xlabel(f"{df_1.columns[0]}", fontsize=12)
-    plt.ylabel(f"{df_1.columns[1]}", fontsize=12)
+    plt.xlabel(f"{df_1.columns[0]}", fontsize=18)
+    plt.ylabel(f"{df_1.columns[1]}", fontsize=18)
     if df_2 is not None:
         plt.legend()
 
@@ -55,17 +72,18 @@ def plot_distributions(df_1, df_2, percent_variance = None,
             plt.figure()
             plt.bar([x+1 for x in range(len(hivar))], hivar)
             if ref_percent_variance_explained is not None:
-                plt.plot([x+1 for x in range(len(hivar))], ref_percent_variance_explained, color="red", label="Reference")
-                plt.legend()
+                plt.plot([x+1 for x in range(len(hivar))], ref_percent_variance_explained, color="red")
             plt.title(str(total_variance) + "% of PCA variance explained")
             plt.xlabel("Component")
             plt.ylabel("% variance")
+            plt.tight_layout()
             pdf.savefig()
             plt.close()
 
         # First plot: Contour plot for PC1 and PC2 with points from df_2
         plt.figure(figsize=(10, 8))
         plot_contour(df_1, df_2, percent_variance)
+        plt.tight_layout()
         pdf.savefig()
         plt.close()
 
@@ -73,6 +91,7 @@ def plot_distributions(df_1, df_2, percent_variance = None,
         for i, pc in enumerate(df_1.columns):
             if i % 15 == 0:  # Start a new page every 9 plots
                 if i > 0:  # Save previous figure
+                    plt.tight_layout()
                     pdf.savefig()
                     plt.close()
                 plt.figure(figsize=(10, 10))
@@ -92,8 +111,8 @@ def plot_distributions(df_1, df_2, percent_variance = None,
                 if df_2 is not None:
                     for value in df_2[pc]:
                         plt.axvline(x=value, color="red", linestyle="--", alpha=0.7)
-                plt.title("encoding " + str(pc), fontsize=10)
-                plt.ylabel("Density", fontsize=10)
+                plt.title("encoding " + str(pc), fontsize=15)
+                plt.ylabel("Density", fontsize=15)
                 plt.xlabel("")
             # Create a subplot for each PC
             elif percent_variance[i] > (1/len(df_1.columns) * 100):
@@ -103,13 +122,14 @@ def plot_distributions(df_1, df_2, percent_variance = None,
                 if df_2 is not None:    
                     for value in df_2[pc]:
                         plt.axvline(x=value, color="red", linestyle="--", alpha=0.7)
-                plt.title(f"{pc_percent_variance}", fontsize=10)
-                plt.ylabel("Density", fontsize=10)
+                plt.title(f"{pc_percent_variance}", fontsize=15)
+                plt.ylabel("Density", fontsize=15)
                 plt.xlabel("")
             else:
                 break
 
         # Save the last figure
+        plt.tight_layout()
         pdf.savefig()
         plt.close()
 
