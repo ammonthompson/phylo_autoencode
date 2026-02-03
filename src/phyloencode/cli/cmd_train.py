@@ -9,6 +9,8 @@ import phyloencode as ph
 import h5py
 import argparse
 from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
 
 from phyloencode.PhyloAutoencoder   import PhyloAutoencoder
 from phyloencode.PhyloAEModel       import AECNN
@@ -120,6 +122,7 @@ def main():
                         num_structured_input_channel  = ae_data.num_channels, 
                         structured_input_width        = ae_data.phy_width,
                         unstructured_input_width      = ae_data.aux_width,
+                        aux_inner_dim                 = settings["aux_inner_dim"],
                         aux_numtips_idx               = ae_data.ntax_cidx,
                         stride                        = settings["stride"],
                         kernel                        = settings["kernel"],
@@ -249,6 +252,7 @@ def parse_arguments():
     parser.add_argument("-nw", "--num_workers",     required = False, type = int, help = "Number of workers. Default 0")
     parser.add_argument("-ne", "--num_epochs",      required = False, type = int, help = "Number of training epochs. Default 100")
     parser.add_argument("-b", "--batch_size",       required = False, type = int, help = "Batch size. Default 128")
+    parser.add_argument("-aid", "--aux_inner_dim",  required = False, type = int, help = "Hidden width of auxiliary encoder/decoder MLPs. Default 10")
     parser.add_argument("-mmd","--mmd_loss_weight", required = False, type = float, help = "MMD lambda (>= 0). Default 1.0")
     parser.add_argument("-vz", "--vz_loss_weight",  required = False, type = float, help = "VZ lambda (>= 0). Default 1.0")
     parser.add_argument("-pw", "--phy_loss_weight", required = False, type = float, help = "Phylogenetic loss weight. Default 0.9")
@@ -280,6 +284,7 @@ def get_default_settings():
         "seed": np.random.randint(0, 2**32 - 1),
         "num_epochs": 100,
         "batch_size": 128,
+        "aux_inner_dim": 10,
         "num_chars": 0,
         "num_channels": 2,
         "max_tips": 1000,
@@ -310,6 +315,7 @@ def update_settings_from_command_line(settings, args):
         "seed"          : args.seed,
         "num_epochs"    : args.num_epochs,
         "batch_size"    : args.batch_size,
+        "aux_inner_dim" : args.aux_inner_dim,
         "num_chars"     : args.num_chars,
         "num_channels"  : args.num_channels,
         "max_tips"      : args.max_tips,
@@ -336,8 +342,8 @@ def update_settings_from_command_line(settings, args):
         if v is not None:
             if k in {"kernel", "stride", "out_channels"} and isinstance(v, str):
                 settings[k] = [int(x) for x in v.split(",")]
-            elif k in {"latent_output_dim", "num_channels", "num_chars", "num_subset", 
-                       "num_epochs", "batch_size", "max_tips", "num_workers", "seed"}:
+            elif k in {"latent_output_dim", "num_channels", "num_chars", "num_subset",
+                       "num_epochs", "batch_size", "max_tips", "num_workers", "seed", "aux_inner_dim"}:
                 settings[k] = int(v)
             elif k in {"mmd_loss_weight", "vz_loss_weight", "aux_loss_weight", "phy_loss_weight", "char_loss_weight"}:
                 settings[k] = float(v)
@@ -358,8 +364,7 @@ def save_settings(settings, out_file):
 
 # TODO: should belong to PhyloAutoencoder
 def plot_gradient_norms(layer_grad_norms, out_file, plots_per_page = 4):
-    import matplotlib.pyplot as plt
-    from matplotlib.backends.backend_pdf import PdfPages
+
     laynorm = [z for z in layer_grad_norms.items()]
     n_plots = len(laynorm)
     n_pages = n_plots // 4 + ((n_plots % 4) > 0)
@@ -386,9 +391,13 @@ def split_params_by_wd(model, wd):
         if not param.requires_grad:
             continue
         if name.endswith(".bias") or "norm" in name.lower() or "Norm" in name.lower():
-            no_decay_params.append(param)
+            # no_decay_params.append(param)
+            no_decay_params.append((name, param))
+            # print(name)
         else:
-            decay_params.append(param)
+            # decay_params.append(param)
+            decay_params.append((name, param))
+
     return [
         {"params": decay_params, "weight_decay": wd},
         {"params": no_decay_params, "weight_decay": 0.0},

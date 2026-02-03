@@ -39,6 +39,7 @@ class AECNN(nn.Module):
                  unstructured_input_width,
                  *,
                  unstructured_latent_width = None, # must be integer multiple of num_structured_latent_channels
+                 aux_inner_dim: int = 10,
                  aux_numtips_idx = None,
                  num_chars = 0,
                  char_type = "categorical", # categorical, continuous, integer (TODO: integer not implemented yet)
@@ -65,6 +66,8 @@ class AECNN(nn.Module):
                 by the unstructured encoder. If ``latent_layer_type == "CNN"``, this must be an
                 integer multiple of the final structured latent channel count (``out_channels[-1]``).
                 If None, defaults to ``out_channels[-1]`` for CNN latent layers, otherwise 10.
+            aux_inner_dim (int): Hidden width used in the auxiliary encoder/decoder MLPs
+                (``DenseEncoder`` and ``DenseDecoder``). Defaults to 10.
             aux_numtips_idx (Optional[int]): Column index in the auxiliary vector that contains
                 the number of taxa/tips (e.g. ``num_taxa``). Required (cannot be None): used to
                 constrain the decoded value to ``[2, structured_input_width]`` in normalized space.
@@ -177,6 +180,7 @@ class AECNN(nn.Module):
         self.num_structured_input_channel = num_structured_input_channel
         self.structured_input_width       = structured_input_width
         self.unstructured_input_width     = unstructured_input_width
+        self.aux_inner_dim                = aux_inner_dim
 
         # some latent layer dimensions
         self.unstructured_latent_width = unstructured_latent_width
@@ -202,7 +206,8 @@ class AECNN(nn.Module):
 
         # Unstructured Encoder
         self.unstructured_encoder = DenseEncoder(self.unstructured_input_width, 
-                                                 self.unstructured_latent_width)
+                                                 self.unstructured_latent_width,
+                                                 hidden_width=self.aux_inner_dim)
 
         # Structured Encoder
         print("Structured autoencoder shapes:")
@@ -243,7 +248,9 @@ class AECNN(nn.Module):
         else:
             raise ValueError("""Must set latent_layer_type to either CNN, GAUSS or DENSE""")
 
-        self.unstructured_decoder = DenseDecoder(self.flat_struct_outwidth, self.unstructured_input_width)
+        self.unstructured_decoder = DenseDecoder(self.flat_struct_outwidth,
+                                                 self.unstructured_input_width,
+                                                 hidden_width=self.aux_inner_dim)
 
         # Structured Decoder
         self.structured_decoder = CnnDecoder(encoder_layer_widths = self.structured_encoder.conv_out_width,
@@ -601,14 +608,14 @@ class AECNN(nn.Module):
 # encoder classes
 class DenseEncoder(nn.Module):
     """Small MLP encoder for auxiliary (unstructured) features."""
-    def __init__(self, in_width, out_width):
+    def __init__(self, in_width, out_width, hidden_width: int = 10):
         super().__init__()
         self.unstructured_encoder = nn.Sequential(
-            nn.Linear(in_width, 10),
-            nn.BatchNorm1d(10),
-            nn.ReLU(),
-            nn.Linear(10, out_width),
-            nn.BatchNorm1d(out_width)
+            nn.Linear(in_width, hidden_width),
+            nn.BatchNorm1d(hidden_width),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_width, out_width),
+            nn.BatchNorm1d(out_width),
         )
     def forward(self, x):
         """Encode auxiliary inputs.
@@ -691,13 +698,12 @@ class CnnEncoder(nn.Module):
 # decoder classes
 class DenseDecoder(nn.Module):
     """Small MLP decoder for auxiliary (unstructured) features."""
-    def __init__(self, in_width, out_width):
+    def __init__(self, in_width, out_width, hidden_width: int = 10):
         super().__init__()
         self.unstructured_decoder = nn.Sequential(
-            # TODO: 10 probably should be controlled by a parameter...
-            nn.Linear(in_width, 10),
-            nn.ReLU(),
-            nn.Linear(10, out_width)
+            nn.Linear(in_width, hidden_width),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_width, out_width)
         )
     def forward(self, x):
         """Decode auxiliary outputs.
