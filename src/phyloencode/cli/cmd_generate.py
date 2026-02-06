@@ -54,7 +54,12 @@ def main():
     nchar       = model.num_chars
     nt          = model.structured_input_width
     ntips_cidx  = model.aux_numtips_idx
-    latent_dim  = model.latent_layer_dim
+    latent_dim  = getattr(model, "latent_outwidth", None) or getattr(model, "latent_layer_dim", None)
+    if latent_dim is None:
+        raise ValueError(
+            "Unable to infer latent dimension from model. Expected 'latent_outwidth' or "
+            "'latent_layer_dim' to be set on the loaded model."
+        )
     chartype    = model.char_type
 
     # draw N samples from N(0,I)
@@ -65,27 +70,22 @@ def main():
 
     gen_numtips = gen_aux[:, ntips_cidx]
 
+    # If char channels are categorical, convert softmax outputs to one-hot samples.
+    if nchar > 0 and chartype == "categorical":
+        if gen_phy.shape[1] < (nchar + 2):
+            print("cblvs must be at least as long as nchar + 2.")
+            sys.exit(1)
 
-    # set padding to zero
-    gen_phy = utils.set_pred_pad_to_zero(gen_phy,  gen_numtips)
+        max_idx = np.argmax(gen_phy[:, (nc - nchar) : nc, :], axis=1) + (nc - nchar)
+        gen_phy[:, (nc - nchar) : nc, :] = 0
+        i = np.arange(N)[:, None]
+        k = np.arange(nt)[None, :]
+        gen_phy[i, max_idx, k] = 1
 
-    # if char in model, use argmax to simulate characters
-    if nchar > 0:
-        if chartype == "categorical":
-            max_idx = np.argmax(gen_phy[:, (nc - nchar):nc, :], axis = 1) + nc - nchar
-            gen_phy[:, (nc - nchar):nc, :] = 0
-            # for i in range(gen_phy.shape[0]):
-            #     for k in range(gen_phy.shape[2]):
-            #         gen_phy[i, max_idx[i,k], k] = 1
-            i = np.arange(N)[:,None]
-            k = np.arange(nt)[None,:]
-            gen_phy[i,max_idx,k] = 1
+    # Set padding to zero (do this after any categorical sampling so padding stays 0).
+    gen_phy = utils.set_pred_pad_to_zero(gen_phy, gen_numtips)
 
-            if gen_phy.shape[1] < (nchar + 2):
-                print("cblvs must be at least as long as nchar + 2.")
-                sys.exit(1)
-
-    gen_char = gen_phy[:, (nc - nchar):nc, :]
+    gen_char = gen_phy[:, (nc - nchar) : nc, :]
 
     # flatten and place in pd.dataframe
     df_flat_gen_phy = pd.DataFrame(gen_phy.reshape((gen_phy.shape[0], -1), order = "F"))

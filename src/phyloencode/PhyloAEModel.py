@@ -542,7 +542,16 @@ class AECNN(nn.Module):
         # decode
         # inverse_transform
         # phy output shape is (N, nc, mt)
-        latent = torch.tensor(latent, dtype = torch.float32)
+        latent = torch.tensor(latent, dtype=torch.float32)
+        if self.latent_layer_type == "CNN" and latent.ndim == 2:
+            expected_width = self.num_structured_latent_channels * self.reshaped_shared_latent_width
+            if latent.shape[1] != expected_width:
+                raise ValueError(
+                    "CNN latent vectors must have width "
+                    f"{expected_width} (= num_structured_latent_channels * reshaped_shared_latent_width), "
+                    f"but got {latent.shape[1]}."
+                )
+            latent = latent.view(-1, self.num_structured_latent_channels, self.reshaped_shared_latent_width)
         norm_phy, norm_aux = self.decode(latent, inference = True, detach = True)
         flat_norm_phy = norm_phy.cpu().numpy().reshape((norm_phy.shape[0], -1), order = "F")
         phy = self.phy_normalizer.inverse_transform(flat_norm_phy)

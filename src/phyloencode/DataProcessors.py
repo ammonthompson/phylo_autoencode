@@ -79,7 +79,7 @@ class AEData(object):
             self.char_data_type = "continuous"
 
         # check that num_taxa is present in aux_colnames: if not return error
-        if b"num_taxa" not in aux_colnames:
+        if (b"num_taxa" not in aux_colnames) and ("num_taxa" not in aux_colnames):
             raise ValueError("\"num_taxa\" must be in the aux_data. It is used for masking and " + 
                              "training to predict correct tree size.\n" +
                              "Use utils.get_num_tips to get the number of taxa per tree from the tree data. "+
@@ -94,7 +94,7 @@ class AEData(object):
         flat_phy_width = self.phy_data.shape[1]
 
         # num_tips is needed for masking (is  a part of aux when computing loss)
-        self.ntax_cidx = np.where(aux_colnames == b'num_taxa')[0][0]
+        self.ntax_cidx = np.where(np.isin(aux_colnames, [b'num_taxa', 'num_taxa']))[0][0]
         self.num_tips = aux_data[:, self.ntax_cidx]
 
         # split data 

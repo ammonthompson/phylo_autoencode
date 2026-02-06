@@ -67,10 +67,13 @@ def main():
         # TODO: Eventually dataloaders need to load from disk, dont keep data in memory: load -> normalizer -> save
         if ns is None:
             phy_data_np = np.array(f['phy_data'][...], dtype = np.float32)
-            aux_data = torch.tensor(f['aux_data'][...], dtype = torch.float32)
+            # aux_data = torch.tensor(f['aux_data'][...], dtype = torch.float32)
+            aux_data = np.array(f['aux_data'][...], dtype = np.float32)
         else:            
             phy_data_np = np.array(f['phy_data'][0:ns,...], dtype = np.float32)
-            aux_data = torch.tensor(f['aux_data'][0:ns,...], dtype = torch.float32)
+            # aux_data = torch.tensor(f['aux_data'][0:ns,...], dtype = torch.float32)
+            aux_data = np.array(f['aux_data'][0:ns,...], dtype = np.float32)
+
 
         # extract the specified subset of channels ("num_channels")
         phy_data = get_channels(phy_data_np, nc, mt)
@@ -79,7 +82,8 @@ def main():
         if len(aux_data.shape) != 2: # i.e. is an array but should be a matrix with 1 column
             aux_data = aux_data.reshape((aux_data.shape[0], 1))
 
-        aux_data_names = f['aux_data_names'][...][0]
+        full_aux_colnames = np.array([x.decode("utf-8") for x in f['aux_data_names'][...][0]])
+        aux_data_names, aux_data = utils.get_aux_data(full_aux_colnames, aux_data, settings['which_aux'])
 
         # split off test data
         (phy_data, test_phy_data, 
@@ -116,7 +120,6 @@ def main():
     
     phy_normalizer, aux_normalizer = ae_data.get_normalizers()
 
-        
     # create model
     ae_model    = AECNN(
                         num_structured_input_channel  = ae_data.num_channels, 
@@ -136,7 +139,9 @@ def main():
                         phy_normalizer                = phy_normalizer,
                         aux_normalizer                = aux_normalizer
                         )
-    
+    # Persist aux column names inside the saved model so downstream tools can align aux_data by name.
+    ae_model.aux_data_names = aux_data_names
+     
     # optimizer
     # settings
     lr = settings['learning_rate']
@@ -273,6 +278,7 @@ def parse_arguments():
     parser.add_argument("-wd", "--weight-decay",    required = False, type = float, help = "Optimizer weight decay. Default 1e-3")
     parser.add_argument("-t", "--testing",          required = False, type = bool, help = "Testing mode sets torch trianing optimization behavior to deterministic. Default True")
     parser.add_argument("-dv", "--device",          required = False, type = bool, help = "Device. Default auto")
+    parser.add_argument("-waux", "--which_aux",      required = False, help = "Comma separated list of auxilliary data column names to inclued. Default: All")
     return parser.parse_args()
 
 def get_default_settings():
@@ -302,7 +308,8 @@ def get_default_settings():
         "proportion_train" : 0.85,
         "learning_rate" : 1e-3,
         "weight_decay"  : 1e-3,
-        "device" : "auto"
+        "device" : "auto",
+        "which_aux" : "all",
     }
 
 def update_settings_from_command_line(settings, args):
@@ -333,7 +340,8 @@ def update_settings_from_command_line(settings, args):
         "proportion_train": args.proportion_train,
         "learning_rate" : args.learning_rate,
         "weight_decay"  : args.weight_decay,
-        "device"        : args.device
+        "device"        : args.device,
+        "which_aux"     : args.which_aux,
 
     }
 
@@ -347,6 +355,8 @@ def update_settings_from_command_line(settings, args):
                 settings[k] = int(v)
             elif k in {"mmd_loss_weight", "vz_loss_weight", "aux_loss_weight", "phy_loss_weight", "char_loss_weight"}:
                 settings[k] = float(v)
+            elif k in {"which_aux"}:
+                settings[k] = [str(x) for x in v.split(',')]
             else:
                 settings[k] = v
 

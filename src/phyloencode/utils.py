@@ -353,6 +353,22 @@ def read_config(config_file: str) -> Dict[str, Union[int, float, str]]:
     settings = settings_module.settings
     return settings
 
+# takes in 
+def get_aux_data(full_aux_names : np.ndarray, 
+                 aux_data : np.ndarray, 
+                 which_aux : list) -> Tuple[np.ndarray, torch.tensor]:
+    if which_aux != "all":
+        idx_aux_data_names = []
+        for aux_name in which_aux:
+            if aux_name in full_aux_names:
+                idx_aux_data_names.append(np.where(aux_name == full_aux_names)[0][0])
+            else:
+                raise ValueError("\n-waux/--which_aux error: " + aux_name + " column name not in data set")
+        aux_data_names = full_aux_names[idx_aux_data_names]
+        aux_data = torch.tensor(aux_data[:,idx_aux_data_names], dtype = torch.float32)
+    return aux_data_names, aux_data
+
+
 def get_outshape(sequential: nn.Sequential, input_channels: int, input_width: int) -> Tuple[int, int, int]:
     
     """
@@ -445,6 +461,7 @@ def tconv1d_layer_outwidth(layer, input_width):
     width = (input_width - 1) * stride - 2 * padding + dilation * (kernel_size - 1) + output_padding + 1
     return width
 
+# TODO: May not be used anymore
 def get_num_tips(phydata: np.ndarray, max_tips: int):
     """
       This computes the number of tips by finding the 
@@ -600,7 +617,8 @@ def set_pred_pad_to_zero(phy_pred: np.ndarray, pred_num_tips: np.ndarray) -> np.
     idx_grid = np.tile(idx_grid, (bs, 1))    # (bs, mt)
 
     # Mask: True for valid tips, False for padding
-    ntip_mask = (idx_grid <= np.round(pred_num_tips, decimals = 0))   # (bs, mt)
+    # num_tips is a count, so valid indices are [0, num_tips).
+    ntip_mask = (idx_grid < np.round(pred_num_tips, decimals=0))   # (bs, mt)
 
     # Expand mask to (bs, nc, mt)
     ntip_mask = np.expand_dims(ntip_mask, axis=1)
@@ -745,4 +763,3 @@ def convert_to_newick(cblv, num_tips, char_data):
         # newick.append(num_tips_i)    
 
     return newick
-
