@@ -44,6 +44,10 @@ def main ():
 
     # load trained model and normalizers and create PhyloAutoencoder object
     ae_model = torch.load(ae_model_fn, weights_only=False)
+    model_aux_names = ae_model.aux_data_names
+    if model_aux_names is None:
+        raise ValueError("Loaded model is missing 'aux_data_names'.")
+    full_aux_colnames = None
 
     # import test data
     # test if file type is hdf5
@@ -52,6 +56,15 @@ def main ():
         with h5py.File(tree_data_fn, "r") as f:
             test_phy_data = f['phy_data'][...]
             test_aux_data = f['aux_data'][...]
+            if "aux_data_names" in f.keys():
+                raw_aux_names = f["aux_data_names"][...]
+                full_aux_colnames = np.array(
+                    [
+                        x.decode("utf-8") if isinstance(x, (bytes, np.bytes_)) else str(x)
+                        for x in raw_aux_names[0]
+                    ],
+                    dtype=str,
+                )
 
             # TODO: Probably not necessary
             if len(test_aux_data.shape) == 1:
@@ -69,6 +82,8 @@ def main ():
                 print("No labels found in the hdf5 file. Continuing without making labels file.")
 
     elif tree_data_fn.endswith('.csv') or tree_data_fn.endswith(".cblv"):
+        if aux_data_fn is None:
+            raise ValueError("When providing tree data as csv/cblv, you must also provide --aux-data.")
         test_phy_data = pd.read_csv(tree_data_fn, header = None, 
                                     index_col = None).to_numpy(dtype=np.float32)
         test_aux_data = pd.read_csv(aux_data_fn, header = None, 
@@ -85,6 +100,17 @@ def main ():
         test_phy_data = test_phy_data.reshape((test_phy_data.shape[0], ae_model.num_structured_input_channel, 
                             int(test_phy_data.shape[1]/ae_model.num_structured_input_channel)), order = "F")
 
+    # Align aux columns by name when available. Data may contain extra aux columns beyond the model's.
+    if full_aux_colnames is not None:
+        _, test_aux_data = utils.get_aux_data(full_aux_colnames, test_aux_data, model_aux_names)
+    else:
+        expected_aux_cols = int(model_aux_names.shape[0])
+        if test_aux_data.ndim != 2 or test_aux_data.shape[1] != expected_aux_cols:
+            raise ValueError(
+                f"Aux data has shape {test_aux_data.shape} but model expects {expected_aux_cols} columns "
+                f"({list(model_aux_names)}). Provide phyddle -s F data with aux_data_names for alignment, "
+                "or ensure aux columns already match the model exactly."
+            )
 
     # make encoded tree file
     latent_dat = ae_model.norm_and_encode(test_phy_data, test_aux_data)

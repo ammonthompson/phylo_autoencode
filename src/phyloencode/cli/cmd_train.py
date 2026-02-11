@@ -82,6 +82,7 @@ def main():
         if len(aux_data.shape) != 2: # i.e. is an array but should be a matrix with 1 column
             aux_data = aux_data.reshape((aux_data.shape[0], 1))
 
+        # Set aux_data to the set of columns the user wants to train on (set by --which_aux)
         full_aux_colnames = np.array([x.decode("utf-8") for x in f['aux_data_names'][...][0]])
         aux_data_names, aux_data = utils.get_aux_data(full_aux_colnames, aux_data, settings['which_aux'])
 

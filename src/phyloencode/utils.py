@@ -356,16 +356,32 @@ def read_config(config_file: str) -> Dict[str, Union[int, float, str]]:
 # takes in 
 def get_aux_data(full_aux_names : np.ndarray, 
                  aux_data : np.ndarray, 
-                 which_aux : list) -> Tuple[np.ndarray, torch.tensor]:
-    if which_aux != "all":
-        idx_aux_data_names = []
-        for aux_name in which_aux:
-            if aux_name in full_aux_names:
-                idx_aux_data_names.append(np.where(aux_name == full_aux_names)[0][0])
-            else:
-                raise ValueError("\n-waux/--which_aux error: " + aux_name + " column name not in data set")
-        aux_data_names = full_aux_names[idx_aux_data_names]
-        aux_data = torch.tensor(aux_data[:,idx_aux_data_names], dtype = torch.float32)
+                 which_aux : list) -> Tuple[np.ndarray, torch.Tensor]:
+    """
+    Subset (and reorder) auxiliary data by column name.
+
+    Args:
+        full_aux_names: Array of auxiliary column names present in the data.
+        aux_data: Array of auxiliary values with shape ``(N, A_full)``.
+        which_aux: Either "all" or an ordered iterable of auxiliary column names to keep.
+
+    Returns:
+        Tuple of ``(aux_data_names, aux_data_tensor)`` where ``aux_data_names`` are the selected
+        column names and ``aux_data_tensor`` has shape ``(N, A_selected)``.
+    """
+    if isinstance(which_aux, str):
+        if which_aux == "all" or which_aux is None:
+            return full_aux_names, torch.tensor(aux_data, dtype=torch.float32)
+
+    idx_aux_data_names = []
+    for aux_name in which_aux:
+        if aux_name in full_aux_names:
+            idx_aux_data_names.append(np.where(aux_name == full_aux_names)[0][0])
+        else:
+            raise ValueError(f"Aux column name not found in data set: {aux_name}")
+
+    aux_data_names = full_aux_names[idx_aux_data_names]
+    aux_data = torch.tensor(aux_data[:, idx_aux_data_names], dtype=torch.float32)
     return aux_data_names, aux_data
 
 
