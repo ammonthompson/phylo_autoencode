@@ -192,8 +192,7 @@ def main():
 
     if tree_ae.track_grad:
         plot_gradient_norms(tree_ae.mean_layer_grad_norm, 
-                            settings["out_prefix"] + ".layer_grad_norms.pdf")
-            
+                            settings["out_prefix"] + ".layer_grad_norms.pdf")            
 
     # save model with normalizers
     tree_ae.save_model(settings["out_prefix"] + ".ae_trained.pt")
