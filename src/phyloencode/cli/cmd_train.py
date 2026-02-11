@@ -189,6 +189,7 @@ def main():
     #################################
     tree_ae.set_data_loaders(train_loader=trn_loader, val_loader=val_loader) 
     tree_ae.train(num_epochs = settings["num_epochs"], seed = settings["seed"])
+
     if tree_ae.track_grad:
         plot_gradient_norms(tree_ae.mean_layer_grad_norm, 
                             settings["out_prefix"] + ".layer_grad_norms.pdf")
@@ -196,10 +197,12 @@ def main():
 
     # save model with normalizers
     tree_ae.save_model(settings["out_prefix"] + ".ae_trained.pt")
+
     # plot loss curves
     tree_ae.plot_losses(settings["out_prefix"])
 
 
+    # TODO: Should phytrain be doing this???
     # make encoded tree file for 5,000 random trees from training data
     rand_idx        = np.random.randint(0, ae_data.prop_train * phy_data.shape[0], 
                                         size = min(5000, phy_data.shape[0]))

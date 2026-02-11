@@ -51,7 +51,6 @@ def main ():
 
     # import test data
     # test if file type is hdf5
-    # if not, raise error
     if tree_data_fn.endswith('.hdf5') or tree_data_fn.endswith('.h5py'):
         with h5py.File(tree_data_fn, "r") as f:
             test_phy_data = f['phy_data'][...]

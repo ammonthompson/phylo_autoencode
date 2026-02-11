@@ -190,13 +190,15 @@ class PhyLoss(nn.Module):
 
         device = phy_hat.device
 
-        # TODO: Note: the aux_loss also contains a num_taxa loss, so loss for numtips in 2 places. No big deal in my opinon.
+        # TODO: Note: the aux_loss also contains a num_taxa loss, so loss for numtips in 2 places. 
+        # dont think it matters.
         # recon loss
         phy_loss    = self._phy_recon_loss(phy_hat, phy, mask = tree_mask)
         char_loss   = self._char_recon_loss(char_hat, char, char_mask) \
             if char is not None and self.char_w > 0. else torch.tensor(0.).to(device)
-        aux_loss    = self._aux_recon_loss(aux_hat, aux)
-        ntips_loss  = self._num_tips_recon_loss(aux_hat[:, self.ntax_cidx], aux[:, self.ntax_cidx])
+        aux_loss    = self._aux_recon_loss(aux_hat, aux) \
+            if aux_hat is not None and self.aux_w > 0. else torch.tensor(0.).to(device)
+        ntips_loss  = self._num_tips_recon_loss(aux_hat[:, self.ntax_cidx], aux[:, self.ntax_cidx]) 
 
         # latent loss
         mmd_loss = self._mmd_loss(latent_hat, std_norm) \
@@ -382,11 +384,6 @@ class PhyLoss(nn.Module):
         """
 
         x = latent_pred
-        # if target is None:
-        #     y = torch.randn(x.shape, requires_grad=False, 
-        #                     device=x.device, generator=self.torch_g)
-        # else:
-        #     y = target[0:x.shape[0],:]
         y = None
         MMD = self.mmd(x, y)
                 
@@ -404,74 +401,10 @@ class PhyLoss(nn.Module):
             torch.Tensor: Scalar latent loss.
         """
         x = latent_pred
-        # if target is None:
-        #     y = torch.randn(x.shape, requires_grad=False, 
-        #                     device=x.device, generator=self.torch_g)
-        # else:
-        #     y = target[0:x.shape[0],:]
         y = None
         VZ = self.vz(x,y)
 
         return VZ
-
-
-
-    # Experimental
-    def _rdp_loss(self, Z_batch: torch.Tensor, X_batch: torch.Tensor, rand_matrix: torch.Tensor, n_pairs: int):
-        """Compute the Random Distance Prediction (RDP) loss (experimental).
-
-        This samples ``2 * n_pairs`` unique indices, splits them into paired indices ``(i, j)``,
-        and computes a distance-prediction loss between latent-space and data-space distances.
-
-        Reference: ``10.48550/arXiv.1912.12186``.
-        """
-        batch_size = Z_batch.shape[0]
-        X_batch = X_batch.permute(0, 2, 1).reshape(batch_size, -1)  # equivalent to np.reshape(X_batch, (batch_size, -1), order = 'F')
-
-        max_possible_pairs = batch_size // 2
-        num_pairs = min(n_pairs, max_possible_pairs)
-
-        # Ensure n_pairs doesn't exceed half the batch size, I need 2*n_pairs distinct indices.
-        if 2 * num_pairs > batch_size:
-            raise ValueError(
-                f"Cannot sample {num_pairs} distinct pairs from a batch of size {batch_size}. "
-                f"Need at least {2 * num_pairs} unique indices. Reduce n_pairs or increase batch_size."
-            )
-
-        # Generate 2 * n_pairs unique indices without replacement from the batch
-        # This ensures all indices selected for i and j are distinct.
-        flat_rand_idxs = torch.randperm(batch_size, device=Z_batch.device)[:2 * num_pairs]
-
-        # Split these distinct indices into two sets for i and j
-        indices_i = flat_rand_idxs[:num_pairs]
-        indices_j = flat_rand_idxs[num_pairs:]
-        # Rest of the loss computation
-        z_i = Z_batch[indices_i, ...]
-        z_j = Z_batch[indices_j, ...]
-        x_i = X_batch[indices_i, ...]
-        x_j = X_batch[indices_j, ...]
-
-        latent_inner_products = torch.sum(z_i * z_j, dim=1)
-
-        eta_x_i = torch.matmul(x_i, rand_matrix.T)
-        eta_x_j = torch.matmul(x_j, rand_matrix.T)
-        projected_inner_products = torch.sum(eta_x_i * eta_x_j, dim=1)
-        
-        K_latent_dim = Z_batch.shape[1] # Assuming K is the second dimension of Z_batch
-        
-        # # Divide inner products by K
-        scaled_latent_inner_products = latent_inner_products / K_latent_dim
-        scaled_projected_inner_products = projected_inner_products / K_latent_dim
-
-        # # Calculate loss using the scaled inner products
-        loss = ((scaled_latent_inner_products - scaled_projected_inner_products)**2).mean()
-
-        # EXPERIMENTAL: L^ad_aux = (||z_i - eta_x_i||^2 + ||z_j - eta_x_j||^2).mean()
-        ad_aux_loss = ((torch.norm(z_i - eta_x_i, dim=1) ** 2 + torch.norm(z_j - eta_x_j, dim=1) ** 2)/K_latent_dim).mean()
-
-        return 0.75 * loss + 0.25 * ad_aux_loss
-
-
 
 
 

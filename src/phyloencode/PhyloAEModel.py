@@ -130,31 +130,28 @@ class AECNN(nn.Module):
                           Setting num_chars to 0""")
 
         if not (len(stride) == len(kernel) == len(out_channels)):
-            raise ValueError("stride, kernel  and out_channels array lengths should all be equal," + 
-                             f" but got lengths {len(stride)}, {len(kernel)}, {len(out_channels)}.")
+            raise ValueError("stride, kernel  and out_channels arrays should have same length," + 
+                             f" but got lengths {len(stride)}, {len(kernel)}, {len(out_channels)} respectively.")
 
         # normalizers; sklearn.base.BaseEstimator
-        # if (not isinstance(phy_normalizer, utils.StandardScalerPhyCategorical) or 
-        #     not isinstance(aux_normalizer, sklearn.preprocessing.StandardScaler) ):
-        #     raise TypeError("Normalizers need to be StandardScalerPhyCategorical and StandardScaler")
         self.phy_normalizer = phy_normalizer
         self.aux_normalizer = aux_normalizer
 
         # for ntips sigmoid layer in unstructured decoder (keep num tips within data bounds)
         ntip_mu = self.aux_normalizer.mean_[aux_numtips_idx]
-        ntip_sd = np.sqrt(self.aux_normalizer.var_[aux_numtips_idx])
-        min_width = 2.
-        max_width = structured_input_width
-        self.ntip_base = (min_width - ntip_mu) / ntip_sd
-        self.ntip_scale = (max_width - min_width) / ntip_sd
+        ntip_sd = self.aux_normalizer.scale_[aux_numtips_idx]
+        if ntip_sd == 0:
+            ntip_sd = 1.0
+        self.ntip_base = (2.0 - ntip_mu) / ntip_sd
+        self.ntip_scale = (structured_input_width - 2.0) / ntip_sd
 
         # for cblv phy decoder sigmoid layer (or something else). Data range is in [0,1].
         # transformed range is in [-mu/s, (1-mu)/s]
         # find base and scale to in transformed data to guarentee inverse_transformed stays in bounds.
         phy_mean = self.phy_normalizer.mean_.reshape((num_structured_input_channel - self.num_chars, 
-                                                                        max_width), order = "F")
+                                                                    structured_input_width), order = "F")
         phy_sd   = self.phy_normalizer.std_.reshape((num_structured_input_channel - self.num_chars, 
-                                                                        max_width), order = "F")
+                                                                    structured_input_width), order = "F")
 
         phy_lower_bound = torch.Tensor(-phy_mean / phy_sd).to(self.device)
         phy_upper_bound = torch.Tensor((1 - phy_mean) / phy_sd).to(self.device)

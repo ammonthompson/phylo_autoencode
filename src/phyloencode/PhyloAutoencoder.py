@@ -9,6 +9,7 @@ import torch
 # from sklearn.model_selection import train_test_split
 # from phyloencode import utils
 # from phyloencode.PhyLoss import PhyLoss
+from phyloencode.PhyLoss import PhyLoss
 from phyloencode.DataProcessors import AEData
 from phyloencode.PhyloAEModel import AECNN
 import phyloencode.utils as utils
@@ -53,14 +54,14 @@ class PhyloAutoencoder(object):
 
     def __init__(self,
                  model: AECNN, 
-                 optimizer, 
+                 optimizer : torch.optim.Optimizer, 
                  *, 
-                 lr_scheduler = None, 
-                 batch_size=128, 
-                 train_loss = None, 
-                 val_loss = None, 
-                 seed = None, 
-                 device = "auto"):
+                 lr_scheduler : Optional[torch.optim.lr_scheduler.LRScheduler] = None, 
+                 batch_size : Optional[int] = 128, 
+                 train_loss : Optional[PhyLoss] = None, 
+                 val_loss : Optional[PhyLoss] = None, 
+                 seed : Optional[int] = None, 
+                 device : Optional[str] = "auto"):
         """Initialize the training loop.
 
         Args:
@@ -92,6 +93,7 @@ class PhyloAutoencoder(object):
         # TODO: add checks that the loss objects are correct (contain certain fields and methods)
         # TODO: fix checkpoints so starting w/pre-trained network can be used easilly.
         # TODO: Batch_size is a data loader attribute. Prob dont need for this constructor.
+        # TODO: finish implementing checkpoint saves. 
 
         if device == "auto":
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -440,6 +442,7 @@ class PhyloAutoencoder(object):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
+    # TODO: this should use self.save_model.
     def save_checkpoint(self, filename):
         """Save a training checkpoint to disk.
 
@@ -469,8 +472,9 @@ class PhyloAutoencoder(object):
         self.val_loss = checkpoint.get('val_loss')
         self.model.train()
 
-    # TODO: instead save the model.state_dict along with epoch, optimizer state. Will require instantiating model object
-    # in downstream applications that use trained model.
+    # TODO: instead save the model.state_dict along with epoch, optimizer state. 
+    # Also use model.make_config_dict for full constructor kwargs
+    # Will require instantiating model object in downstream applications that use trained model.
     def save_model(self, filename):
         """Serialize and save the full model object with ``torch.save``.
 
