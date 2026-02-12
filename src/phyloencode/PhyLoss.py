@@ -299,8 +299,7 @@ class PhyLoss(nn.Module):
         """
         # if cblv-like data, use the first two channels in the loss
         # else if augmented cblv-like data, use the first four channels in the data
-        # TODO: instead of computing mask.sum() you can pass in num_tips 
-        # TODO: 
+
         if mask is None:
             batch_mean_tree_loss = fun.mse_loss(x, y, reduction = "mean") 
         else:
@@ -308,9 +307,9 @@ class PhyLoss(nn.Module):
                          mask.sum(dim = (1,2))) 
             batch_mean_tree_loss = tree_mse.mean()
 
-        tip1_loss = 0.1 * fun.mse_loss(x[:,0:2,0], y[:,0:2,0]) 
+        # tip1_loss = 0.1 * fun.mse_loss(x[:,0:2,0], y[:,0:2,0]) 
 
-        return batch_mean_tree_loss + tip1_loss
+        return batch_mean_tree_loss #+ tip1_loss
 
     def _char_recon_loss(self, x, y, mask = None):
         """Compute reconstruction loss for character channels.
