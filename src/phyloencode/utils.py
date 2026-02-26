@@ -35,21 +35,20 @@ class PositiveStandardScaler(BaseEstimator, TransformerMixin):
         super().__init__()
         self.mean_ = None
         self.std_ = None
-        self.mask_ = None
 
     def fit(self, X, y=None):
-        self.mask_ = X > 0
-        self.mask_[:, 0:2] = True  # Always include the first elements
+        mask = X > 0
+        mask[:, 0:2] = True  # Always include the first elements
 
-        sum_X = np.sum(X * self.mask_, axis=0)
-        num_nonzero = np.sum(self.mask_, axis=0)
+        sum_X = np.sum(X * mask, axis=0)
+        num_nonzero = np.sum(mask, axis=0)
 
         invalid = num_nonzero <= 1
         num_nonzero_safe = np.where(invalid, 2, num_nonzero)
 
         self.mean_ = sum_X / num_nonzero_safe
 
-        residuals = (X - self.mean_) * self.mask_
+        residuals = (X - self.mean_) * mask
         self.std_ = np.sqrt(np.sum(residuals ** 2, axis=0) / (num_nonzero_safe - 1))
 
         self.mean_[invalid] = 0.

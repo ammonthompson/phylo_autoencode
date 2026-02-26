@@ -107,7 +107,7 @@ class AEData(object):
                                                           train_size = num_train, shuffle=True,
                                                           random_state = self.seed)
 
-        # standardize train data
+        # normalize train data
         if self.char_data_type == "continuous":
             self.phy_ss = utils.PositiveStandardScaler()
         elif self.char_data_type == "categorical":
