@@ -41,6 +41,7 @@ class AECNN(nn.Module):
                  unstructured_latent_width = None, # must be integer multiple of num_structured_latent_channels
                  aux_inner_dim: int = 10,
                  aux_numtips_idx = None,
+                 aux_data_names = None,
                  num_chars = 0,
                  char_type = "categorical", # categorical, continuous, integer (TODO: integer not implemented yet)
                  stride = [2,2],
@@ -117,6 +118,7 @@ class AECNN(nn.Module):
         self.char_type = char_type
         self.num_chars = num_chars
         self.aux_numtips_idx = aux_numtips_idx
+        self.aux_data_names = aux_data_names
 
         self.char_start_idx = num_structured_input_channel - self.num_chars
         
@@ -259,8 +261,6 @@ class AECNN(nn.Module):
                                              char_type            = self.char_type)
         
          
-
-        self.write_network_to_file(out_prefix + ".network.txt")
 
         self.to(self.device)
         

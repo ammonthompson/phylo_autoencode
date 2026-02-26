@@ -128,6 +128,7 @@ def main():
                         unstructured_input_width      = ae_data.aux_width,
                         aux_inner_dim                 = settings["aux_inner_dim"],
                         aux_numtips_idx               = ae_data.ntax_cidx,
+                        aux_data_names                = aux_data_names,
                         stride                        = settings["stride"],
                         kernel                        = settings["kernel"],
                         out_channels                  = settings["out_channels"],
@@ -140,8 +141,7 @@ def main():
                         phy_normalizer                = phy_normalizer,
                         aux_normalizer                = aux_normalizer
                         )
-    # Persist aux column names inside the saved model so downstream tools can align aux_data by name.
-    ae_model.aux_data_names = aux_data_names
+    ae_model.write_network_to_file(settings["out_prefix"] + ".network.txt")
      
     # optimizer
     # settings
