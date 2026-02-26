@@ -107,12 +107,19 @@ class AECNN(nn.Module):
 
         super().__init__()
 
+        # Keep a record of init-time settings so we can recreate an equivalent model later.
+        self.out_prefix = out_prefix
+        self.seed = seed
+        self.device_setting = device
+
         self.set_seed(seed=seed)
 
         if device == "auto":
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
         else:
             self.device = device
+        # Persist the resolved device choice for reproducible model config dumps.
+        self.device_setting = self.device
 
 
         self.char_type = char_type
@@ -139,7 +146,7 @@ class AECNN(nn.Module):
         self.phy_normalizer = phy_normalizer
         self.aux_normalizer = aux_normalizer
 
-        # for ntips sigmoid layer in unstructured decoder (keep num tips within data bounds)
+        # for bounded num-tips layer in unstructured decoder (keep num tips within data bounds)
         ntip_mu = self.aux_normalizer.mean_[aux_numtips_idx]
         ntip_sd = self.aux_normalizer.scale_[aux_numtips_idx]
         if ntip_sd == 0:
@@ -260,10 +267,23 @@ class AECNN(nn.Module):
                                              num_chars            = self.num_chars,
                                              char_type            = self.char_type)
         
-         
-
         self.to(self.device)
         
+    def _runtime_device(self) -> torch.device:
+        """Return the current module device based on registered parameters."""
+        try:
+            return next(self.parameters()).device
+        except StopIteration:
+            return torch.device(self.device)
+
+    def to(self, *args, **kwargs):
+        """Move module and keep ``self.device`` metadata in sync with actual placement."""
+        module = super().to(*args, **kwargs)
+        runtime_device = str(module._runtime_device())
+        module.device = runtime_device
+        module.device_setting = runtime_device
+        return module
+
  
     def forward(self, data: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         """Run a full autoencoder pass: encode then decode.
@@ -321,8 +341,9 @@ class AECNN(nn.Module):
             torch.Tensor: Latent tensor with shape ``(N, latent_dim)`` (flattened).
         """
         
-        phy = phy.to(self.device)
-        aux = aux.to(self.device)
+        run_device = self._runtime_device()
+        phy = phy.to(run_device)
+        aux = aux.to(run_device)
 
         is_training = self.training
         if inference:
@@ -369,7 +390,7 @@ class AECNN(nn.Module):
 
         - Structured phylogenetic channels are clamped so their inverse-transformed values
           remain within the original ``[0, 1]`` bounds.
-        - The auxiliary "num tips" field (``aux_numtips_idx``) is passed through a sigmoid-based
+        - The auxiliary "num tips" field (``aux_numtips_idx``) is passed through a bounded
           transform to keep it within ``[2, structured_input_width]`` after inverse transform.
         - If ``inference=True`` and ``char_type == "categorical"``, character channels are softmaxed.
 
@@ -387,7 +408,7 @@ class AECNN(nn.Module):
         """
         
         is_training = self.training
-        z = z.to(self.device)
+        z = z.to(self._runtime_device())
 
         if inference:
             self.eval()
@@ -413,10 +434,12 @@ class AECNN(nn.Module):
                 not_phy_right  = decoded_tree[:, char_idx:, :]
                 decoded_tree   = torch.cat([phy_clamp_left, not_phy_right], dim=1)
 
-                # ensure ntips in [2, max tips].
-                # TODO: look into two-sided clamp as above.
+                # ensure ntips in [2, max tips] 
                 left  = decoded_aux[:, :tip_idx]
+
                 ntips = self.ntip_base + self.ntip_scale * torch.sigmoid(decoded_aux[:, tip_idx:tip_idx+1])
+                # ntips = self.ntip_base + self.ntip_scale * ( 0.5 + torch.atan(decoded_aux[:, tip_idx:tip_idx+1]) / torch.pi )
+
                 right = decoded_aux[:, tip_idx+1:]
                 decoded_aux = torch.cat([left, ntips, right], dim=1)
 
@@ -469,8 +492,9 @@ class AECNN(nn.Module):
         
         try:
             with grad_context:
-                phy = phy.to(self.device)
-                aux = aux.to(self.device)
+                run_device = self._runtime_device()
+                phy = phy.to(run_device)
+                aux = aux.to(run_device)
                 # model PREDICTS here
                 tree_pred, char_pred, aux_pred, _ = self((phy, aux)) 
 
@@ -487,15 +511,39 @@ class AECNN(nn.Module):
         finally:
             self.train(is_training)
 
-    def set_normalizers(self, phy_norm, aux_norm):
-        """Set the fitted normalizers used by the inference helpers.
+    # def set_normalizers(self, phy_norm, aux_norm):
+    #     """Set the fitted normalizers used by the inference helpers.
 
-        Args:
-            phy_norm: Structured-data normalizer (sklearn-like).
-            aux_norm: Auxiliary-data normalizer (sklearn-like).
-        """
-        self.phy_normalizer = phy_norm
-        self.aux_normalizer = aux_norm
+    #     Args:
+    #         phy_norm: Structured-data normalizer (sklearn-like).
+    #         aux_norm: Auxiliary-data normalizer (sklearn-like).
+    #     """
+    #     self.phy_normalizer = phy_norm
+    #     self.aux_normalizer = aux_norm
+
+    def get_config_dict(self) -> Dict[str, object]:
+        """Return constructor kwargs to recreate this model's configuration."""
+        return {
+            "num_structured_input_channel": self.num_structured_input_channel,
+            "structured_input_width": self.structured_input_width,
+            "unstructured_input_width": self.unstructured_input_width,
+            "unstructured_latent_width": self.unstructured_latent_width,
+            "aux_inner_dim": self.aux_inner_dim,
+            "aux_numtips_idx": self.aux_numtips_idx,
+            "aux_data_names" : self.aux_data_names,
+            "num_chars": self.num_chars,
+            "char_type": self.char_type,
+            "stride": list(self.layer_params["stride"]),
+            "kernel": list(self.layer_params["kernel"]),
+            "out_channels": list(self.layer_params["out_channels"]),
+            "latent_output_dim": self.layer_params.get("latent_dim"),
+            "latent_layer_type": self.latent_layer_type,
+            "out_prefix": getattr(self, "out_prefix", "out"),
+            "device": getattr(self, "device_setting", self.device),
+            "seed": getattr(self, "seed", None),
+            "phy_normalizer": self.phy_normalizer,
+            "aux_normalizer": self.aux_normalizer,
+        }
 
     # inference machinery. Handles normalization too.
     def norm_and_encode(self, phy: np.array, aux: np.array) -> np.array:
@@ -610,6 +658,55 @@ class AECNN(nn.Module):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
+    def save_model(self, filename: str) -> None:
+        """Saves model config and state dict to filename.
+
+        Args:
+            filename (str): Output path.
+        """
+        model_settings = self.get_config_dict()
+        model_state_dict = self.state_dict()
+        torch.save({"model_config": model_settings, "model_state_dict" : model_state_dict}, filename)
+        # torch.save(self.model, filename)
+
+    @classmethod
+    def load_pretrained_from_file(
+        cls,
+        trained_model_fn: str,
+        map_location: Optional[Union[str, torch.device]] = "cpu") -> "AECNN":
+        """
+        Load a pretrained model artifact produced by ``save_model`` or legacy full-object saves.
+
+        Args:
+            trained_model_fn (str): Input file path.
+            map_location (Optional[Union[str, torch.device]]): Device placement override.
+                Common values are ``"cpu"``, ``"cuda"``, ``"cuda:0"``, or ``None``.
+                Use ``None`` to keep original device placement from the artifact.
+        """
+        model_obj = torch.load(trained_model_fn, map_location = map_location, weights_only=False)
+        # new saved format
+        if isinstance(model_obj, dict) and "model_config" in model_obj:
+            model_config = dict(model_obj["model_config"])
+            # If caller pins load device, construct module on that device to avoid CUDA-init errors.
+            if map_location is not None and isinstance(map_location, (str, torch.device)):
+                model_config["device"] = str(map_location)
+
+            trained_model = cls(**model_config)
+            trained_model.load_state_dict(model_obj['model_state_dict'])
+            if map_location is not None:
+                trained_model.to(map_location)
+            trained_model.eval()
+            return trained_model
+        
+        # old saved format (remove?)
+        if isinstance(model_obj, cls):
+            if map_location is not None:
+                model_obj.to(map_location)
+            model_obj.eval()
+            return model_obj
+        
+        raise ValueError(f"Wrong model format in {trained_model_fn}. "
+        "Expected AECNN object or dict with model_config/model_state_dict.")
 
 # encoder classes
 class DenseEncoder(nn.Module):
@@ -1074,8 +1171,10 @@ class TwoSidedReLU(nn.Module):
     def __init__(self, min_val, max_val):
         # shape of min_val and max_val is the same as the cblv tensor (N, C, W)
         super().__init__()
-        self.min_val = min_val
-        self.max_val = max_val
+        min_tensor = min_val if isinstance(min_val, torch.Tensor) else torch.as_tensor(min_val)
+        max_tensor = max_val if isinstance(max_val, torch.Tensor) else torch.as_tensor(max_val)
+        self.register_buffer("min_val", min_tensor)
+        self.register_buffer("max_val", max_tensor)
 
     def forward(self, x):
         return torch.clamp(x, self.min_val, self.max_val)

@@ -195,7 +195,8 @@ def main():
                             settings["out_prefix"] + ".layer_grad_norms.pdf")            
 
     # save model with normalizers
-    tree_ae.save_model(settings["out_prefix"] + ".ae_trained.pt")
+    # tree_ae.save_model(settings["out_prefix"] + ".ae_trained.pt")
+    ae_model.save_model(settings["out_prefix"] + ".ae_trained.pt")
 
     # plot loss curves
     tree_ae.plot_losses(settings["out_prefix"])

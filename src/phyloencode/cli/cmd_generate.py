@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import phyloencode
 import phyloencode.utils as utils
+from phyloencode.PhyloAEModel import AECNN
 import random
 import h5py
 import sys
@@ -35,7 +36,8 @@ def main():
 
 
     args = cmd.parse_args()
-    model = torch.load(utils.file_exists(args.model), weights_only=False)
+    # model = torch.load(utils.file_exists(args.model), weights_only=False)
+    model = AECNN.load_pretrained_from_file(utils.file_exists(args.model), map_location="cpu")
     N = args.num_samples
     out_prefix = args.out_prefix
 

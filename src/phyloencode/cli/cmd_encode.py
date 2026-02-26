@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # test a pretrained model
 from phyloencode.PhyloAutoencoder import PhyloAutoencoder
+from phyloencode.PhyloAEModel import AECNN
 from phyloencode import utils
 import torch
 import joblib
@@ -43,7 +44,8 @@ def main ():
         out_file_prefix = args.out_prefix
 
     # load trained model and normalizers and create PhyloAutoencoder object
-    ae_model = torch.load(ae_model_fn, weights_only=False)
+    # ae_model = torch.load(ae_model_fn, weights_only=False)
+    ae_model = AECNN.load_pretrained_from_file(ae_model_fn, map_location="cpu")
     model_aux_names = ae_model.aux_data_names
     if model_aux_names is None:
         raise ValueError("Loaded model is missing 'aux_data_names'.")
@@ -100,6 +102,7 @@ def main ():
                             int(test_phy_data.shape[1]/ae_model.num_structured_input_channel)), order = "F")
 
     # Align aux columns by name when available. Data may contain extra aux columns beyond the model's.
+    # print(test_aux_data)
     if full_aux_colnames is not None:
         _, test_aux_data = utils.get_aux_data(full_aux_colnames, test_aux_data, model_aux_names)
     else:
@@ -110,6 +113,10 @@ def main ():
                 f"({list(model_aux_names)}). Provide phyddle -s F data with aux_data_names for alignment, "
                 "or ensure aux columns already match the model exactly."
             )
+
+    # print(ae_model.aux_data_names)
+    # print(test_aux_data)
+
 
     # make encoded tree file
     latent_dat = ae_model.norm_and_encode(test_phy_data, test_aux_data)

@@ -2,6 +2,7 @@
 # test a pretrained model
 # from phyloencode.PhyloAutoencoder import PhyloAutoencoder
 import phyloencode.utils as utils
+from phyloencode.PhyloAEModel import AECNN
 import torch
 # import joblib
 # import h5py
@@ -32,7 +33,8 @@ def main ():
         out_file_prefix = args.out_prefix
 
     # load trained model and normalizers and create PhyloAutoencoder object
-    ae_model = torch.load(ae_model_fn, weights_only=False)
+    # ae_model = torch.load(ae_model_fn, weights_only=False)
+    ae_model = AECNN.load_pretrained_from_file(ae_model_fn, map_location="cpu")
 
     # import test data
     encoded_data = pd.read_csv(encoded_data_fn, header = None, index_col = None).to_numpy(dtype=np.float32)
