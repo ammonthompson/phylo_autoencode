@@ -116,14 +116,9 @@ class PhyLoss(nn.Module):
         self.char_type = char_type
         self.latent_layer_type = latent_layer_Type
         
-        # TODO: think this was part of rdp_loss experiments, prob should delete at some point
-        self.rand_matrix = rand_matrix # K x D, where K is the number of latent dims and D is the data dimension
-
         # latent loss
-        # note, these two losses make use of two different samples of y from N(0, I)
-        # self.mmd = MMDLoss(self.device)
-        # self.vz  = VZLoss(self.device)
         self.mmd = MMDLoss()
+        # TODO: delete all VZLoss implementation. Nolonger in use.
         self.vz  = VZLoss(generator=self.torch_g)
         
     def set_weights(self, weights : dict[str, torch.Tensor]):
@@ -145,6 +140,80 @@ class PhyLoss(nn.Module):
         except KeyError as e:
             print(f"\nMissing loss weight parameter:\n {e}\n")
             raise
+
+    @staticmethod
+    def _to_float(value) -> float:
+        """Convert scalar tensor/number to plain float."""
+        if isinstance(value, torch.Tensor):
+            return float(value.detach().cpu().item())
+        return float(value)
+
+    @classmethod
+    def _to_float_list(cls, values: list) -> list[float]:
+        """Convert a list of scalar tensors/numbers to plain floats."""
+        return [cls._to_float(v) for v in values]
+
+    def to_checkpoint_dict(self) -> dict:
+        """Serialize loss config and tracked history to a plain dict."""
+        return {
+            "config": {
+                "weights": {
+                    "phy_loss_weight": self._to_float(self.phy_w),
+                    "char_loss_weight": self._to_float(self.char_w),
+                    "aux_loss_weight": self._to_float(self.aux_w),
+                    "mmd_loss_weight": self._to_float(self.mmd_w),
+                    "vz_loss_weight": self._to_float(self.vz_w),
+                },
+                "ntax_cidx": int(self.ntax_cidx),
+                "char_type": self.char_type,
+                "latent_layer_type": self.latent_layer_type,
+                "device": str(self.device),
+                "validation": bool(self.validation),
+                "seed": self.seed,
+            },
+            "history": {
+                "epoch_total_loss": self._to_float_list(self.epoch_total_loss),
+                "epoch_phy_loss": self._to_float_list(self.epoch_phy_loss),
+                "epoch_char_loss": self._to_float_list(self.epoch_char_loss),
+                "epoch_aux_loss": self._to_float_list(self.epoch_aux_loss),
+                "epoch_mmd_loss": self._to_float_list(self.epoch_mmd_loss),
+                "epoch_vz_loss": self._to_float_list(self.epoch_vz_loss),
+                "batch_total_loss": self._to_float_list(self.batch_total_loss),
+                "batch_phy_loss": self._to_float_list(self.batch_phy_loss),
+                "batch_char_loss": self._to_float_list(self.batch_char_loss),
+                "batch_aux_loss": self._to_float_list(self.batch_aux_loss),
+                "batch_mmd_loss": self._to_float_list(self.batch_mmd_loss),
+                "batch_vz_loss": self._to_float_list(self.batch_vz_loss),
+            },
+        }
+
+    @classmethod
+    def from_checkpoint_dict(cls, state: dict, device: Optional[str] = None) -> "PhyLoss":
+        """Reconstruct a PhyLoss from ``to_checkpoint_dict()`` output."""
+        config = state["config"]
+        hist = state["history"]
+        loss = cls(
+            weights=config["weights"],
+            ntax_cidx=config["ntax_cidx"],
+            char_type=config["char_type"],
+            latent_layer_Type=config["latent_layer_type"],
+            device=device if device is not None else config["device"],
+            validation=config["validation"],
+            seed=config["seed"],
+        )
+        loss.epoch_total_loss = list(hist["epoch_total_loss"])
+        loss.epoch_phy_loss = list(hist["epoch_phy_loss"])
+        loss.epoch_char_loss = list(hist["epoch_char_loss"])
+        loss.epoch_aux_loss = list(hist["epoch_aux_loss"])
+        loss.epoch_mmd_loss = list(hist["epoch_mmd_loss"])
+        loss.epoch_vz_loss = list(hist["epoch_vz_loss"])
+        loss.batch_total_loss = list(hist["batch_total_loss"])
+        loss.batch_phy_loss = list(hist["batch_phy_loss"])
+        loss.batch_char_loss = list(hist["batch_char_loss"])
+        loss.batch_aux_loss = list(hist["batch_aux_loss"])
+        loss.batch_mmd_loss = list(hist["batch_mmd_loss"])
+        loss.batch_vz_loss = list(hist["batch_vz_loss"])
+        return loss
 
     def forward(self, pred : Tuple, true : Tuple, mask : Tuple):
         """Compute the weighted loss for a batch and update internal buffers.
@@ -405,107 +474,6 @@ class PhyLoss(nn.Module):
 
         return VZ
 
-
-
-
-# classes for MMD2 loss
-# Encourage latent space to be be N(0,1) distributed
-# class RBF(nn.Module):
-#     ''' Derived From: https://github.com/yiftachbeer/mmd_loss_pytorch/blob/master/mmd_loss.py'''
-#     def __init__(self, device, n_kernels=5, mul_factor=2., bw=None):
-#         """_summary_
-
-#         Args:
-#             device (_type_): _description_
-#             n_kernels (int, optional): _description_. Defaults to 5.
-#             mul_factor (_type_, optional): _description_. Defaults to 2..
-#             bw (_type_, optional): scaler. sets the scale of the bws to mix over. Defaults to None.
-#         """
-#         super().__init__()
-#         self.device = device
-#         # Build a set of bandwidth multipliers: mul_factor^(k - floor(n_kernels/2)), 
-#         # k = 0..n_kernels-1
-#         # This centers the exponent range so you get symmetric scales around 1.0 
-#         # (e.g., for 5 and mul_factor=2: [1/4,1/2,1,2,4]).
-#         # note: bw = 2 sigma^2
-#         self.bw_multipliers = mul_factor ** (torch.arange(n_kernels) - n_kernels // 2)
-#         self.bw_multipliers = self.bw_multipliers.to(self.device)
-#         if bw != None:
-#             self.bw = torch.tensor(bw).to(self.device)
-#         else:
-#             self.bw = bw
-
-#     def get_bw(self, L2_dists):
-#         # returns the constant self.bw if set. Otherwise estimates from distances
-#         if self.bw is None:
-#             # Heuristic bandwidth: average pairwise squared distance across the matrix,
-#             # excluding the diagonal (n*(n-1) off-diagonal pairs if X=Y).
-#             # n_samples = L2_dists.shape[0]
-#             n_x = L2_dists.shape[0]
-#             n_y = L2_dists.shape[1]
-
-#             # Note: uses .data to avoid autograd tracking of this statistic.
-#             avg_L2_dist = L2_dists.data.sum() / (n_x * n_y)
-#             return avg_L2_dist
-
-#         return self.bw
-
-#     def forward(self, X, Y = None):
-#         # X: (N_x, D), Y: (N_y, D) optional. If Y is None, 
-#         # compute all pairwise distances within X.
-#         # Output: (N_x, N_y) RBF kernel matrix (or (N_x, N_x) if Y is None), 
-#         # summed over a set of bandwidths.
-#         if Y is None:
-#              # Pairwise Euclidean distances; square to get squared L2 distances.
-#             L2_dists = torch.cdist(X, X) ** 2
-#         else:
-#             L2_dists = torch.cdist(X, Y) ** 2
-
-#         # Base bandwidth (scalar) times a vector of multipliers -> vector of bandwidths.
-#         # Shape after [:, None, None] is (K, 1, 1) 
-#         # so it can broadcast over the (N_x, N_y) distance matrix.
-
-#         # Compute exp(-||x - y||^2 / bw_k) for each k (adds a leading K axis via [None, ...]),
-#         # then sum over K to form a multi-kernel RBF (no normalization).
-
-#         bw_base = self.get_bw(L2_dists)
-
-#         bw = (bw_base * self.bw_multipliers)[:, None, None]
-
-#         # return torch.exp(-L2_dists[None, ...] / sf).sum(dim=0)
-#         return torch.exp(-L2_dists[None, ...] / bw).mean(dim=0)
-
-
-
-# class MMDLoss(nn.Module):
-#     ''' Derived from: https://github.com/yiftachbeer/mmd_loss_pytorch/blob/master/mmd_loss.py'''
-#     def __init__(self, device = "cuda"):
-#         super().__init__()
-#         self.kernel = RBF(device, n_kernels=5)
-
-#     def forward(self, X, Y):
-#         K = self.kernel(torch.vstack([X, Y]))
-#         X_size = X.shape[0]
-#         k_xx = K[:X_size, :X_size]
-#         k_xy = K[:X_size, X_size:]
-#         k_yy = K[X_size:, X_size:]
-
-#         m = X_size
-#         n = K.shape[0] - m
-
-#         sum_xx = k_xx.fill_diagonal_(0).sum()
-#         sum_yy = k_yy.fill_diagonal_(0).sum()
-
-#         MMD2_loss = sum_xx / (m*(m-1)) + sum_yy / (n*(n-1)) - 2 * k_xy.mean()
-
-#         # MMD_loss = torch.sqrt(MMD2_loss.clamp_min(0.0) + 1e-12) 
-
-#         # return MMD_loss
-#         return MMD2_loss
-    
-
-
-
 # this version uses deterministic kernel values for each term involving standard normal comparison
 class MMDLoss(nn.Module):
     """Multi-kernel RBF MMD loss against a standard normal prior.
@@ -626,28 +594,6 @@ class MMDLoss(nn.Module):
         # return mmd2
         return torch.sqrt(mmd2.clamp(min=delta))
 
-
-
-
-# TODO: This might not be the best    
-# class VZLoss(nn.Module):
-#     def __init__(self, device):
-#         super().__init__()
-#         self.kernel = RBF(device, n_kernels=5)
-        
-#     def forward(self, z : torch.Tensor, z_prime : torch.Tensor):
-#         B, d = z.shape
-#         zc = z - z.mean(dim=0, keepdim=True)                 # center
-#         cov = (zc.T @ zc) / (B - 1 + 1e-8)                   # (d, d)
-#         std = cov.diag().clamp_min(1e-8).sqrt()
-#         corr = cov / (std[:, None] * std[None, :])           # correlation matrix
-
-#         offdiag = corr - torch.diag(torch.diag(corr))        # zero the diagonal
-#         corr_loss = (offdiag**2).sum() / (d * (d - 1) + 1e-8)     
-
-#         mmd_variation_loss = self.kernel(z.T, z_prime.T).var()
-    
-#         return 0.1 * corr_loss + mmd_variation_loss
 
 
 class VZLoss(nn.Module):

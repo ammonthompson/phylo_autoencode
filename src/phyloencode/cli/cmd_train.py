@@ -25,14 +25,19 @@ import phyloencode.utils as utils
 def main():
 
     # Training settings: Architecture, num epochs, batch size, etc.
-    # override default settings provided as command line arguments
-    # Override all settings provided in config file if provided
+    # Override settings provided in config file if provided
     settings    = get_default_settings()
     args        = parse_arguments()
-    update_settings_from_command_line(settings = settings, args = args)
     if args.config:
         config = utils.read_config(args.config)
         update_settings_from_config(settings = settings, config = config)
+    # override settings provided as command line arguments
+    update_settings_from_command_line(settings = settings, args = args)
+
+    if settings["resume_from_checkpoint"] is not None and settings["pretrained_model"] is not None:
+        raise ValueError("Cannot specify both --resume_from_checkpoint and --pretrained_model.")
+    if settings["resume_from_checkpoint"] is not None:
+        settings["seed"] = load_seed_from_checkpoint(settings["resume_from_checkpoint"])
 
 
     # required command line argument
@@ -113,6 +118,7 @@ def main():
                         prop_train       = settings['proportion_train'],  
                         num_channels     = settings["num_channels"], 
                         num_chars        = settings["num_chars"],
+                        seed             = settings["seed"],
                         device           = settings["device"]
                         )
     
@@ -121,66 +127,86 @@ def main():
     
     phy_normalizer, aux_normalizer = ae_data.get_normalizers()
 
-    # create model
-    ae_model    = AECNN(
-                        num_structured_input_channel  = ae_data.num_channels, 
-                        structured_input_width        = ae_data.phy_width,
-                        unstructured_input_width      = ae_data.aux_width,
-                        aux_inner_dim                 = settings["aux_inner_dim"],
-                        aux_numtips_idx               = ae_data.ntax_cidx,
-                        aux_data_names                = aux_data_names,
-                        stride                        = settings["stride"],
-                        kernel                        = settings["kernel"],
-                        out_channels                  = settings["out_channels"],
-                        latent_output_dim             = settings["latent_output_dim"],
-                        latent_layer_type             = settings["latent_model_type"],
-                        num_chars                     = settings["num_chars"],
-                        char_type                     = settings["char_type"],
-                        out_prefix                    = settings["out_prefix"],
-                        device                        = settings["device"],
-                        phy_normalizer                = phy_normalizer,
-                        aux_normalizer                = aux_normalizer
-                        )
-    ae_model.write_network_to_file(settings["out_prefix"] + ".network.txt")
-     
-    # optimizer
-    # settings
-    lr = settings['learning_rate']
-    wd = settings['weight_decay']
+    map_location = None if settings["device"] == "auto" else settings["device"]
 
-    # opt = AdamW(ae_model.parameters(), lr=lr, weight_decay=wd)
-    opt         = AdamW(split_params_by_wd(ae_model, wd), lr=lr)
-    lr_schedlr  = torch.optim.lr_scheduler.OneCycleLR(
-                        opt,
-                        max_lr=lr,
-                        epochs=settings["num_epochs"], 
-                        steps_per_epoch=len(trn_loader),
-                        pct_start=0.1,               # 10% warmup
-                        anneal_strategy='cos',
-                        cycle_momentum=False
+    if settings["resume_from_checkpoint"] is not None:
+        tree_ae = PhyloAutoencoder.load_checkpoint(
+                        settings["resume_from_checkpoint"],
+                        map_location = map_location
                         )
-    
-    # Loss objects (stateful). These compute and store component
-    # and the weighted sum of component losses for the final objective. 
-    loss_weights = {k : v for k, v in settings.items() if "_loss_weight" in k}
-    train_loss  = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
-                        ae_model.latent_layer_type, device = settings["device"])
-    val_loss    = PhyLoss(loss_weights, ae_data.ntax_cidx,  ae_model.char_type,
-                        ae_model.latent_layer_type, device = settings["device"], 
-                        validation = True)
+    else:
+        # create model
+        if settings["pretrained_model"] is not None:
+            ae_model = AECNN.load_pretrained_from_file(
+                        settings["pretrained_model"],
+                        map_location = map_location
+                        )
+        else:
+            ae_model = AECNN(
+                            num_structured_input_channel  = ae_data.num_channels, 
+                            structured_input_width        = ae_data.phy_width,
+                            unstructured_input_width      = ae_data.aux_width,
+                            aux_inner_dim                 = settings["aux_inner_dim"],
+                            aux_numtips_idx               = ae_data.ntax_cidx,
+                            aux_data_names                = aux_data_names,
+                            stride                        = settings["stride"],
+                            kernel                        = settings["kernel"],
+                            out_channels                  = settings["out_channels"],
+                            latent_output_dim             = settings["latent_output_dim"],
+                            latent_layer_type             = settings["latent_model_type"],
+                            num_chars                     = settings["num_chars"],
+                            char_type                     = settings["char_type"],
+                            out_prefix                    = settings["out_prefix"],
+                            device                        = settings["device"],
+                            phy_normalizer                = phy_normalizer,
+                            aux_normalizer                = aux_normalizer
+                            )
+
+        # optimizer
+        # settings
+        lr = settings['learning_rate']
+        wd = settings['weight_decay']
+
+        # opt = AdamW(ae_model.parameters(), lr=lr, weight_decay=wd)
+        opt = AdamW(utils.split_params_by_wd(ae_model, wd), lr=lr)
+        lr_schedlr = torch.optim.lr_scheduler.OneCycleLR(
+                            opt,
+                            max_lr=lr,
+                            epochs=settings["num_epochs"], 
+                            steps_per_epoch=len(trn_loader),
+                            pct_start=0.1,               # 10% warmup
+                            anneal_strategy='cos',
+                            cycle_momentum=False
+                            )
+        
+        # Loss objects (stateful). These compute and store component
+        # and the weighted sum of component losses for the final objective. 
+        loss_weights = {k : v for k, v in settings.items() if "_loss_weight" in k}
+        train_loss = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
+                            ae_model.latent_layer_type, device = settings["device"])
+        val_loss = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
+                            ae_model.latent_layer_type, device = settings["device"], 
+                            validation = True)
 
 
-    # create model trainer
-    # the model, the data, and the loss come together here
-    tree_ae     = PhyloAutoencoder(
-                        model           = ae_model, 
-                        optimizer       = opt, 
-                        lr_scheduler    = lr_schedlr,
-                        batch_size      = settings["batch_size"],
-                        train_loss      = train_loss,
-                        val_loss        = val_loss,
-                        device          = settings["device"]
-                        )
+        # create model trainer
+        # the model, the data, and the loss come together here
+        tree_ae = PhyloAutoencoder(
+                            model           = ae_model, 
+                            optimizer       = opt, 
+                            lr_scheduler    = lr_schedlr,
+                            batch_size      = settings["batch_size"],
+                            train_loss      = train_loss,
+                            val_loss        = val_loss,
+                            device          = settings["device"],
+                            checkpoints     = settings["checkpoints"],
+                            checkpt_file_prefix = settings["out_prefix"]
+                            )
+
+    tree_ae.checkpoints = settings["checkpoints"]
+    tree_ae.checkpt_file_prefix = settings["out_prefix"]
+    tree_ae.model.write_network_to_file(settings["out_prefix"] + ".network.txt")
+    ae_model = tree_ae.model
     
 
     #################################
@@ -282,8 +308,15 @@ def parse_arguments():
     parser.add_argument("-wd", "--weight-decay",    required = False, type = float, help = "Optimizer weight decay. Default 1e-3")
     parser.add_argument("-t", "--testing",          required = False, type = bool, help = "Testing mode sets torch trianing optimization behavior to deterministic. Default True")
     parser.add_argument("-dv", "--device",          required = False, type = bool, help = "Device. Default auto")
-    parser.add_argument("-waux", "--which_aux",      required = False, help = "Comma separated list of auxilliary data column names to inclued. Default: All")
+    parser.add_argument("-waux", "--which_aux",     required = False, help = "Comma separated list of auxilliary data column names to inclued. Default: All")
+    parser.add_argument("-ckpt", "--checkpoints", required = False, help = "Comma separated list of epochs to save training checkpoints. Default: None")
+    parser.add_argument("--resume_from_checkpoint", required = False, help = "Resume training from a checkpoint produced by save_checkpoint.")
+    parser.add_argument("--pretrained_model", required = False, help = "Initialize model weights from a saved model and start a fresh training run.")
     return parser.parse_args()
+
+def load_seed_from_checkpoint(checkpoint_file: str) -> int:
+    checkpoint = torch.load(checkpoint_file, map_location="cpu", weights_only=False)
+    return int(checkpoint["seed"])
 
 def get_default_settings():
     return {
@@ -314,6 +347,9 @@ def get_default_settings():
         "weight_decay"  : 1e-3,
         "device" : "auto",
         "which_aux" : "all",
+        "checkpoints" : None,
+        "resume_from_checkpoint": None,
+        "pretrained_model": None,
     }
 
 def update_settings_from_command_line(settings, args):
@@ -346,13 +382,16 @@ def update_settings_from_command_line(settings, args):
         "weight_decay"  : args.weight_decay,
         "device"        : args.device,
         "which_aux"     : args.which_aux,
+        "checkpoints"   : args.checkpoints,
+        "resume_from_checkpoint": args.resume_from_checkpoint,
+        "pretrained_model": args.pretrained_model,
 
     }
 
     # override defaults with command line args
     for k, v in arg_map.items():
         if v is not None:
-            if k in {"kernel", "stride", "out_channels"} and isinstance(v, str):
+            if k in {"kernel", "stride", "out_channels", "checkpoints"} and isinstance(v, str):
                 settings[k] = [int(x) for x in v.split(",")]
             elif k in {"latent_output_dim", "num_channels", "num_chars", "num_subset",
                        "num_epochs", "batch_size", "max_tips", "num_workers", "seed", "aux_inner_dim"}:
@@ -397,25 +436,6 @@ def plot_gradient_norms(layer_grad_norms, out_file, plots_per_page = 4):
             pdf.savefig(fig)
             plt.close(fig)
 
-
-def split_params_by_wd(model, wd):
-    # weight decay should be zero for bias and normalization variables
-    decay_params, no_decay_params = [], []
-    for name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue
-        if name.endswith(".bias") or "norm" in name.lower() or "Norm" in name.lower():
-            # no_decay_params.append(param)
-            no_decay_params.append((name, param))
-            # print(name)
-        else:
-            # decay_params.append(param)
-            decay_params.append((name, param))
-
-    return [
-        {"params": decay_params, "weight_decay": wd},
-        {"params": no_decay_params, "weight_decay": 0.0},
-    ]
 
 def get_channels(phydata: np.ndarray, num_chans: int, max_tips: int) -> torch.Tensor:
     # sometimes the number channels in the settings is less than the data.

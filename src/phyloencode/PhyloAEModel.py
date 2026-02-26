@@ -666,7 +666,11 @@ class AECNN(nn.Module):
         """
         model_settings = self.get_config_dict()
         model_state_dict = self.state_dict()
-        torch.save({"model_config": model_settings, "model_state_dict" : model_state_dict}, filename)
+        torch.save({
+            "model_config": model_settings,
+            "model_state_dict": model_state_dict,
+            "seed": self.seed,
+        }, filename)
         # torch.save(self.model, filename)
 
     @classmethod
@@ -687,6 +691,8 @@ class AECNN(nn.Module):
         # new saved format
         if isinstance(model_obj, dict) and "model_config" in model_obj:
             model_config = dict(model_obj["model_config"])
+            if "seed" not in model_config and "seed" in model_obj:
+                model_config["seed"] = model_obj["seed"]
             # If caller pins load device, construct module on that device to avoid CUDA-init errors.
             if map_location is not None and isinstance(map_location, (str, torch.device)):
                 model_config["device"] = str(map_location)

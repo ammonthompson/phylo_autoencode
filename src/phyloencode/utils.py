@@ -352,6 +352,34 @@ def read_config(config_file: str) -> Dict[str, Union[int, float, str]]:
     settings = settings_module.settings
     return settings
 
+def split_params_by_wd(model: nn.Module, wd: float) -> list[dict]:
+    """Create optimizer param groups with no decay on bias/norm-like parameters.
+
+    Notes:
+        Excluding 1D parameters is a common approximation that also captures most
+        normalization scale vectors.
+    """
+    decay_params, no_decay_params = [], []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+
+        name_l = name.lower()
+        is_bias = name_l.endswith(".bias")
+        is_norm = "norm" in name_l
+        is_1d = param.ndim <= 1
+
+        if is_bias or is_norm or is_1d:
+            no_decay_params.append(param)
+        else:
+            decay_params.append(param)
+
+    return [
+        {"params": decay_params, "weight_decay": float(wd)},
+        {"params": no_decay_params, "weight_decay": 0.0},
+    ]
+
+
 # takes in 
 def get_aux_data(full_aux_names : np.ndarray, 
                  aux_data : np.ndarray, 
