@@ -662,7 +662,7 @@ class AECNN(nn.Module):
         """Saves model config and state dict to filename.
 
         Args:
-            filename (str): Output path.
+            filename (str): Output filename.
         """
         model_settings = self.get_config_dict()
         model_state_dict = self.state_dict()
@@ -679,10 +679,10 @@ class AECNN(nn.Module):
         trained_model_fn: str,
         map_location: Optional[Union[str, torch.device]] = "cpu") -> "AECNN":
         """
-        Load a pretrained model artifact produced by ``save_model`` or legacy full-object saves.
+        Load a pretrained model produced by ``save_model`` or old full-object saves.
 
         Args:
-            trained_model_fn (str): Input file path.
+            trained_model_fn (str): Input file.
             map_location (Optional[Union[str, torch.device]]): Device placement override.
                 Common values are ``"cpu"``, ``"cuda"``, ``"cuda:0"``, or ``None``.
                 Use ``None`` to keep original device placement from the artifact.

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
 import numpy as np
 import torch
 # from torch import optim
@@ -63,6 +64,7 @@ class PhyloAutoencoder(object):
                  val_loss : Optional[PhyLoss] = None, 
                  seed : Optional[int] = None, 
                  device : Optional[str] = "auto",
+                 track_grad : Optional[bool] = False,
                  checkpoints : Optional[list[int]] = None,
                  checkpt_file_prefix : Optional[str] = "train_out"):
         """Initialize the training loop.
@@ -88,6 +90,8 @@ class PhyloAutoencoder(object):
                 enables deterministic cuDNN behavior for reproducibility. Defaults to None.
             device (str, optional): ``"auto"``, ``"cuda"``, or ``"cpu"``. If ``"auto"``, selects
                 CUDA when available. Defaults to ``"auto"``.
+            track_grad (bool, optional): If True, record per-parameter gradient norms during
+                training so they can be plotted after the run. Defaults to False.
             checkpoints (list[int], optional): Epoch numbers to save checkpoints. defaults to None.
         """
         
@@ -140,14 +144,9 @@ class PhyloAutoencoder(object):
         self.val_loss   = val_loss
 
         self.track_grad = False
-        if self.track_grad:
-            self.batch_layer_grad_norm = { layer_name : param.grad.norm().item() if param.grad is not None else []
-                               for layer_name, param in self.model.named_parameters() }
-            self.mean_layer_grad_norm = { layer_name : param.grad.norm().item() if param.grad is not None else []
-                               for layer_name, param in self.model.named_parameters() }
-        else:
-            self.batch_layer_grad_norm = None
-            self.mean_layer_grad_norm = None
+        self.batch_layer_grad_norm = None
+        self.mean_layer_grad_norm = None
+        self.set_track_grad(track_grad)
 
 
     def train(self, num_epochs, seed = None):
@@ -410,6 +409,20 @@ class PhyloAutoencoder(object):
         self.train_loss = train_loss
         self.val_loss = val_loss
 
+    def set_track_grad(self, track_grad: bool = False):
+        """Enable or disable gradient-norm tracking for future training steps."""
+        self.track_grad = bool(track_grad)
+        if self.track_grad:
+            self.batch_layer_grad_norm = {
+                layer_name: [] for layer_name, _ in self.model.named_parameters()
+            }
+            self.mean_layer_grad_norm = {
+                layer_name: [] for layer_name, _ in self.model.named_parameters()
+            }
+        else:
+            self.batch_layer_grad_norm = None
+            self.mean_layer_grad_norm = None
+
     def _record_grad_norm(self):
         """Record parameter gradient norms for the current batch.
 
@@ -420,6 +433,27 @@ class PhyloAutoencoder(object):
                 # gn = g.grad.data.norm().item()
                 gn = g.grad.norm().item()
                 self.batch_layer_grad_norm[layer_name].append(gn)
+
+    def plot_gradient_norms(layer_grad_norms, out_file, plots_per_page = 4):
+
+        laynorm = [z for z in layer_grad_norms.items()]
+        n_plots = len(laynorm)
+        n_pages = n_plots // 4 + ((n_plots % 4) > 0)
+        with PdfPages(out_file) as pdf:
+            for page in range(n_pages):
+                fig, axes = plt.subplots(plots_per_page // 2, 2)
+                axes = axes.flatten()
+                for plot_i in range(plots_per_page):
+                    idx = page * plots_per_page + plot_i
+                    if idx >= n_plots:
+                        axes.axis('off')
+                        continue
+                    axes[plot_i].plot(laynorm[idx][1])
+                    axes[plot_i].set_title(laynorm[idx][0], size = 6.)
+                fig.tight_layout()
+                pdf.savefig(fig)
+                plt.close(fig)
+
 
     def make_graph(self):
         """Add the model graph to a TensorBoard writer (if configured).
@@ -520,7 +554,8 @@ class PhyloAutoencoder(object):
         torch.save(checkpoint, filename)
 
     @classmethod
-    def load_checkpoint(cls, filename, map_location : Optional[str] = "cpu") -> "PhyloAutoencoder":
+    def load_checkpoint(cls, filename, map_location : Optional[str] = "cpu",
+                        track_grad: bool = False) -> "PhyloAutoencoder":
         """
         Assumes the file is a checkpoint file output by save_checkpoint() above. 
         """
@@ -564,6 +599,7 @@ class PhyloAutoencoder(object):
             val_loss=val_loss,
             seed=checkpoint['seed'],
             device="auto" if load_device is None else load_device,
+            track_grad=track_grad,
         )
 
         self.optimizer.load_state_dict(opt_state)

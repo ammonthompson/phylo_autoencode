@@ -18,7 +18,9 @@ from phyloencode.DataProcessors     import AEData
 from phyloencode.PhyLoss            import PhyLoss
 import phyloencode.utils as utils
 
-# TODO: take in a list of label key words to be included in aux dat eg. ['log_R0', 'log_sample',...]
+# TODO: I'm leaning toward not doing this, the point of the latent space is to learn semantics 
+#       that correlate with labels without needing them: take in a list of label key words to be included 
+#       in aux dat eg. ['log_R0', 'log_sample',...]
 #       these should be stacked onto the aux variable, or should I create a labels subnetwork in the model?
 #       -> then separate before creating predicted aux and label files.
 # TODO: includ min tips
@@ -28,11 +30,15 @@ def main():
     # Override settings provided in config file if provided
     settings    = get_default_settings()
     args        = parse_arguments()
+    track_grad_overridden = False
     if args.config:
         config = utils.read_config(args.config)
         update_settings_from_config(settings = settings, config = config)
+        track_grad_overridden = "track_grad" in config
     # override settings provided as command line arguments
     update_settings_from_command_line(settings = settings, args = args)
+    if args.track_grad is not None:
+        track_grad_overridden = True
 
     if settings["resume_from_checkpoint"] is not None and settings["pretrained_model"] is not None:
         raise ValueError("Cannot specify both --resume_from_checkpoint and --pretrained_model.")
@@ -104,9 +110,6 @@ def main():
     settings["train_aux_shape"] = (num_train, aux_data.shape[1])
     settings["val_aux_shape"] = (num_val, aux_data.shape[1])
     settings["test_aux_shape"] = tuple(test_aux_data.shape)
-    save_settings(settings, settings['out_prefix'] + "_settings.csv")
-        
-
     ###################################
     # Set up network training objects #
     ###################################
@@ -132,7 +135,8 @@ def main():
     if settings["resume_from_checkpoint"] is not None:
         tree_ae = PhyloAutoencoder.load_checkpoint(
                         settings["resume_from_checkpoint"],
-                        map_location = map_location
+                        map_location = map_location,
+                        track_grad = settings["track_grad"] if track_grad_overridden else None
                         )
     else:
         # create model
@@ -199,14 +203,17 @@ def main():
                             train_loss      = train_loss,
                             val_loss        = val_loss,
                             device          = settings["device"],
+                            track_grad      = settings["track_grad"],
                             checkpoints     = settings["checkpoints"],
                             checkpt_file_prefix = settings["out_prefix"]
                             )
 
     tree_ae.checkpoints = settings["checkpoints"]
     tree_ae.checkpt_file_prefix = settings["out_prefix"]
+    settings["track_grad"] = tree_ae.track_grad
+    save_settings(settings, settings['out_prefix'] + "_settings.csv")
     tree_ae.model.write_network_to_file(settings["out_prefix"] + ".network.txt")
-    ae_model = tree_ae.model
+    # ae_model = tree_ae.model
     
 
     #################################
@@ -216,13 +223,14 @@ def main():
     tree_ae.set_data_loaders(train_loader=trn_loader, val_loader=val_loader) 
     tree_ae.train(num_epochs = settings["num_epochs"], seed = settings["seed"])
 
+    # TODO: should be a CLI parameter
     if tree_ae.track_grad:
-        plot_gradient_norms(tree_ae.mean_layer_grad_norm, 
+        tree_ae.plot_gradient_norms(tree_ae.mean_layer_grad_norm, 
                             settings["out_prefix"] + ".layer_grad_norms.pdf")            
 
     # save model with normalizers
     # tree_ae.save_model(settings["out_prefix"] + ".ae_trained.pt")
-    ae_model.save_model(settings["out_prefix"] + ".ae_trained.pt")
+    tree_ae.model.save_model(settings["out_prefix"] + ".ae_trained.pt")
 
     # plot loss curves
     tree_ae.plot_losses(settings["out_prefix"])
@@ -234,7 +242,7 @@ def main():
                                         size = min(5000, phy_data.shape[0]))
     rand_train_phy  = torch.Tensor(ae_data.norm_train_phy_data[rand_idx,...])
     rand_train_aux  = torch.Tensor(ae_data.norm_train_aux_data[rand_idx,...])
-    latent_dat      = ae_model.encode(rand_train_phy, rand_train_aux, 
+    latent_dat      = tree_ae.model.encode(rand_train_phy, rand_train_aux, 
                                       inference=True, detach=True)
     latent_dat_df   = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), 
                                     columns = None, index = None)
@@ -256,13 +264,13 @@ def main():
                        header = False, index = False)
 
 
-    test_latent_dat = ae_model.norm_and_encode(test_phy_data, test_aux_data)
+    test_latent_dat = tree_ae.model.norm_and_encode(test_phy_data, test_aux_data)
     latent_testdat_df = pd.DataFrame(test_latent_dat, columns = None, index = None)
     latent_testdat_df.to_csv(settings["out_prefix"] + ".testdat_latent.csv", 
                              header = False, index = False)
 
     # # set predicted padding to zeros  (using predicted num tips)
-    phy_pred, aux_pred = ae_model.norm_predict_denorm(test_phy_data, test_aux_data)
+    phy_pred, aux_pred = tree_ae.model.norm_predict_denorm(test_phy_data, test_aux_data)
     phy_pred = utils.set_pred_pad_to_zero(phy_pred,  aux_pred[:,ae_data.ntax_cidx])    
     phy_pred = phy_pred.reshape((phy_pred.shape[0], -1), order = "F")
 
@@ -307,10 +315,11 @@ def parse_arguments():
     parser.add_argument("-lr", "--learning-rate",   required = False, type = float, help = "Optimizer learning rate. Default 1e-3")
     parser.add_argument("-wd", "--weight-decay",    required = False, type = float, help = "Optimizer weight decay. Default 1e-3")
     parser.add_argument("-t", "--testing",          required = False, type = bool, help = "Testing mode sets torch trianing optimization behavior to deterministic. Default True")
+    parser.add_argument("-tg", "--track_grad",      required = False, help = "Track parameter gradient norms during training. Default False")
     parser.add_argument("-dv", "--device",          required = False, type = bool, help = "Device. Default auto")
     parser.add_argument("-waux", "--which_aux",     required = False, help = "Comma separated list of auxilliary data column names to inclued. Default: All")
     parser.add_argument("-ckpt", "--checkpoints", required = False, help = "Comma separated list of epochs to save training checkpoints. Default: None")
-    parser.add_argument("--resume_from_checkpoint", required = False, help = "Resume training from a checkpoint produced by save_checkpoint.")
+    parser.add_argument("--resume_from_checkpoint", required = False, help = "Resume training from a provided checkpoint file produced by save_checkpoint.")
     parser.add_argument("--pretrained_model", required = False, help = "Initialize model weights from a saved model and start a fresh training run.")
     return parser.parse_args()
 
@@ -345,6 +354,7 @@ def get_default_settings():
         "proportion_train" : 0.85,
         "learning_rate" : 1e-3,
         "weight_decay"  : 1e-3,
+        "track_grad" : False,
         "device" : "auto",
         "which_aux" : "all",
         "checkpoints" : None,
@@ -380,6 +390,7 @@ def update_settings_from_command_line(settings, args):
         "proportion_train": args.proportion_train,
         "learning_rate" : args.learning_rate,
         "weight_decay"  : args.weight_decay,
+        "track_grad"    : args.track_grad,
         "device"        : args.device,
         "which_aux"     : args.which_aux,
         "checkpoints"   : args.checkpoints,
@@ -388,8 +399,10 @@ def update_settings_from_command_line(settings, args):
 
     }
 
-    # override defaults with command line args
+    # override defaults and config with command line args
+    # TODO: many of these havent been tested well
     for k, v in arg_map.items():
+        v = normalize_cli_value(v)
         if v is not None:
             if k in {"kernel", "stride", "out_channels", "checkpoints"} and isinstance(v, str):
                 settings[k] = [int(x) for x in v.split(",")]
@@ -398,10 +411,23 @@ def update_settings_from_command_line(settings, args):
                 settings[k] = int(v)
             elif k in {"mmd_loss_weight", "vz_loss_weight", "aux_loss_weight", "phy_loss_weight", "char_loss_weight"}:
                 settings[k] = float(v)
+            elif k in {"testing", "track_grad"}:
+                settings[k] = bool(v)
             elif k in {"which_aux"}:
                 settings[k] = [str(x) for x in v.split(',')]
             else:
                 settings[k] = v
+
+def normalize_cli_value(value):
+    if value == "None":
+        return None
+    if isinstance(value, str):
+        value_lower = value.lower()
+        if value_lower == "true":
+            return True
+        if value_lower == "false":
+            return False
+    return value
 
 def update_settings_from_config(settings : dict, config : dict):
     for key in settings:
@@ -416,25 +442,25 @@ def save_settings(settings, out_file):
     print("Settings saved to", out_file)
 
 # TODO: should belong to PhyloAutoencoder
-def plot_gradient_norms(layer_grad_norms, out_file, plots_per_page = 4):
+# def plot_gradient_norms(layer_grad_norms, out_file, plots_per_page = 4):
 
-    laynorm = [z for z in layer_grad_norms.items()]
-    n_plots = len(laynorm)
-    n_pages = n_plots // 4 + ((n_plots % 4) > 0)
-    with PdfPages(out_file) as pdf:
-        for page in range(n_pages):
-            fig, axes = plt.subplots(plots_per_page // 2, 2)
-            axes = axes.flatten()
-            for plot_i in range(plots_per_page):
-                idx = page * plots_per_page + plot_i
-                if idx >= n_plots:
-                    axes.axis('off')
-                    continue
-                axes[plot_i].plot(laynorm[idx][1])
-                axes[plot_i].set_title(laynorm[idx][0], size = 6.)
-            fig.tight_layout()
-            pdf.savefig(fig)
-            plt.close(fig)
+#     laynorm = [z for z in layer_grad_norms.items()]
+#     n_plots = len(laynorm)
+#     n_pages = n_plots // 4 + ((n_plots % 4) > 0)
+#     with PdfPages(out_file) as pdf:
+#         for page in range(n_pages):
+#             fig, axes = plt.subplots(plots_per_page // 2, 2)
+#             axes = axes.flatten()
+#             for plot_i in range(plots_per_page):
+#                 idx = page * plots_per_page + plot_i
+#                 if idx >= n_plots:
+#                     axes.axis('off')
+#                     continue
+#                 axes[plot_i].plot(laynorm[idx][1])
+#                 axes[plot_i].set_title(laynorm[idx][0], size = 6.)
+#             fig.tight_layout()
+#             pdf.savefig(fig)
+#             plt.close(fig)
 
 
 def get_channels(phydata: np.ndarray, num_chans: int, max_tips: int) -> torch.Tensor:
