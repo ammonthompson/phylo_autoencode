@@ -33,6 +33,11 @@ class AECNN(nn.Module):
         you want the model to handle normalization/denormalization.
     """
 
+    _LEGACY_DERIVED_BUFFER_KEYS = (
+        "phy_two_sided_ReLU.min_val",
+        "phy_two_sided_ReLU.max_val",
+    )
+
     def __init__(self, 
                  num_structured_input_channel, 
                  structured_input_width,  # Input width for structured data
@@ -673,6 +678,24 @@ class AECNN(nn.Module):
         }, filename)
         # torch.save(self.model, filename)
 
+    def repair_legacy_state_dict(self, model_state_dict):
+        """Backfill derived buffers omitted from older serialized models.
+
+        These buffers are deterministically reconstructed from the saved normalizers during
+        ``__init__`` and therefore do not need to be authoritative in older state dicts.
+        """
+        missing_legacy_keys = [
+            key for key in self._LEGACY_DERIVED_BUFFER_KEYS if key not in model_state_dict
+        ]
+        if not missing_legacy_keys:
+            return model_state_dict
+
+        repaired_state_dict = model_state_dict.copy()
+        current_state_dict = self.state_dict()
+        for key in missing_legacy_keys:
+            repaired_state_dict[key] = current_state_dict[key]
+        return repaired_state_dict
+
     @classmethod
     def load_pretrained_from_file(
         cls,
@@ -698,7 +721,8 @@ class AECNN(nn.Module):
                 model_config["device"] = str(map_location)
 
             trained_model = cls(**model_config)
-            trained_model.load_state_dict(model_obj['model_state_dict'])
+            model_state_dict = trained_model.repair_legacy_state_dict(model_obj['model_state_dict'])
+            trained_model.load_state_dict(model_state_dict)
             if map_location is not None:
                 trained_model.to(map_location)
             trained_model.eval()

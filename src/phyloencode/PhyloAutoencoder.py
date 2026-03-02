@@ -562,7 +562,8 @@ class PhyloAutoencoder(object):
         checkpoint = torch.load(filename, map_location=map_location, weights_only=False)
 
         model = AECNN(**checkpoint['model_config'])
-        model.load_state_dict(checkpoint['model_state_dict'])
+        model_state_dict = model.repair_legacy_state_dict(checkpoint['model_state_dict'])
+        model.load_state_dict(model_state_dict)
 
         opt_state = checkpoint['optimizer_state_dict']
         opt_module_name = checkpoint['optimizer_module']
