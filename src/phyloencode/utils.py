@@ -131,202 +131,6 @@ class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
 
         return X
     
-class ShiftedStandardScaler(BaseEstimator, TransformerMixin):
-    # this is a modified version of sklearn's StandardScaler. 
-    # standardizes the data then shifts it to be positive
-    # this is used for the cblv-like data
-
-    def __init__(self, buffer_factor = 1., copy = True):
-        '''arguments:
-        buffer_factor: float, default=1.0
-            The factor by which to multiply the minimum value of the
-            scaled data to ensure all values are positive.
-            A value of 1.0 means no change in scale, while a value of 
-            2.0 will shift the data to be at least twice the minimum value.'''
-        
-        print("Using ShiftedStandardScaler")
-        super().__init__()
-        self.copy = copy
-        self.scaler = StandardScaler()
-        self.msm = None
-        self.bf = buffer_factor # default no change
-
-    def fit(self, X, y=None):
-        # Ensure X is a NumPy array
-        X = np.asarray(X)
-        self.scaler.fit(X)
-        # find minimum value for whole dataset
-        self.msm = self.bf * np.abs(np.min(self.scaler.transform(X)))
-
-        return self
-    
-    def transform(self, X):
-        # Ensure X is a NumPy array
-        X = np.asarray(X)
-        # Standardize the data
-        X_scaled = self.scaler.transform(X)
-        # Shift the data to make all values positive
-        X_scaled_shifted = X_scaled + self.msm
-
-        return X_scaled_shifted
-    
-    def inverse_transform(self, X):
-        # Convert PyTorch tensor back to NumPy array if necessary
-        if isinstance(X, torch.Tensor):
-            X = X.numpy()
-        # Reverse the shift
-        X_inv = X - self.msm
-        # Reverse standardization
-        return self.scaler.inverse_transform(X_inv)
-   
-class NoScalerNormalizer(BaseEstimator, TransformerMixin):
-    # this just creates a normalizer object that 
-    # returns the input data untransformed
-    # for compatibility with downstream code
-    def __init__(self, copy=True):
-        self.copy = copy
-        print("Using NoScalerNormalizer")
-    
-    def fit(self, X, y=None):
-        return self
-
-    def transform(self, X):
-        if isinstance(X, torch.Tensor):
-            X = X.detach().cpu().numpy()
-        return X.copy() if self.copy else X
-
-    def inverse_transform(self, X):
-        if isinstance(X, torch.Tensor):
-            X = X.detach().cpu().numpy()
-        return X.copy() if self.copy else X
-
-class LogitStandardScaler(BaseEstimator, TransformerMixin):
-    """
-    Combines a logit transformation with standard scaling.
-
-    - Applies logit: log(x / (1 - x)), after clipping to avoid 0/1 boundaries.
-    - Applies StandardScaler afterward.
-    """
-
-    def __init__(self, epsilon=1e-6):
-        self.epsilon = epsilon
-        self.scaler = StandardScaler()
-
-    def _logit(self, x):
-        x_clipped = np.clip(x, self.epsilon, 1 - self.epsilon)
-        return np.log(x_clipped / (1 - x_clipped))
-
-    def _sigmoid(self, x):
-        return 1 / (1 + np.exp(-x))
-
-    def fit(self, X, y=None):
-        X_logit = self._logit(np.asarray(X))
-        self.scaler.fit(X_logit)
-        return self
-
-    def transform(self, X):
-        X_logit = self._logit(np.asarray(X))
-        return self.scaler.transform(X_logit)
-
-    def inverse_transform(self, X_scaled):
-        X_logit = self.scaler.inverse_transform(X_scaled)
-        return self._sigmoid(X_logit)
-    
-class StandardMinMaxScaler(BaseEstimator, TransformerMixin):
-    def fit(self, X, y=None):
-        X = np.asarray(X)
-        self.mean_ = X.mean(axis=0)
-        self.std_ = X.std(axis=0)
-        self.std_[np.where(self.std_ == 0)] = 1.
-        X_std = (X - self.mean_) / self.std_
-        self.min = X_std.min(axis=0)
-        self.max = X_std.max(axis=0)
-        return self
-
-    def transform(self, X):
-        X = np.asarray(X)
-        X_std = (X - self.mean_) / self.std_
-        # Avoid division by zero
-        scale = np.where(self.max != self.min, self.max - self.min, 1)
-        X_scaled = 2 * (X_std - self.min) / scale - 1
-        return X_scaled
-
-    def inverse_transform(self, X_scaled):
-        X_std = ((X_scaled + 1) / 2) * (self.max - self.min) + self.min
-        return X_std * self.std_ + self.mean_
-    
-class LogScaler(BaseEstimator, TransformerMixin):
-    def __init__(self, min_pos = 1e-8):
-        super().__init__()
-        self.min_positive_values = min_pos
-
-    def fit(self, X, y=None):
-        pass
-
-    def transform(self, X):
-        X = np.asarray(X)
-        return(np.log(X + self.min_positive_values))
-
-    def inverse_transform(self, X):
-        return(np.exp(X) - self.min_positive_values)    
-
-class LogStandardScaler(BaseEstimator, TransformerMixin):
-    def __init__(self, base=np.float32(np.e)):
-        super().__init__()
-        self.base = base
-        self.scaler = StandardScaler()
-        self.min_positive_values = None
-
-    def fit(self, X, y=None):
-        # Ensure X is a NumPy array
-        X = np.asarray(X)
-
-        # Compute the smallest positive value for each feature
-        self.min_positive_values = np.min(np.where(X > 0, X, np.inf), axis=0)
-
-        # Replace infinities (features with no positive values) with 1e-8
-        self.min_positive_values = np.where(np.isinf(self.min_positive_values), 
-        1e-8, self.min_positive_values)
-
-        # Shift the data to make all values strictly positive
-        X_shifted = X + self.min_positive_values
-
-        # Apply log transformation
-        X_log = np.log(X_shifted) / np.log(self.base)
-
-        # Fit the standard scaler on the log-transformed data
-        self.scaler.fit(X_log)
-        return self
-
-    def transform(self, X):
-        # Ensure X is a NumPy array
-        X = np.asarray(X)
-
-        # Shift the data using the precomputed smallest positive values
-        X_shifted = X + self.min_positive_values
-
-        # Apply log transformation
-        X_log = np.log(X_shifted) / np.log(self.base)
-
-        # Standardize the log-transformed data
-        X_scaled = self.scaler.transform(X_log)
-
-        return X_scaled
-
-    def inverse_transform(self, X):
-        # Convert PyTorch tensor back to NumPy array if necessary
-        if isinstance(X, torch.Tensor):
-            X = X.numpy()
-
-        # Reverse standardization
-        X_inv = self.scaler.inverse_transform(X)
-
-        # Reverse log transformation
-        X_exp = np.exp(X_inv * np.log(self.base))
-
-        # Reverse the shift
-        return X_exp - self.min_positive_values
-
 
 # other functions
 def file_exists(fname):
@@ -806,3 +610,203 @@ def convert_to_newick(cblv, num_tips, char_data):
         # newick.append(num_tips_i)    
 
     return newick
+
+
+# DEV
+class ShiftedStandardScaler(BaseEstimator, TransformerMixin):
+    # this is a modified version of sklearn's StandardScaler. 
+    # standardizes the data then shifts it to be positive
+    # this is used for the cblv-like data
+
+    def __init__(self, buffer_factor = 1., copy = True):
+        '''arguments:
+        buffer_factor: float, default=1.0
+            The factor by which to multiply the minimum value of the
+            scaled data to ensure all values are positive.
+            A value of 1.0 means no change in scale, while a value of 
+            2.0 will shift the data to be at least twice the minimum value.'''
+        
+        print("Using ShiftedStandardScaler")
+        super().__init__()
+        self.copy = copy
+        self.scaler = StandardScaler()
+        self.msm = None
+        self.bf = buffer_factor # default no change
+
+    def fit(self, X, y=None):
+        # Ensure X is a NumPy array
+        X = np.asarray(X)
+        self.scaler.fit(X)
+        # find minimum value for whole dataset
+        self.msm = self.bf * np.abs(np.min(self.scaler.transform(X)))
+
+        return self
+    
+    def transform(self, X):
+        # Ensure X is a NumPy array
+        X = np.asarray(X)
+        # Standardize the data
+        X_scaled = self.scaler.transform(X)
+        # Shift the data to make all values positive
+        X_scaled_shifted = X_scaled + self.msm
+
+        return X_scaled_shifted
+    
+    def inverse_transform(self, X):
+        # Convert PyTorch tensor back to NumPy array if necessary
+        if isinstance(X, torch.Tensor):
+            X = X.numpy()
+        # Reverse the shift
+        X_inv = X - self.msm
+        # Reverse standardization
+        return self.scaler.inverse_transform(X_inv)
+   
+class NoScalerNormalizer(BaseEstimator, TransformerMixin):
+    # this just creates a normalizer object that 
+    # returns the input data untransformed
+    # for compatibility with downstream code
+    def __init__(self, copy=True):
+        self.copy = copy
+        print("Using NoScalerNormalizer")
+    
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        if isinstance(X, torch.Tensor):
+            X = X.detach().cpu().numpy()
+        return X.copy() if self.copy else X
+
+    def inverse_transform(self, X):
+        if isinstance(X, torch.Tensor):
+            X = X.detach().cpu().numpy()
+        return X.copy() if self.copy else X
+
+class LogitStandardScaler(BaseEstimator, TransformerMixin):
+    """
+    Combines a logit transformation with standard scaling.
+
+    - Applies logit: log(x / (1 - x)), after clipping to avoid 0/1 boundaries.
+    - Applies StandardScaler afterward.
+    """
+
+    def __init__(self, epsilon=1e-6):
+        self.epsilon = epsilon
+        self.scaler = StandardScaler()
+
+    def _logit(self, x):
+        x_clipped = np.clip(x, self.epsilon, 1 - self.epsilon)
+        return np.log(x_clipped / (1 - x_clipped))
+
+    def _sigmoid(self, x):
+        return 1 / (1 + np.exp(-x))
+
+    def fit(self, X, y=None):
+        X_logit = self._logit(np.asarray(X))
+        self.scaler.fit(X_logit)
+        return self
+
+    def transform(self, X):
+        X_logit = self._logit(np.asarray(X))
+        return self.scaler.transform(X_logit)
+
+    def inverse_transform(self, X_scaled):
+        X_logit = self.scaler.inverse_transform(X_scaled)
+        return self._sigmoid(X_logit)
+    
+class StandardMinMaxScaler(BaseEstimator, TransformerMixin):
+    def fit(self, X, y=None):
+        X = np.asarray(X)
+        self.mean_ = X.mean(axis=0)
+        self.std_ = X.std(axis=0)
+        self.std_[np.where(self.std_ == 0)] = 1.
+        X_std = (X - self.mean_) / self.std_
+        self.min = X_std.min(axis=0)
+        self.max = X_std.max(axis=0)
+        return self
+
+    def transform(self, X):
+        X = np.asarray(X)
+        X_std = (X - self.mean_) / self.std_
+        # Avoid division by zero
+        scale = np.where(self.max != self.min, self.max - self.min, 1)
+        X_scaled = 2 * (X_std - self.min) / scale - 1
+        return X_scaled
+
+    def inverse_transform(self, X_scaled):
+        X_std = ((X_scaled + 1) / 2) * (self.max - self.min) + self.min
+        return X_std * self.std_ + self.mean_
+    
+class LogScaler(BaseEstimator, TransformerMixin):
+    def __init__(self, min_pos = 1e-8):
+        super().__init__()
+        self.min_positive_values = min_pos
+
+    def fit(self, X, y=None):
+        pass
+
+    def transform(self, X):
+        X = np.asarray(X)
+        return(np.log(X + self.min_positive_values))
+
+    def inverse_transform(self, X):
+        return(np.exp(X) - self.min_positive_values)    
+
+class LogStandardScaler(BaseEstimator, TransformerMixin):
+    def __init__(self, base=np.float32(np.e)):
+        super().__init__()
+        self.base = base
+        self.scaler = StandardScaler()
+        self.min_positive_values = None
+
+    def fit(self, X, y=None):
+        # Ensure X is a NumPy array
+        X = np.asarray(X)
+
+        # Compute the smallest positive value for each feature
+        self.min_positive_values = np.min(np.where(X > 0, X, np.inf), axis=0)
+
+        # Replace infinities (features with no positive values) with 1e-8
+        self.min_positive_values = np.where(np.isinf(self.min_positive_values), 
+        1e-8, self.min_positive_values)
+
+        # Shift the data to make all values strictly positive
+        X_shifted = X + self.min_positive_values
+
+        # Apply log transformation
+        X_log = np.log(X_shifted) / np.log(self.base)
+
+        # Fit the standard scaler on the log-transformed data
+        self.scaler.fit(X_log)
+        return self
+
+    def transform(self, X):
+        # Ensure X is a NumPy array
+        X = np.asarray(X)
+
+        # Shift the data using the precomputed smallest positive values
+        X_shifted = X + self.min_positive_values
+
+        # Apply log transformation
+        X_log = np.log(X_shifted) / np.log(self.base)
+
+        # Standardize the log-transformed data
+        X_scaled = self.scaler.transform(X_log)
+
+        return X_scaled
+
+    def inverse_transform(self, X):
+        # Convert PyTorch tensor back to NumPy array if necessary
+        if isinstance(X, torch.Tensor):
+            X = X.numpy()
+
+        # Reverse standardization
+        X_inv = self.scaler.inverse_transform(X)
+
+        # Reverse log transformation
+        X_exp = np.exp(X_inv * np.log(self.base))
+
+        # Reverse the shift
+        return X_exp - self.min_positive_values
+
+
