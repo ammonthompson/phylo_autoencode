@@ -16,7 +16,6 @@ from phyloencode.PhyloAEModel import AECNN
 import phyloencode.utils as utils
 import time
 import random
-import importlib
 # import os
 from typing import List, Dict, Tuple, Optional, Union
 
@@ -491,66 +490,20 @@ class PhyloAutoencoder(object):
     def save_checkpoint(self, filename):
         """Save a training checkpoint to disk.
 
-        The checkpoint includes model/optimizer state and basic training metadata.
+        The checkpoint includes the full training object state needed to resume.
 
         Args:
             filename (str): Output path for ``torch.save(...)``.
         """
-        if not isinstance(self.train_loss, PhyLoss):
-            raise TypeError("save_checkpoint requires `train_loss` to be a PhyLoss instance.")
-        if not isinstance(self.val_loss, PhyLoss):
-            raise TypeError("save_checkpoint requires `val_loss` to be a PhyLoss instance.")
-
-        sched_module = None
-        sched_class = None
-        sched_init_kwargs = None
-        sched_state = None
-        if self.lr_sched is not None:
-            sched_module = self.lr_sched.__class__.__module__
-            sched_class = self.lr_sched.__class__.__name__
-            sched_state = self.lr_sched.state_dict()
-            if isinstance(self.lr_sched, torch.optim.lr_scheduler.OneCycleLR):
-                phases = sched_state['_schedule_phases']
-                total_steps = int(sched_state['total_steps'])
-                pct_start = (float(phases[0]['end_step']) + 1.0) / float(total_steps)
-                param_groups = self.optimizer.param_groups
-                max_lrs = [float(pg['max_lr']) for pg in param_groups]
-                initial_lrs = [float(pg['initial_lr']) for pg in param_groups]
-                min_lrs = [float(pg['min_lr']) for pg in param_groups]
-                sched_init_kwargs = {
-                    'max_lr': max_lrs,
-                    'total_steps': total_steps,
-                    'pct_start': pct_start,
-                    'anneal_strategy': sched_state['_anneal_func_type'],
-                    'cycle_momentum': bool(sched_state['cycle_momentum']),
-                    'div_factor': max_lrs[0] / initial_lrs[0],
-                    'final_div_factor': initial_lrs[0] / min_lrs[0],
-                    'three_phase': len(phases) == 3,
-                }
-                if sched_state['cycle_momentum']:
-                    sched_init_kwargs['base_momentum'] = [float(pg['base_momentum']) for pg in param_groups]
-                    sched_init_kwargs['max_momentum'] = [float(pg['max_momentum']) for pg in param_groups]
-            else:
-                raise TypeError(
-                    f"save_checkpoint does not support scheduler type "
-                    f"{self.lr_sched.__class__.__module__}.{self.lr_sched.__class__.__name__}."
-                    f"Currently only supports torch.optim.lr_scheduler.OneCycleLR."
-                )
-
-        # necessary if want to create new model objects with same state
-        checkpoint = {'model_config' : self.model.get_config_dict(),
-                      'seed': self.seed,
-                      'epoch': self.epoch,
-                      'model_state_dict': self.model.state_dict(),
-                      'optimizer_module': self.optimizer.__class__.__module__,
-                      'optimizer_class': self.optimizer.__class__.__name__,
-                      'optimizer_state_dict': self.optimizer.state_dict(),
-                      'scheduler_module': sched_module,
-                      'scheduler_class': sched_class,
-                      'scheduler_init_kwargs': sched_init_kwargs,
-                      'scheduler_state_dict': sched_state,
-                      'train_loss_state': self.train_loss.to_checkpoint_dict(),
-                      'val_loss_state': self.val_loss.to_checkpoint_dict()}
+        checkpoint = {
+            'model': self.model,
+            'seed': self.seed,
+            'epoch': self.epoch,
+            'optimizer': self.optimizer,
+            'lr_scheduler': self.lr_sched,
+            'train_loss': self.train_loss,
+            'val_loss': self.val_loss,
+        }
         torch.save(checkpoint, filename)
 
     @classmethod
@@ -560,37 +513,19 @@ class PhyloAutoencoder(object):
         Assumes the file is a checkpoint file output by save_checkpoint() above. 
         """
         checkpoint = torch.load(filename, map_location=map_location, weights_only=False)
+        if 'model' not in checkpoint:
+            raise ValueError(
+                "Unsupported legacy checkpoint format. "
+                "Expected a checkpoint saved with pickled model/optimizer/scheduler/loss objects."
+            )
 
-        model = AECNN(**checkpoint['model_config'])
-        model_state_dict = model.repair_legacy_state_dict(checkpoint['model_state_dict'])
-        model.load_state_dict(model_state_dict)
-
-        opt_state = checkpoint['optimizer_state_dict']
-        opt_module_name = checkpoint['optimizer_module']
-        opt_class_name = checkpoint['optimizer_class']
-        opt_module = importlib.import_module(opt_module_name)
-        opt_cls = getattr(opt_module, opt_class_name)
-
-        saved_groups = opt_state['param_groups']
-        if len(saved_groups) == 2:
-            wd = max(float(group['weight_decay']) for group in saved_groups)
-            opt = opt_cls(utils.split_params_by_wd(model, wd))
-        else:
-            opt = opt_cls(model.parameters())
-
-        lr_sched = None
-        sched_state = checkpoint['scheduler_state_dict']
-        if sched_state is not None:
-            sched_module_name = checkpoint['scheduler_module']
-            sched_class_name  = checkpoint['scheduler_class']
-            sched_init_kwargs = checkpoint['scheduler_init_kwargs']
-            sched_module = importlib.import_module(sched_module_name)
-            sched_cls = getattr(sched_module, sched_class_name)
-            lr_sched = sched_cls(opt, **sched_init_kwargs)
+        model = checkpoint['model']
+        opt = checkpoint['optimizer']
+        lr_sched = checkpoint['lr_scheduler']
+        train_loss = checkpoint['train_loss']
+        val_loss = checkpoint['val_loss']
 
         load_device = None if map_location is None else str(map_location)
-        train_loss = PhyLoss.from_checkpoint_dict(checkpoint['train_loss_state'], device=load_device)
-        val_loss   = PhyLoss.from_checkpoint_dict(checkpoint['val_loss_state'], device=load_device)
 
         self = cls(
             model=model,
@@ -602,10 +537,6 @@ class PhyloAutoencoder(object):
             device="auto" if load_device is None else load_device,
             track_grad=track_grad,
         )
-
-        self.optimizer.load_state_dict(opt_state)
-        if sched_state is not None and self.lr_sched is not None:
-            self.lr_sched.load_state_dict(sched_state)
         self.epoch = checkpoint['epoch']
         self.model.train()
         return self

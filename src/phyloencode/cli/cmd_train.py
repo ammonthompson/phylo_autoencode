@@ -133,6 +133,8 @@ def main():
     map_location = None if settings["device"] == "auto" else settings["device"]
 
     if settings["resume_from_checkpoint"] is not None:
+        # TODO: if this is using the same outfile path prefix, this could overwrite exisiting checkpoints
+        # later than this one.
         tree_ae = PhyloAutoencoder.load_checkpoint(
                         settings["resume_from_checkpoint"],
                         map_location = map_location,
@@ -141,6 +143,8 @@ def main():
     else:
         # create model
         if settings["pretrained_model"] is not None:
+            # TODO: important. If the pretrained model used different training data (almost certainly did)
+            # then use new normalizers.
             ae_model = AECNN.load_pretrained_from_file(
                         settings["pretrained_model"],
                         map_location = map_location
