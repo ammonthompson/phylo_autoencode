@@ -35,6 +35,7 @@ class PositiveStandardScaler(BaseEstimator, TransformerMixin):
         super().__init__()
         self.mean_ = None
         self.std_ = None
+        self.scale_ = None
 
     def fit(self, X, y=None):
         mask = X > 0
@@ -54,6 +55,7 @@ class PositiveStandardScaler(BaseEstimator, TransformerMixin):
         self.mean_[invalid] = 0.
         self.std_[invalid] = 1.
         self.std_[self.std_ == 0] = 1.0
+        self.scale_ = self.std_
         return self
 
     def transform(self, X):
@@ -74,6 +76,10 @@ class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
 
         self.cblv_scaler = PositiveStandardScaler()
 
+        self.mean_ = None
+        self.scale_ = None
+        self.std_ = None
+
         self.num_chars = num_chars
         self.num_chans = num_chans
         self.max_tips  = max_tips
@@ -92,6 +98,7 @@ class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
         self.cblv_scaler.fit(X[:, self.tree_idxs])
         self.mean_ = self.cblv_scaler.mean_
         self.std_  = self.cblv_scaler.std_
+        self.scale_ = self.std_
         return self
     
     def transform(self, X):
