@@ -18,11 +18,7 @@ from phyloencode.DataProcessors     import AEData
 from phyloencode.PhyLoss            import PhyLoss
 import phyloencode.utils as utils
 
-# TODO: I'm leaning toward not doing this, the point of the latent space is to learn semantics 
-#       that correlate with labels without needing them: take in a list of label key words to be included 
-#       in aux dat eg. ['log_R0', 'log_sample',...]
-#       these should be stacked onto the aux variable, or should I create a labels subnetwork in the model?
-#       -> then separate before creating predicted aux and label files.
+
 # TODO: includ min tips
 def main():
 
@@ -110,6 +106,7 @@ def main():
     settings["train_aux_shape"] = (num_train, aux_data.shape[1])
     settings["val_aux_shape"] = (num_val, aux_data.shape[1])
     settings["test_aux_shape"] = tuple(test_aux_data.shape)
+    
     ###################################
     # Set up network training objects #
     ###################################
