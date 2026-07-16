@@ -237,52 +237,6 @@ def main():
     tree_ae.plot_losses(settings["out_prefix"])
 
 
-    # TODO: Should phytrain be doing this???
-    # make encoded tree file for 5,000 random trees from training data
-    rand_idx        = np.random.randint(0, ae_data.prop_train * phy_data.shape[0], 
-                                        size = min(5000, phy_data.shape[0]))
-    rand_train_phy  = torch.Tensor(ae_data.norm_train_phy_data[rand_idx,...])
-    rand_train_aux  = torch.Tensor(ae_data.norm_train_aux_data[rand_idx,...])
-    latent_dat      = tree_ae.model.encode(rand_train_phy, rand_train_aux, 
-                                      inference=True, detach=True)
-    latent_dat_df   = pd.DataFrame(latent_dat.detach().to('cpu').numpy(), 
-                                    columns = None, index = None)
-    latent_dat_df.to_csv(settings["out_prefix"] + ".traindat_latent.csv", 
-                         header = False, index = False)
-
-
-    #####################################################
-    # Test Data Prediction                              #
-    # make predictions with trained model on test data  #
-    #####################################################
-
-    # save true values of test data in cblv format
-    phy_true_df = pd.DataFrame(test_phy_data)#.numpy())
-    aux_true_df = pd.DataFrame(test_aux_data)#.numpy())
-    phy_true_df.to_csv(settings["out_prefix"] + ".phy_true.cblv.csv", 
-                       header = False, index = False)
-    aux_true_df.to_csv(settings["out_prefix"] + ".aux_true.csv", 
-                       header = False, index = False)
-
-
-    test_latent_dat = tree_ae.model.norm_and_encode(test_phy_data, test_aux_data)
-    latent_testdat_df = pd.DataFrame(test_latent_dat, columns = None, index = None)
-    latent_testdat_df.to_csv(settings["out_prefix"] + ".testdat_latent.csv", 
-                             header = False, index = False)
-
-    # # set predicted padding to zeros  (using predicted num tips)
-    phy_pred, aux_pred = tree_ae.model.norm_predict_denorm(test_phy_data, test_aux_data)
-    phy_pred = utils.set_pred_pad_to_zero(phy_pred,  aux_pred[:,ae_data.ntax_cidx])    
-    phy_pred = phy_pred.reshape((phy_pred.shape[0], -1), order = "F")
-
-
-    # save predictions to file
-    phy_pred_df = pd.DataFrame(phy_pred)
-    aux_pred_df = pd.DataFrame(aux_pred)
-    phy_pred_df.to_csv(settings["out_prefix"] + ".phy_pred.cblv.csv", 
-                       header = False, index = False)
-    aux_pred_df.to_csv(settings["out_prefix"] + ".aux_pred.csv", 
-                       header  = False, index = False)
 
 
 

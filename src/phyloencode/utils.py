@@ -207,9 +207,20 @@ def get_aux_data(full_aux_names : np.ndarray,
         Tuple of ``(aux_data_names, aux_data_tensor)`` where ``aux_data_names`` are the selected
         column names and ``aux_data_tensor`` has shape ``(N, A_selected)``.
     """
-    if isinstance(which_aux, str):
-        if which_aux == "all" or which_aux is None:
-            return full_aux_names, torch.tensor(aux_data, dtype=torch.float32)
+
+    full_aux_names = np.asarray([
+        x.decode("utf-8") if isinstance(x, bytes) else str(x)
+        for x in np.asarray(full_aux_names).flatten()
+    ])
+
+    if isinstance(which_aux, bytes):
+        which_aux = which_aux.decode("utf-8")
+    if which_aux is None or (isinstance(which_aux, str) and which_aux == "all"):
+        return full_aux_names, torch.tensor(aux_data, dtype=torch.float32)
+
+    which_aux = [
+        x.decode("utf-8") if isinstance(x, bytes) else str(x)
+        for x in np.asarray(which_aux).flatten()]
 
     idx_aux_data_names = []
     for aux_name in which_aux:

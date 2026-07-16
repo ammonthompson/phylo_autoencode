@@ -551,6 +551,15 @@ class AECNN(nn.Module):
         }
 
     # inference machinery. Handles normalization too.
+    def validate_num_tips(self, aux: np.ndarray) -> None:
+        """Reject auxiliary data containing trees wider than this model supports."""
+        max_num_tips = np.max(np.asarray(aux)[:, self.aux_numtips_idx])
+        if max_num_tips > self.structured_input_width:
+            raise ValueError(
+                f"Input contains trees with up to {max_num_tips:g} tips, "
+                f"but the model supports at most {self.structured_input_width}."
+            )
+
     def norm_and_encode(self, phy: np.array, aux: np.array) -> np.array:
         """Normalize raw inputs and return their latent encoding.
 

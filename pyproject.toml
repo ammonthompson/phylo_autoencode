@@ -26,6 +26,7 @@ phyencode = "phyloencode.cli.cmd_encode:main"
 phydecode = "phyloencode.cli.cmd_decode:main"
 phytrain  = "phyloencode.cli.cmd_train:main"
 phygen    = "phyloencode.cli.cmd_generate:main"
+phypredict = "phyloencode.cli.cmd_predict:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
