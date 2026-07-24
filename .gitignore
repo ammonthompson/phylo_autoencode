@@ -8,3 +8,8 @@ dtop_testing/**
 !testing/**/*.R
 
 __pycache__/
+
+/.venv/
+
+# Local architecture review notes
+/ARCHITECTURE_TODO.md
