@@ -153,7 +153,6 @@ with h5py.File(data_fn, "r") as f:
 ae_data = ph.DataProcessors.AEData(data = (phy_data, aux_data), 
                                     prop_train = 0.85,  
                                     nchannels  = nchannels)
-ae_data.save_normalizers(out_prefix)
 
 # create data loaders
 trn_loader, val_loader = ae_data.get_dataloaders(batch_size  = batch_size, 
