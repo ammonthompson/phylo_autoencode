@@ -33,7 +33,8 @@ def main ():
     num_channels      = args.num_channels if args.num_channels is not None else None
     max_tips          = args.max_tips if args.max_tips is not None else None
 
-    if (max_tips is not None and num_channels is None) or (num_channels is not None and max_tips is None):
+    if (max_tips is not None and num_channels is None) or \
+        (num_channels is not None and max_tips is None):
         raise ValueError("If using num_tips, then num_channels must also be specified. " \
         "If using num_channels, then num_tips must also be specified.")
 
@@ -113,6 +114,8 @@ def main ():
                 f"({list(model_aux_names)}). Provide phyddle -s F data with aux_data_names for alignment, "
                 "or ensure aux columns already match the model exactly."
             )
+
+    ae_model.validate_num_tips(test_aux_data)
 
     # print(ae_model.aux_data_names)
     # print(test_aux_data)
