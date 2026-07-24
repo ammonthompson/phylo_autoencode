@@ -17,32 +17,8 @@ import phyloencode.utils as utils
 # TODO: includ min tips
 def main():
 
-    # Training settings: Architecture, num epochs, batch size, etc.
-    # Override settings provided in config file if provided
-    settings    = get_default_settings()
-    args        = parse_arguments()
-    track_grad_overridden = False
-    if args.config:
-        config = utils.read_config(args.config)
-        update_settings_from_config(settings = settings, config = config)
-        track_grad_overridden = "track_grad" in config
-    # override settings provided as command line arguments
-    update_settings_from_command_line(settings = settings, args = args)
-    if args.track_grad is not None:
-        track_grad_overridden = True
-
-    if settings["resume_from_checkpoint"] is not None and settings["pretrained_model"] is not None:
-        raise ValueError("Cannot specify both --resume_from_checkpoint and --pretrained_model.")
-    if settings["resume_from_checkpoint"] is not None:
-        settings["seed"] = load_seed_from_checkpoint(settings["resume_from_checkpoint"])
-
-
-    # required command line argument
-    data_fn     = args.trn_data
-    ns          = settings["num_subset"]
-    mt          = settings["max_tips"]
-    nc          = settings["num_channels"]
-    num_test    = 5000
+    args = _parse_arguments()
+    settings, track_grad_overridden = _process_settings(args)
 
     ###################################
     # Set up network training objects #
@@ -66,16 +42,16 @@ def main():
     settings["train_aux_shape"] = ae_data.train_aux_shape
     settings["val_aux_shape"]   = ae_data.val_aux_shape
     
-    trn_loader, val_loader = ae_data.get_dataloaders(settings["batch_size"], shuffle = True, 
-                                                    num_workers = settings["num_workers"])
+    trn_loader, val_loader = \
+        ae_data.get_dataloaders(settings["batch_size"], shuffle = True,
+                                 num_workers = settings["num_workers"])
     
     phy_normalizer, aux_normalizer = ae_data.get_normalizers()
 
     map_location = None if settings["device"] == "auto" else settings["device"]
 
     if settings["resume_from_checkpoint"] is not None:
-        # TODO: if this is using the same outfile path prefix, this could overwrite exisiting checkpoints
-        # later than this one.
+        # TODO: if this is using the same outfile path prefix, this could overwrite exisiting checkpoints later than this one.
         tree_ae = PhyloAutoencoder.load_checkpoint(
                         settings["resume_from_checkpoint"],
                         map_location = map_location,
@@ -128,17 +104,16 @@ def main():
                             cycle_momentum=False
                             )
         
-        # Loss objects (stateful). These compute and store component
-        # and the weighted sum of component losses for the final objective. 
+        # PhyLoss compute and store loss and component losses for the final objective.
         loss_weights = {k : v for k, v in settings.items() if "_loss_weight" in k}
         train_loss = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
                             ae_model.latent_layer_type, device = settings["device"])
-        val_loss = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
+        val_loss   = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
                             ae_model.latent_layer_type, device = settings["device"], 
                             validation = True)
 
 
-        # create model trainer
+        # PhyloAutoencoder is the model trainer
         # the model, the data, and the loss come together here
         tree_ae = PhyloAutoencoder(
                             model           = ae_model, 
@@ -156,7 +131,7 @@ def main():
     tree_ae.checkpoints = settings["checkpoints"]
     tree_ae.checkpt_file_prefix = settings["out_prefix"]
     settings["track_grad"] = tree_ae.track_grad
-    save_settings(settings, settings['out_prefix'] + "_settings.csv")
+    _save_settings(settings, settings['out_prefix'] + "_settings.csv")
     tree_ae.model.write_network_to_file(settings["out_prefix"] + ".network.txt")
     # ae_model = tree_ae.model
     
@@ -168,7 +143,6 @@ def main():
     tree_ae.set_data_loaders(train_loader=trn_loader, val_loader=val_loader) 
     tree_ae.train(num_epochs = settings["num_epochs"], seed = settings["seed"])
 
-    # TODO: should be a CLI parameter
     if tree_ae.track_grad:
         tree_ae.plot_gradient_norms(tree_ae.mean_layer_grad_norm, 
                             settings["out_prefix"] + ".layer_grad_norms.pdf")            
@@ -182,10 +156,31 @@ def main():
 
 
 
+def _process_settings(args):
+    # Training settings: Architecture, num epochs, batch size, etc.
+    # Override settings provided in config file if provided
+    settings = _get_default_settings()
+    track_grad_overridden = False
+    if args.config:
+        config = utils.read_config(args.config)
+        _update_settings_from_config(settings = settings, config = config)
+        track_grad_overridden = "track_grad" in config
+    # override settings provided as command line arguments
+    _update_settings_from_command_line(settings = settings, args = args)
+    settings["which_aux"] = _normalize_which_aux(settings["which_aux"])
+    if args.track_grad is not None:
+        track_grad_overridden = True
 
+    if settings["resume_from_checkpoint"] is not None and settings["pretrained_model"] is not None:
+        raise ValueError("Cannot specify both --resume_from_checkpoint and --pretrained_model.")
+    if settings["resume_from_checkpoint"] is not None:
+        settings["seed"] = _load_seed_from_checkpoint(settings["resume_from_checkpoint"])
 
+    _set_seed(settings)
 
-def parse_arguments():
+    return settings, track_grad_overridden
+
+def _parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--trn_data",         required = True,  help = "Training data in hdf5 format.")
     parser.add_argument("-o", "--out_prefix",       required = False,  help = "Output prefix.")
@@ -222,11 +217,26 @@ def parse_arguments():
     parser.add_argument("--pretrained_model", required = False, help = "Initialize model weights from a saved model and start a fresh training run.")
     return parser.parse_args()
 
-def load_seed_from_checkpoint(checkpoint_file: str) -> int:
+def _load_seed_from_checkpoint(checkpoint_file: str) -> int:
     checkpoint = torch.load(checkpoint_file, map_location="cpu", weights_only=False)
     return int(checkpoint["seed"])
 
-def get_default_settings():
+def _set_seed(settings):
+    if settings['seed'] is None:
+        settings['seed'] = np.random.randint(0, 2**32 - 1)
+    seed = settings['seed']
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    print("seed: ", seed)
+    if settings['testing']:
+        # torch does some random stuff for more efficient training.
+        # causes slight differences despite same seed. Use below for exact.
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+def _get_default_settings():
     return {
         "testing": True,
         "out_prefix": "out",
@@ -261,7 +271,7 @@ def get_default_settings():
         "pretrained_model": None,
     }
 
-def update_settings_from_command_line(settings, args):
+def _update_settings_from_command_line(settings, args):
 
     arg_map = {
         "testing"       : args.testing,
@@ -301,7 +311,7 @@ def update_settings_from_command_line(settings, args):
     # override defaults and config with command line args
     # TODO: many of these havent been tested well
     for k, v in arg_map.items():
-        v = normalize_cli_value(v)
+        v = _normalize_cli_value(v)
         if v is not None:
             if k in {"kernel", "stride", "out_channels", "checkpoints"} and isinstance(v, str):
                 settings[k] = [int(x) for x in v.split(",")]
@@ -313,11 +323,11 @@ def update_settings_from_command_line(settings, args):
             elif k in {"testing", "track_grad"}:
                 settings[k] = bool(v)
             elif k in {"which_aux"}:
-                settings[k] = [str(x) for x in v.split(',')]
+                settings[k] = _normalize_which_aux(v)
             else:
                 settings[k] = v
 
-def normalize_cli_value(value):
+def _normalize_cli_value(value):
     if value == "None":
         return None
     if isinstance(value, str):
@@ -328,12 +338,19 @@ def normalize_cli_value(value):
             return False
     return value
 
-def update_settings_from_config(settings : dict, config : dict):
+def _normalize_which_aux(value):
+    if isinstance(value, str):
+        return "all" if value.lower() == "all" else [x.strip() for x in value.split(",")]
+    if isinstance(value, (list, tuple)) and len(value) == 1 and str(value[0]).lower() == "all":
+        return "all"
+    return value
+
+def _update_settings_from_config(settings : dict, config : dict):
     for key in settings:
         if key in config:
             settings[key] = config[key]
 
-def save_settings(settings, out_file):
+def _save_settings(settings, out_file):
     df_index= [x for x in settings.keys()]
     df_val  = [str(x) for x in settings.values()]
     df = pd.DataFrame(df_val, index=df_index, columns=None)
