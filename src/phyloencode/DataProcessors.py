@@ -1,255 +1,404 @@
+import os
+from typing import List, Optional, Tuple, Union
 
-import torch
-from torch.utils.data import Dataset, DataLoader #, TensorDataset
 import h5py
 import numpy as np
-import sklearn
-import joblib
-import random
 import sklearn.preprocessing as pp
-# from sklearn.preprocessing import StandardScaler
-# from sklearn.preprocessing import MinMaxScaler
+import torch
 from sklearn.model_selection import train_test_split
-from typing import List, Dict, Tuple, Optional, Union
+from torch.utils.data import DataLoader, Dataset
+
 import phyloencode.utils as utils
-# from matplotlib.backends.backend_pdf import PdfPages
-# import matplotlib.pyplot as plt
-from phyloencode.utils            import get_num_tips
 
 
-# class that contains the DataSet and DataLoaders
-# splits and normalizes/denormalizes it
-# 
-# Parameters: 
-# (phy data, aux data) -> Tuple[torch.Tensor, torch.Tensor], 
-# p: proportion of data fro training -> float
-# nc: number of channels in the data for reshapeing phy data -> int
-# 
+class AEData:
+    """Prepare lazy HDF5-backed datasets and fitted normalizers for training.
 
-# TODO: implement a single public normalize data function
+    ``AEData`` owns the data split and normalization state for training. It reads
+    just enough from the HDF5 file at construction time to choose rows and fit
+    the structured and auxiliary normalizers on the training split.
 
-class AEData(object):
-    def __init__(self, 
-                 phy_data   : torch.Tensor,
-                 aux_data   : torch.Tensor,
-                 aux_colnames : list[str],
-                 prop_train : float, 
-                 num_channels  : int,
-                 char_data_type : str = "categorical", # "continuous" or "categorical"
-                 num_chars  : int = 0,
-                 seed : int = None,
-                 device : str = "auto"):
-        """
-        Each tree in data is assumed to be flattend in column-major order
-        of a matrix of dimensions (num_channels, max_tips).
+    The HDF5 file is expected to contain:
+        - ``phy_data`` with shape ``(N, C_file * max_tips)``. Each row is a
+          flattened structured tree matrix in Fortran/column-major order. Here
+          ``C_file`` is the number of stored structured channels in the file;
+          only the first ``num_channels`` channels are used by ``AEData``.
+        - ``aux_data`` with shape ``(N, A)`` or ``(N,)``.
+        - ``aux_data_names`` with shape ``(A,)`` or ``(1, A)``. One selected
+          column must be named ``"num_taxa"``; it is used to build masks.
 
+    Public attributes used by training include ``train_dataset``,
+    ``val_dataset``, ``phy_width`` (``max_tips``), ``aux_width``,
+    ``ntax_cidx``, ``aux_colnames``, fitted ``phy_normalizer`` and
+    ``aux_normalizer``, plus train/validation shape metadata.
+    """
+
+    def __init__(
+        self,
+        hdf5_file: str,
+        prop_train: float = 0.85,
+        num_channels: int = 2,
+        char_data_type: str = "categorical",
+        num_chars: int = 0,
+        seed: Optional[int] = None,
+        max_tips: int = 1000,
+        num_subset: Optional[Union[int, str]] = None,
+        which_aux: Union[str, List[str]] = "all",
+    ):
+        """Create data splits, fit normalizers, and build lazy datasets.
 
         Args:
-            phy_data (torch.Tensor): _description_
-            aux_data (torch.Tensor): _description_
-            prop_train (float): _description_
-            num_channels (int): _description_
-            char_data_type (str, optional): _description_. Defaults to "categorical".
-            num_tips (Optional[int], optional): _description_. Defaults to None.
+            hdf5_file: Path to a Phyddle-style HDF5 file containing
+                ``phy_data``, ``aux_data``, and ``aux_data_names``.
+            prop_train: Fraction of the selected rows assigned to training.
+                The validation split receives the remainder.
+            num_channels: Number of structured channels to keep from
+                ``phy_data``. If the file has more channels, channels after this
+                count are ignored.
+            char_data_type: Structured-data normalization mode. Use
+                ``"continuous"`` for ``utils.PositiveStandardScaler`` or
+                ``"categorical"`` for ``utils.StandardScalerPhyCategorical``.
+            num_chars: Number of trailing structured channels treated as
+                categorical character channels when ``char_data_type`` is
+                ``"categorical"``.
+            seed: Random seed passed to the train/validation split and to the
+                PyTorch ``DataLoader`` generator.
+            max_tips: Structured matrix width. ``phy_data.shape[1]`` must be an
+                integer multiple of this value.
+            num_subset: Number of initial rows from the HDF5 file to consider,
+                or ``None``/``"all"`` to use all rows.
+            which_aux: ``"all"`` or an ordered list of auxiliary column names to
+                keep. The selected columns must include ``"num_taxa"``.
 
-        Raises:
-            ValueError: _description_
+        Returns:
+            None. The constructed object exposes datasets, normalizers, and
+            shape metadata as attributes.
         """
-        if device == "auto":
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        else:
-            self.device = device
-        
-        self.seed = seed
-        self.torch_g = None
-        self.seed = seed 
-        if self.seed is not None:
-            # self.np_rng = np.random.default_rng(self.seed)
-            self.torch_g = torch.Generator().manual_seed(self.seed)
-
-
-        self.num_channels   = num_channels
+        self.hdf5_file = hdf5_file
+        self.prop_train = float(prop_train)
+        self.num_channels = int(num_channels)
         self.char_data_type = char_data_type
-        self.num_chars      = num_chars
-        self.prop_train     = prop_train
+        self.num_chars = int(num_chars)
+        self.seed = seed
+        self.max_tips = int(max_tips)
+        self.phy_width = self.max_tips
+        self.torch_g = torch.Generator().manual_seed(seed) if seed is not None else None
 
-        if self.char_data_type == "categorical" and (self.num_chars == 0 or self.num_channels <= 2):
-            print("Warning: char_data_type is categorical but num_chars == 0 or num_channels <= 2. "
-            "Setting char_data_type to continuous.")
-            self.char_data_type = "continuous"
+        with h5py.File(hdf5_file, "r") as h5:
+            rows = np.arange(_nrows(num_subset, h5["phy_data"].shape[0]), dtype=np.int64)
+            aux_names = _decode_names(h5["aux_data_names"][...])
+            self.aux_colnames, aux_indices = _select_aux(aux_names, which_aux)
+            self.ntax_cidx = _num_taxa_index(self.aux_colnames)
+            num_tips_aux_index = int(aux_indices[self.ntax_cidx])
 
-        # check that num_taxa is present in aux_colnames: if not return error
-        if (b"num_taxa" not in aux_colnames) and ("num_taxa" not in aux_colnames):
-            raise ValueError("\"num_taxa\" must be in the aux_data. It is used for masking and " + 
-                             "training to predict correct tree size.\n" +
-                             "Use utils.get_num_tips to get the number of taxa per tree from the tree data. "+
-                             "Add \"num_taxa\" to the aux_colnames list and the num_taxa data to the corresponding " +
-                             "column in aux_data.")
-        
+            train_idx, val_idx = _split_train_val(rows, self.prop_train, seed)
 
-        # prepare phy_data and aux_data for splitting into train and val sets  
-        self.max_tips = int(phy_data.shape[1] / num_channels)
-        self.phy_data = phy_data.numpy() # TODO: This is dumb, see above TODO
-        self.aux_data = aux_data.numpy()
-        flat_phy_width = self.phy_data.shape[1]
+            train_phy = _read_phy(h5, train_idx, self.num_channels, self.max_tips)
+            train_aux = _read_aux(h5, train_idx, aux_indices)
+            self._fit_normalizers(train_phy, train_aux)
 
-        # num_tips is needed for masking (is  a part of aux when computing loss)
-        self.ntax_cidx = np.where(np.isin(aux_colnames, [b'num_taxa', 'num_taxa']))[0][0]
-        self.num_tips = aux_data[:, self.ntax_cidx]
+        self.aux_width = len(aux_indices)
+        self.train_phy_shape = (len(train_idx), self.num_channels * self.max_tips)
+        self.val_phy_shape = (len(val_idx), self.num_channels * self.max_tips)
+        self.train_aux_shape = (len(train_idx), self.aux_width)
+        self.val_aux_shape = (len(val_idx), self.aux_width)
 
-        # split data 
-        # note, num_tips is NOT output by the DataLoader's __getitem__(),
-        # it is used to make mask tensors which are output by __getitem__().
-        num_train = int(self.prop_train * self.phy_data.shape[0])
-        (train_phy_data, val_phy_data,
-         train_aux_data, val_aux_data,
-         train_num_tips, val_num_tips) = train_test_split(self.phy_data, self.aux_data, self.num_tips, 
-                                                          train_size = num_train, shuffle=True,
-                                                          random_state = self.seed)
+        dataset_args = dict(
+            hdf5_file=hdf5_file,
+            phy_normalizer=self.phy_normalizer,
+            aux_normalizer=self.aux_normalizer,
+            max_tips=self.max_tips,
+            num_channels=self.num_channels,
+            aux_indices=aux_indices,
+            num_tips_aux_index=num_tips_aux_index,
+        )
+        self.train_dataset = TreeDataSet(indices=train_idx, **dataset_args)
+        self.val_dataset   = TreeDataSet(indices=val_idx, **dataset_args)
 
-        # normalize train data
+    def _fit_normalizers(self, phy, aux):
         if self.char_data_type == "continuous":
-            self.phy_ss = utils.PositiveStandardScaler()
+            self.phy_normalizer = utils.PositiveStandardScaler().fit(phy)
         elif self.char_data_type == "categorical":
-            self.phy_ss = utils.StandardScalerPhyCategorical(self.num_chars, 
-                                                             self.num_channels, self.max_tips)
+            self.phy_normalizer = utils.StandardScalerPhyCategorical(
+                self.num_chars, self.num_channels, self.max_tips
+            ).fit(phy)
         else:
             raise ValueError("char_data_type must be 'continuous' or 'categorical'")
-        self.aux_ss = pp.StandardScaler()
-        
-        self.phy_normalizer = self.phy_ss.fit(train_phy_data)
-        self.aux_normalizer = self.aux_ss.fit(train_aux_data)
-        self.norm_train_phy_data = self.phy_normalizer.transform(train_phy_data)
-        self.norm_train_aux_data = self.aux_normalizer.transform(train_aux_data)
-        self.norm_val_phy_data   = self.phy_normalizer.transform(val_phy_data)
-        self.norm_val_aux_data   = self.aux_normalizer.transform(val_aux_data)
-
-        # reshape phy data to (num examples, num channels, num tips)
-        # (num examples, num channels x num tips) -> (num examples, num channels, num tips)
-        assert(train_phy_data.shape[1] % num_channels == 0)
-        self.norm_train_phy_data = self.norm_train_phy_data.reshape((self.norm_train_phy_data.shape[0], 
-                                                        num_channels, 
-                                                        int(self.norm_train_phy_data.shape[1]/num_channels)),
-                                                        order = "F")
-        self.norm_val_phy_data   = self.norm_val_phy_data.reshape((self.norm_val_phy_data.shape[0], 
-                                                        num_channels, 
-                                                        int(self.norm_val_phy_data.shape[1]/num_channels)),
-                                                        order = "F")
-        # TODO: not the best
-        self.phy_width = self.norm_train_phy_data.shape[2]
-        self.aux_width = self.norm_train_aux_data.shape[1]
-
-        # convert to torch.Tensors
-        self.norm_train_phy_data = torch.tensor(self.norm_train_phy_data, dtype=torch.float32, device=self.device)
-        self.norm_train_aux_data = torch.tensor(self.norm_train_aux_data, dtype=torch.float32, device=self.device)
-        self.norm_val_phy_data   = torch.tensor(self.norm_val_phy_data, dtype=torch.float32, device=self.device)
-        self.norm_val_aux_data   = torch.tensor(self.norm_val_aux_data, dtype=torch.float32, device=self.device)
-
-        # create Dataset objects 
-        self.train_dataset = TreeDataSet(self.norm_train_phy_data, self.norm_train_aux_data, train_num_tips)
-        self.val_dataset   = TreeDataSet(self.norm_val_phy_data,   self.norm_val_aux_data,   val_num_tips)
-
+        self.aux_normalizer = pp.StandardScaler().fit(aux)
 
     def get_datasets(self) -> Tuple[Dataset, Dataset]:
+        """Return the training and validation datasets.
+
+        Returns:
+            Tuple ``(train_dataset, val_dataset)`` where each item is a
+            ``TreeDataSet``. Dataset samples are ``(phy, aux, mask)`` tensors
+            with shapes ``(num_channels, max_tips)``, ``(aux_width,)``, and
+            ``(num_channels, max_tips)`` respectively.
+        """
         return self.train_dataset, self.val_dataset
 
-    def get_normalizers(self) -> Tuple[sklearn.preprocessing.StandardScaler, 
-                                       sklearn.preprocessing.StandardScaler]:
-        return self.phy_normalizer, self.aux_normalizer
-    
-    def save_normalizers(self, file_prefix):
-        joblib.dump(self.phy_normalizer, file_prefix + ".phy_normalizer.pkl")
-        joblib.dump(self.aux_normalizer, file_prefix + ".aux_normalizer.pkl")
-    
-    def get_dataloaders(self, 
-                        batch_size  = 32, 
-                        shuffle     = True, 
-                        num_workers = 0) -> Tuple[DataLoader, DataLoader]:
-        # drop last batch if too small
-        drop_last = True if (len(self.train_dataset) % batch_size) < 32 else False
-        
-        # data loaders
-        self.train_dataloader = DataLoader(self.train_dataset, 
-                                           batch_size   = batch_size, 
-                                           shuffle      = shuffle, 
-                                           num_workers  = num_workers,
-                                           drop_last    = drop_last,
-                                           generator    = self.torch_g)
-        self.val_dataloader   = DataLoader(self.val_dataset, 
-                                           batch_size   = batch_size,
-                                           generator    = self.torch_g)
-        
-        return self.train_dataloader, self.val_dataloader
+    def get_normalizers(self):
+        """Return the fitted structured and auxiliary normalizers.
 
-
-
-
-# these classes work with datasets output from the Format step in Phyddle
-class TreeDataSet(Dataset):
-    
-    def __init__(self, phy_features: torch.Tensor, 
-                 aux_features: torch.Tensor, 
-                 num_tips: Optional[int] = None):
+        Returns:
+            Tuple ``(phy_normalizer, aux_normalizer)``. ``phy_normalizer`` is a
+            sklearn-like transformer fitted on flattened training ``phy_data``
+            with shape ``(N_train, num_channels * max_tips)``.
+            ``aux_normalizer`` is a ``sklearn.preprocessing.StandardScaler``
+            fitted on training auxiliary data with shape
+            ``(N_train, aux_width)``.
         """
-        If num_tips is provided, a mask is output otherwise mask is None.
-        
+        return self.phy_normalizer, self.aux_normalizer
 
+    def get_dataloaders(self, batch_size=32, shuffle=True, num_workers=0) -> Tuple[DataLoader, DataLoader]:
+        """Build PyTorch dataloaders for the train and validation datasets.
 
         Args:
-            phy_features (torch.Tensor): _description_
-            aux_features (torch.Tensor): _description_
-            num_tips (Optional[int], optional): _description_. Defaults to None.
+            batch_size: Number of samples per batch.
+            shuffle: Whether to shuffle the training dataset. Validation is not
+                shuffled.
+            num_workers: Number of PyTorch worker processes. Each worker opens
+                its own HDF5 handle lazily through ``TreeDataSet``.
 
-        Raises:
-            ValueError: _description_
+        Returns:
+            Tuple ``(train_dataloader, val_dataloader)``. Batches yield
+            ``(phy, aux, mask)`` where ``phy`` has shape
+            ``(B, num_channels, max_tips)``, ``aux`` has shape
+            ``(B, aux_width)``, and ``mask`` has shape
+            ``(B, num_channels, max_tips)``.
         """
+        drop_last = (len(self.train_dataset) % batch_size) < 32
+        self.train_dataloader = DataLoader(
+            self.train_dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers,
+            drop_last=drop_last,
+            generator=self.torch_g,
+        )
+        self.val_dataloader = DataLoader(
+            self.val_dataset,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            generator=self.torch_g,
+        )
+        return self.train_dataloader, self.val_dataloader
 
+class TreeDataSet(Dataset):
+    """Lazy HDF5-backed PyTorch dataset for normalized tree samples.
+
+    ``TreeDataSet`` stores row indices and fitted normalizers.
+    Each worker process opens its own read-only HDF5 handle on
+    first access. Each sample is read from disk, channel-selected, normalized,
+    reshaped, and returned with a boolean mask derived from the raw
+    ``num_taxa`` auxiliary column.
+    """
+
+    def __init__(
+        self,
+        hdf5_file: str,
+        indices,
+        phy_normalizer,
+        aux_normalizer,
+        max_tips: int,
+        num_channels: int,
+        aux_indices,
+        num_tips_aux_index: int,
+    ):
+        """Create a lazy dataset view over selected HDF5 rows.
+
+        Args:
+            hdf5_file: Path to an HDF5 file containing ``phy_data`` and
+                ``aux_data``.
+            indices: One-dimensional sequence of integer row indices into the
+                HDF5 datasets. Dataset index ``i`` maps to HDF5 row
+                ``indices[i]``.
+            phy_normalizer: Fitted sklearn-like transformer for flattened
+                structured rows with shape ``(1, num_channels * max_tips)``.
+            aux_normalizer: Fitted sklearn-like transformer for selected
+                auxiliary rows with shape ``(1, aux_width)``.
+            max_tips: Structured matrix width before padding wiht zeros.
+            num_channels: Number of structured channels to read from
+                ``phy_data``.
+            aux_indices: One-dimensional sequence of auxiliary column indices
+                to return, in output order.
+            num_tips_aux_index: Column index in raw ``aux_data`` containing
+                ``num_taxa``. Used to build the output mask.
+
+        Returns:
+            None.
+        """
         super().__init__()
-        self.phy_features = phy_features
-        self.aux_features = aux_features
-        self.length = self.phy_features.shape[0]
-        self.num_tips = num_tips
-
-        # Basic shape checks
-        N = self.phy_features.shape[0]
-        if self.aux_features is not None and self.aux_features.shape[0] != N:
-            raise ValueError("aux_features and phy_features must have the same N (batch dimension)")
-
-        if num_tips is None:
-            self.mask = None
-        else:
-            # create mask for phy features  
-            num_tips = np.array(num_tips, dtype = int).flatten()
-            mask = np.zeros(self.phy_features.shape, dtype = bool)
-            for i in range(self.phy_features.shape[0]):
-                mask[i, :, :num_tips[i]] = True                
-            self.mask = torch.tensor(mask, dtype=torch.bool, device=phy_features.device)
-
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-        if self.mask is not None:
-            return self.phy_features[index], self.aux_features[index], self.mask[index]
-        else:
-            return self.phy_features[index], self.aux_features[index]
-    
-    def __len__(self):
-        return self.length 
-    
-
-
-
-
-###########
-# testing #
-###########
-
-if __name__ == "__main__":
-    import sys
-    import time
-    with h5py.File(sys.argv[1], "r") as f:
-        print("keys in file: ", list(f.keys()))
         
-    my_tree_data = TreeDataSet(sys.argv[1])
-    rand_idx = np.random.randint(0, 100)
-    print(my_tree_data.__getitem__(rand_idx))
-    print(my_tree_data.__len__())
-    time.sleep(20)
+        self.hdf5_file = hdf5_file
+        self.indices = np.asarray(indices, dtype=np.int64)
+        self.length = len(self.indices)
+        self.phy_normalizer = phy_normalizer
+        self.aux_normalizer = aux_normalizer
+        self.max_tips = int(max_tips)
+        self.num_channels = int(num_channels)
+        self.aux_indices = np.asarray(aux_indices, dtype=np.int64)
+        self.num_tips_aux_index = int(num_tips_aux_index)
+        self._h5 = None
+        self._h5_pid = None
+
+    def __len__(self):
+        """Return the number of samples in this dataset view.
+
+        Returns:
+            Integer number of row indices stored in the dataset.
+        """
+        return self.length
+
+    def __getitem__(self, index):
+        """Read, normalize, and return one sample.
+
+        Args:
+            index: Integer dataset-relative index in ``[0, len(self))``.
+
+        Returns:
+            Tuple ``(phy, aux, mask)``:
+                - ``phy``: ``torch.float32`` tensor with shape
+                  ``(num_channels, max_tips)``.
+                - ``aux``: ``torch.float32`` tensor with shape
+                  ``(aux_width,)``.
+                - ``mask``: ``torch.bool`` tensor with shape
+                  ``(num_channels, max_tips)``. Entries before ``num_taxa`` are
+                  ``True`` and padded positions are ``False``.
+        """
+        h5 = self._file()
+        row = int(self.indices[index])
+
+        phy = _select_channels(h5["phy_data"][row], self.num_channels, self.max_tips)
+        aux_raw = _as_1d(h5["aux_data"][row]).astype(np.float32, copy=False)
+        aux = aux_raw[self.aux_indices]
+
+        phy = self.phy_normalizer.transform(phy.reshape(1, -1))[0]
+        aux = self.aux_normalizer.transform(aux.reshape(1, -1))[0]
+        phy = phy.reshape((self.num_channels, self.max_tips), order="F")
+
+        mask = np.zeros((self.num_channels, self.max_tips), dtype=bool)
+        mask[:, : int(aux_raw[self.num_tips_aux_index])] = True
+
+        return (
+            torch.as_tensor(phy, dtype=torch.float32),
+            torch.as_tensor(aux, dtype=torch.float32),
+            torch.as_tensor(mask, dtype=torch.bool),
+        )
+
+    def _file(self):
+        pid = os.getpid()
+        if self._h5 is None or self._h5_pid != pid:
+            if self._h5 is not None:
+                self._h5.close()
+            self._h5 = h5py.File(self.hdf5_file, "r")
+            self._h5_pid = pid
+        return self._h5
+
+    def close(self):
+        """Close this process's cached HDF5 file handle, if one is open.
+
+        Returns:
+            None.
+        """
+        if self._h5 is not None:
+            self._h5.close()
+            self._h5 = None
+            self._h5_pid = None
+
+    def __getstate__(self):
+        """Return pickle state without an open HDF5 handle.
+
+        PyTorch may pickle datasets when using multiprocessing start methods
+        such as ``spawn``. HDF5 handles are process-local and not pickle-safe,
+        so the handle fields are cleared from the serialized state.
+
+        Returns:
+            Dictionary suitable for pickling.
+        """
+        state = self.__dict__.copy()
+        state["_h5"] = None
+        state["_h5_pid"] = None
+        return state
+
+def _as_1d(x):
+    return np.asarray(x).reshape(-1)
+
+
+def _as_2d(x):
+    x = np.asarray(x)
+    return x.reshape((x.shape[0], 1)) if x.ndim == 1 else x
+
+
+def _names_as_str(names):
+    return np.asarray([x.decode("utf-8") if isinstance(x, bytes) else str(x) for x in np.asarray(names)])
+
+
+def _decode_names(names):
+    names = np.asarray(names)
+    return _names_as_str(names[0] if names.ndim > 1 else names)
+
+
+def _select_aux(all_names, which_aux):
+    if which_aux == "all":
+        idx = np.arange(len(all_names), dtype=np.int64)
+        return all_names, idx
+
+    idx = []
+    for name in which_aux:
+        hits = np.where(name == all_names)[0]
+        if len(hits) == 0:
+            raise ValueError(f"Aux column name not found in data set: {name}")
+        idx.append(hits[0])
+    idx = np.asarray(idx, dtype=np.int64)
+    return all_names[idx], idx
+
+
+def _num_taxa_index(names):
+    hits = np.where(_names_as_str(names) == "num_taxa")[0]
+    if len(hits) == 0:
+        raise ValueError('"num_taxa" must be in aux_data.')
+    return int(hits[0])
+
+
+def _nrows(num_subset, total_rows):
+    if num_subset is None or num_subset == "all":
+        return int(total_rows)
+    return int(num_subset)
+
+
+def _split_train_val(rows, prop_train, seed):
+    return train_test_split(
+        rows,
+        train_size=int(float(prop_train) * len(rows)),
+        shuffle=True,
+        random_state=seed,
+    )
+
+
+def _read_rows(dataset, indices):
+    indices = np.asarray(indices, dtype=np.int64)
+    order = np.argsort(indices)
+    rows = np.asarray(dataset[indices[order], ...], dtype=np.float32)
+    undo = np.empty_like(order)
+    undo[order] = np.arange(len(order))
+    return rows[undo]
+
+
+def _read_phy(h5, indices, num_channels, max_tips):
+    return _select_channels(_read_rows(h5["phy_data"], indices), num_channels, max_tips)
+
+
+def _read_aux(h5, indices, aux_indices):
+    aux = _as_2d(_read_rows(h5["aux_data"], indices))
+    return aux[:, aux_indices].astype(np.float32, copy=False)
+
+
+def _select_channels(phy, num_channels, max_tips):
+    phy = np.asarray(phy, dtype=np.float32)
+    squeeze = phy.ndim == 1
+    if squeeze:
+        phy = phy.reshape(1, -1)
+    phy = phy.reshape((phy.shape[0], phy.shape[1] // max_tips, max_tips), order="F")
+    phy = phy[:, :num_channels, :].reshape((phy.shape[0], -1), order="F")
+    return phy[0] if squeeze else phy

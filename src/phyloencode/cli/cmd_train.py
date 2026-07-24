@@ -5,12 +5,7 @@ import torch
 from torch.optim import AdamW
 import numpy  as np
 import pandas as pd
-import phyloencode as ph
-import h5py
 import argparse
-from sklearn.model_selection import train_test_split
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
 
 from phyloencode.PhyloAutoencoder   import PhyloAutoencoder
 from phyloencode.PhyloAEModel       import AECNN
@@ -49,78 +44,27 @@ def main():
     nc          = settings["num_channels"]
     num_test    = 5000
 
-    # Set seeds    
-    if settings['seed'] is None:
-        settings['seed'] = np.random.randint(0, 2**32 - 1)   
-    seed = settings['seed']
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    print("seed: ", seed)
-    if settings['testing']:
-        # torch does some random stuff for more efficient training. 
-        # causes slight differences despite same seed. Use below for exact.
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-
-
-    # get formated tree data
-    with h5py.File(data_fn, "r") as f:
-
-        # TODO: Check a potential discrepency in num_taxa with phyddle --format output
-        # TODO: maybe move some of this to backend: the Data object from DataProcessors 
-        # should maybe handle all this
-        # TODO: Eventually dataloaders need to load from disk, dont keep data in memory: load -> normalizer -> save
-        if ns is None:
-            phy_data_np = np.array(f['phy_data'][...], dtype = np.float32)
-            # aux_data = torch.tensor(f['aux_data'][...], dtype = torch.float32)
-            aux_data = np.array(f['aux_data'][...], dtype = np.float32)
-        else:            
-            phy_data_np = np.array(f['phy_data'][0:ns,...], dtype = np.float32)
-            # aux_data = torch.tensor(f['aux_data'][0:ns,...], dtype = torch.float32)
-            aux_data = np.array(f['aux_data'][0:ns,...], dtype = np.float32)
-
-
-        # extract the specified subset of channels ("num_channels")
-        phy_data = get_channels(phy_data_np, nc, mt)
-
-        # aux data must contain at least one column, "num_taxa"
-        if len(aux_data.shape) != 2: # i.e. is an array but should be a matrix with 1 column
-            aux_data = aux_data.reshape((aux_data.shape[0], 1))
-
-        # Set aux_data to the set of columns the user wants to train on (set by --which_aux)
-        full_aux_colnames = np.array([x.decode("utf-8") for x in f['aux_data_names'][...][0]])
-        aux_data_names, aux_data = utils.get_aux_data(full_aux_colnames, aux_data, settings['which_aux'])
-
-        # split off test data
-        (phy_data, test_phy_data, 
-         aux_data, test_aux_data) = train_test_split(phy_data, aux_data, test_size=num_test, 
-                                                     shuffle=True, random_state=seed)
-
-    num_train = int(settings["proportion_train"] * phy_data.shape[0])
-    num_val = phy_data.shape[0] - num_train
-    settings["train_phy_shape"] = (num_train, phy_data.shape[1])
-    settings["val_phy_shape"] = (num_val, phy_data.shape[1])
-    settings["test_phy_shape"] = tuple(test_phy_data.shape)
-    settings["train_aux_shape"] = (num_train, aux_data.shape[1])
-    settings["val_aux_shape"] = (num_val, aux_data.shape[1])
-    settings["test_aux_shape"] = tuple(test_aux_data.shape)
-    
     ###################################
     # Set up network training objects #
     ###################################
-    # create Data container
-    ae_data     = AEData( 
-                        phy_data         = phy_data,
-                        aux_data         = aux_data,
-                        aux_colnames     = aux_data_names,
-                        prop_train       = settings['proportion_train'],  
-                        num_channels     = settings["num_channels"], 
+    # AEData processes and holds the datasets, normalizers, dimensions, and column metadata.
+    # It splits HDF5 rows, fits normalizers on training data, and builds lazy datasets.
+    ae_data     = AEData(
+                        hdf5_file        = args.trn_data,
+                        prop_train       = settings['proportion_train'],
+                        num_channels     = settings["num_channels"],
+                        char_data_type   = settings["char_type"],
                         num_chars        = settings["num_chars"],
                         seed             = settings["seed"],
-                        device           = settings["device"]
+                        max_tips         = settings["max_tips"],
+                        num_subset       = settings["num_subset"],
+                        which_aux        = settings["which_aux"]
                         )
+    aux_data_names = ae_data.aux_colnames
+    settings["train_phy_shape"] = ae_data.train_phy_shape
+    settings["val_phy_shape"]   = ae_data.val_phy_shape
+    settings["train_aux_shape"] = ae_data.train_aux_shape
+    settings["val_aux_shape"]   = ae_data.val_aux_shape
     
     trn_loader, val_loader = ae_data.get_dataloaders(settings["batch_size"], shuffle = True, 
                                                     num_workers = settings["num_workers"])
@@ -395,38 +339,6 @@ def save_settings(settings, out_file):
     df = pd.DataFrame(df_val, index=df_index, columns=None)
     df.to_csv(out_file, sep="\t", header = False)
     print("Settings saved to", out_file)
-
-# TODO: should belong to PhyloAutoencoder
-# def plot_gradient_norms(layer_grad_norms, out_file, plots_per_page = 4):
-
-#     laynorm = [z for z in layer_grad_norms.items()]
-#     n_plots = len(laynorm)
-#     n_pages = n_plots // 4 + ((n_plots % 4) > 0)
-#     with PdfPages(out_file) as pdf:
-#         for page in range(n_pages):
-#             fig, axes = plt.subplots(plots_per_page // 2, 2)
-#             axes = axes.flatten()
-#             for plot_i in range(plots_per_page):
-#                 idx = page * plots_per_page + plot_i
-#                 if idx >= n_plots:
-#                     axes.axis('off')
-#                     continue
-#                 axes[plot_i].plot(laynorm[idx][1])
-#                 axes[plot_i].set_title(laynorm[idx][0], size = 6.)
-#             fig.tight_layout()
-#             pdf.savefig(fig)
-#             plt.close(fig)
-
-
-def get_channels(phydata: np.ndarray, num_chans: int, max_tips: int) -> torch.Tensor:
-    # sometimes the number channels in the settings is less than the data.
-    # for example, if you want to ignore character data and just analyze trees
-    phydata = phydata.reshape((phydata.shape[0], phydata.shape[1] // max_tips, max_tips), order = "F")
-    phydata = phydata[:,0:num_chans,:] 
-    phydata = phydata.reshape((phydata.shape[0],-1), order = "F")
-    phydata = torch.tensor(phydata, dtype = torch.float32)
-    return phydata
-
 
 if __name__ == "__main__":
     main()
