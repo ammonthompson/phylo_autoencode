@@ -131,6 +131,10 @@ class AECNN(nn.Module):
         self.num_chars = num_chars
         self.aux_numtips_idx = aux_numtips_idx
         self.aux_data_names = aux_data_names
+        self.num_structured_input_channel = num_structured_input_channel
+        self.structured_input_width       = structured_input_width
+        self.unstructured_input_width     = unstructured_input_width
+        self.aux_inner_dim                = aux_inner_dim
 
         self.char_start_idx = num_structured_input_channel - self.num_chars
         
@@ -147,30 +151,7 @@ class AECNN(nn.Module):
             raise ValueError("stride, kernel  and out_channels arrays should have same length," + 
                              f" but got lengths {len(stride)}, {len(kernel)}, {len(out_channels)} respectively.")
 
-        # normalizers; sklearn.base.BaseEstimator
-        self.phy_normalizer = phy_normalizer
-        self.aux_normalizer = aux_normalizer
-
-        # for bounded num-tips layer in unstructured decoder (keep num tips within data bounds)
-        ntip_mu = self.aux_normalizer.mean_[aux_numtips_idx]
-        ntip_sd = self.aux_normalizer.scale_[aux_numtips_idx]
-        if ntip_sd == 0:
-            ntip_sd = 1.0
-        self.ntip_base = (2.0 - ntip_mu) / ntip_sd
-        self.ntip_scale = (structured_input_width - 2.0) / ntip_sd
-
-        # for cblv phy decoder sigmoid layer (or something else). Data range is in [0,1].
-        # transformed range is in [-mu/s, (1-mu)/s]
-        # find base and scale to in transformed data to guarentee inverse_transformed stays in bounds.
-        phy_mean = self.phy_normalizer.mean_.reshape((num_structured_input_channel - self.num_chars, 
-                                                                    structured_input_width), order = "F")
-        phy_sd   = self.phy_normalizer.std_.reshape((num_structured_input_channel - self.num_chars, 
-                                                                    structured_input_width), order = "F")
-
-        phy_lower_bound = torch.Tensor(-phy_mean / phy_sd).to(self.device)
-        phy_upper_bound = torch.Tensor((1 - phy_mean) / phy_sd).to(self.device)
-
-        self.phy_two_sided_ReLU = TwoSidedReLU(phy_lower_bound, phy_upper_bound)
+        self.set_normalizers(phy_normalizer, aux_normalizer)
 
 
         ######################################
@@ -186,12 +167,6 @@ class AECNN(nn.Module):
         self.latent_layer_type = latent_layer_type
         self.latent_layer_dim = latent_output_dim
         
-
-        # input dimensions
-        self.num_structured_input_channel = num_structured_input_channel
-        self.structured_input_width       = structured_input_width
-        self.unstructured_input_width     = unstructured_input_width
-        self.aux_inner_dim                = aux_inner_dim
 
         # some latent layer dimensions
         self.unstructured_latent_width = unstructured_latent_width
@@ -312,6 +287,7 @@ class AECNN(nn.Module):
 
         # Encode
         latent = self.encode(data[0], data[1])
+        
         # Decode
         structured_decoded_x, unstructured_decoded_x = self.decode(latent)
 
@@ -516,15 +492,28 @@ class AECNN(nn.Module):
         finally:
             self.train(is_training)
 
-    # def set_normalizers(self, phy_norm, aux_norm):
-    #     """Set the fitted normalizers used by the inference helpers.
+    def set_normalizers(self, phy_normalizer, aux_normalizer) -> None:
+        """Replace fitted normalizers and refresh normalization-dependent bounds."""
+        self.phy_normalizer = phy_normalizer
+        self.aux_normalizer = aux_normalizer
 
-    #     Args:
-    #         phy_norm: Structured-data normalizer (sklearn-like).
-    #         aux_norm: Auxiliary-data normalizer (sklearn-like).
-    #     """
-    #     self.phy_normalizer = phy_norm
-    #     self.aux_normalizer = aux_norm
+        ntip_sd = aux_normalizer.scale_[self.aux_numtips_idx]
+        if ntip_sd == 0:
+            ntip_sd = 1.0
+        self.ntip_base = (2.0 - aux_normalizer.mean_[self.aux_numtips_idx]) / ntip_sd
+        self.ntip_scale = (self.structured_input_width - 2.0) / ntip_sd
+
+        phy_shape = (
+            self.num_structured_input_channel - self.num_chars,
+            self.structured_input_width,
+        )
+        phy_mean = phy_normalizer.mean_.reshape(phy_shape, order="F")
+        phy_sd = phy_normalizer.std_.reshape(phy_shape, order="F")
+        device = self._runtime_device()
+        phy_lower_bound = torch.as_tensor(-phy_mean / phy_sd, dtype=torch.float32, device=device)
+        phy_upper_bound = torch.as_tensor((1 - phy_mean) / phy_sd, dtype=torch.float32, device=device)
+        self.phy_two_sided_ReLU = TwoSidedReLU(phy_lower_bound, phy_upper_bound)
+        self.phy_two_sided_ReLU.train(self.training)
 
     def get_config_dict(self) -> Dict[str, object]:
         """Return constructor kwargs to recreate this model's configuration."""
