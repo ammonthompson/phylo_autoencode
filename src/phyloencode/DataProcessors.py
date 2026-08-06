@@ -272,25 +272,33 @@ class TreeDataSet(Dataset):
                   ``(num_channels, max_tips)``. Entries before ``num_taxa`` are
                   ``True`` and padded positions are ``False``.
         """
+        return self.__getitems__([index])[0]
+
+    def __getitems__(self, indices):
+        """Read and normalize a batch while preserving its requested order."""
+        indices = np.asarray(indices, dtype=np.int64)
+        rows = self.indices[indices]
         h5 = self._file()
-        row = int(self.indices[index])
+        phy = _read_phy(h5, rows, self.num_channels, self.max_tips)
+        aux_raw = _as_2d(_read_rows(h5["aux_data"], rows))
+        aux = aux_raw[:, self.aux_indices].astype(np.float32, copy=False)
 
-        phy = _select_channels(h5["phy_data"][row], self.num_channels, self.max_tips)
-        aux_raw = _as_1d(h5["aux_data"][row]).astype(np.float32, copy=False)
-        aux = aux_raw[self.aux_indices]
-
-        phy = self.phy_normalizer.transform(phy.reshape(1, -1))[0]
-        aux = self.aux_normalizer.transform(aux.reshape(1, -1))[0]
-        phy = phy.reshape((self.num_channels, self.max_tips), order="F")
-
-        mask = np.zeros((self.num_channels, self.max_tips), dtype=bool)
-        mask[:, : int(aux_raw[self.num_tips_aux_index])] = True
-
-        return (
-            torch.as_tensor(phy, dtype=torch.float32),
-            torch.as_tensor(aux, dtype=torch.float32),
-            torch.as_tensor(mask, dtype=torch.bool),
+        phy = self.phy_normalizer.transform(phy)
+        aux = self.aux_normalizer.transform(aux)
+        phy = phy.reshape(
+            (len(indices), self.num_channels, self.max_tips), order="F"
         )
+
+        num_tips = aux_raw[:, self.num_tips_aux_index].astype(np.int64)
+        mask = np.arange(self.max_tips)[None, None, :] < num_tips[:, None, None]
+        mask = np.broadcast_to(
+            mask, (len(indices), self.num_channels, self.max_tips)
+        ).copy()
+
+        phy = torch.as_tensor(phy, dtype=torch.float32)
+        aux = torch.as_tensor(aux, dtype=torch.float32)
+        mask = torch.as_tensor(mask, dtype=torch.bool)
+        return list(zip(phy, aux, mask))
 
     def _file(self):
         pid = os.getpid()
@@ -392,11 +400,9 @@ def _split_train_val(rows, prop_train, seed):
 
 def _read_rows(dataset, indices):
     indices = np.asarray(indices, dtype=np.int64)
-    order = np.argsort(indices)
-    rows = np.asarray(dataset[indices[order], ...], dtype=np.float32)
-    undo = np.empty_like(order)
-    undo[order] = np.arange(len(order))
-    return rows[undo]
+    unique_indices, inverse = np.unique(indices, return_inverse=True)
+    rows = np.asarray(dataset[unique_indices, ...], dtype=np.float32)
+    return rows[inverse]
 
 
 def _read_phy(h5, indices, num_channels, max_tips):
