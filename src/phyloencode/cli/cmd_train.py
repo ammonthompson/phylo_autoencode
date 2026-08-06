@@ -18,7 +18,7 @@ import phyloencode.utils as utils
 def main():
 
     args = _parse_arguments()
-    settings, track_grad_overridden = _process_settings(args)
+    settings, checkpoint_overrides = _process_settings(args)
 
     ###################################
     # Set up network training objects #
@@ -51,11 +51,10 @@ def main():
     map_location = None if settings["device"] == "auto" else settings["device"]
 
     if settings["resume_from_checkpoint"] is not None:
-        # TODO: if this is using the same outfile path prefix, this could overwrite exisiting checkpoints later than this one.
         tree_ae = PhyloAutoencoder.load_checkpoint(
                         settings["resume_from_checkpoint"],
                         map_location = map_location,
-                        track_grad = settings["track_grad"] if track_grad_overridden else None
+                        **checkpoint_overrides
                         )
     else:
         # create model
@@ -119,7 +118,6 @@ def main():
                             model           = ae_model, 
                             optimizer       = opt, 
                             lr_scheduler    = lr_schedlr,
-                            batch_size      = settings["batch_size"],
                             train_loss      = train_loss,
                             val_loss        = val_loss,
                             device          = settings["device"],
@@ -128,9 +126,10 @@ def main():
                             checkpt_file_prefix = settings["out_prefix"]
                             )
 
-    tree_ae.checkpoints = settings["checkpoints"]
-    tree_ae.checkpt_file_prefix = settings["out_prefix"]
-    settings["track_grad"] = tree_ae.track_grad
+    if settings["resume_from_checkpoint"] is not None:
+        settings["track_grad"] = tree_ae.track_grad
+        settings["checkpoints"] = tree_ae.checkpoints
+        settings["out_prefix"] = tree_ae.checkpt_file_prefix
     _save_settings(settings, settings['out_prefix'] + "_settings.csv")
     tree_ae.model.write_network_to_file(settings["out_prefix"] + ".network.txt")
     # ae_model = tree_ae.model
@@ -141,7 +140,8 @@ def main():
     # with data from ae_data.       #
     #################################
     tree_ae.set_data_loaders(train_loader=trn_loader, val_loader=val_loader) 
-    tree_ae.train(num_epochs = settings["num_epochs"], seed = settings["seed"])
+    train_seed = None if settings["resume_from_checkpoint"] is not None else settings["seed"]
+    tree_ae.train(num_epochs = settings["num_epochs"], seed = train_seed)
 
     if tree_ae.track_grad:
         tree_ae.plot_gradient_norms(tree_ae.mean_layer_grad_norm, 
@@ -160,16 +160,22 @@ def _process_settings(args):
     # Training settings: Architecture, num epochs, batch size, etc.
     # Override settings provided in config file if provided
     settings = _get_default_settings()
-    track_grad_overridden = False
+    checkpoint_override_names = {
+        "track_grad": "track_grad",
+        "checkpoints": "checkpoints",
+        "out_prefix": "checkpt_file_prefix",
+    }
+    overridden_settings = set()
     if args.config:
         config = utils.read_config(args.config)
         _update_settings_from_config(settings = settings, config = config)
-        track_grad_overridden = "track_grad" in config
+        overridden_settings.update(config.keys() & checkpoint_override_names.keys())
     # override settings provided as command line arguments
     _update_settings_from_command_line(settings = settings, args = args)
     settings["which_aux"] = _normalize_which_aux(settings["which_aux"])
-    if args.track_grad is not None:
-        track_grad_overridden = True
+    for setting_name in checkpoint_override_names:
+        if getattr(args, setting_name) is not None:
+            overridden_settings.add(setting_name)
 
     if settings["resume_from_checkpoint"] is not None and settings["pretrained_model"] is not None:
         raise ValueError("Cannot specify both --resume_from_checkpoint and --pretrained_model.")
@@ -178,7 +184,11 @@ def _process_settings(args):
 
     _set_seed(settings)
 
-    return settings, track_grad_overridden
+    checkpoint_overrides = {
+        checkpoint_override_names[name]: settings[name]
+        for name in overridden_settings
+    }
+    return settings, checkpoint_overrides
 
 def _parse_arguments():
     parser = argparse.ArgumentParser()

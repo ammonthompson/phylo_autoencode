@@ -16,8 +16,11 @@ from phyloencode.PhyloAEModel import AECNN
 import phyloencode.utils as utils
 import time
 import random
-# import os
+from pathlib import Path
 from typing import List, Dict, Tuple, Optional, Union
+
+
+_NO_CHECKPOINT_OVERRIDE = object()
 
 
 class PhyloAutoencoder(object):
@@ -58,7 +61,6 @@ class PhyloAutoencoder(object):
                  optimizer : torch.optim.Optimizer, 
                  *, 
                  lr_scheduler : Optional[torch.optim.lr_scheduler.LRScheduler] = None, 
-                 batch_size : Optional[int] = 128, 
                  train_loss : Optional[PhyLoss] = None, 
                  val_loss : Optional[PhyLoss] = None, 
                  seed : Optional[int] = None, 
@@ -74,9 +76,6 @@ class PhyloAutoencoder(object):
                 with ``model.parameters()``.
             lr_scheduler: Optional learning-rate scheduler with a ``.step()`` method.
                 If provided, it is stepped once per training batch (not per epoch).
-            batch_size (int, optional): Expected batch size. This is used for a few derived
-                shapes (e.g. ``latent_shape``) and does not enforce DataLoader behavior.
-                Defaults to 128.
             train_loss: Loss object/callable used during training. It must be callable as
                 ``train_loss(pred, true, segmented_mask)`` and return a scalar tensor used for
                 backprop. ``segmented_mask`` is a ``(tree_mask, char_mask)`` tuple (each element
@@ -96,11 +95,7 @@ class PhyloAutoencoder(object):
         
         # TODO: define the model object better (autoencoder ...)
         # TODO: run checks that the model has the expected attributes
-        # TODO: add track_grad to parameters
         # TODO: add checks that the loss objects are correct (contain certain fields and methods)
-        # TODO: fix checkpoints so starting w/pre-trained network can be used easilly.
-        # TODO: Batch_size is a data loader attribute. Prob dont need for this constructor.
-        # TODO: finish implementing checkpoint saves. 
 
         if device == "auto":
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -111,15 +106,14 @@ class PhyloAutoencoder(object):
         # the Generator object is, as of 9/19/2025 only used for std_norm random variates in _mini_batch.
 
         self.torch_g = None
-        self.seed = seed 
-        if self.seed is not None:
-            self.torch_g = torch.Generator(self.device).manual_seed(self.seed)
-            self.set_seed(self.seed)
+        self.seed = None
+        if seed is not None:
+            self.set_seed(seed)
 
-        self.batch_size   = batch_size
         self.epoch = 0
         self.train_loader = None
         self.val_loader   = None
+        self._pending_data_loader_rng_state = None
         self.model        = model
         self.model.to(self.device)
         self.optimizer = optimizer
@@ -136,8 +130,6 @@ class PhyloAutoencoder(object):
         self.char_type          = self.model.char_type
         self.phy_channels       = self.model.num_structured_input_channel
         self.num_tree_chans     = self.phy_channels - self.nchars
-        # TODO: # self.latent_shape is I think nolonger needed.
-        self.latent_shape       = (self.batch_size * 2, self.model.latent_outwidth) 
 
         self.train_loss = train_loss
         self.val_loss   = val_loss
@@ -165,24 +157,19 @@ class PhyloAutoencoder(object):
             ValueError: If training data has not been loaded.
             ValueError: If training loss has not been set.
         """
-        
 
         if self.train_loader is None:
             raise ValueError("Must load training data.")
         if self.train_loss is None:
             raise ValueError("Must load loss layer.")
 
-        # If both `seed` and `self.seed` are None, then the module-level RNG state governs
-        # all random number generation.
-        self.set_seed(seed if seed is not None else self.seed)
-
+        # A loaded checkpoint has already restored the RNG state. Only an explicit seed
+        # should replace that state here.
+        self.set_seed(seed)
         for epoch in range(self.epoch + 1, num_epochs):
             self.epoch = epoch #bookeeping
             epoch_time = time.time()
 
-            # target latent distribution sample
-            # self.std_norm = torch.randn(self.latent_shape, device=self.device, generator=self.torch_g) \
-            #     if self.model.latent_layer_type == "GAUSS" else None
             self.std_norm = None
 
 
@@ -191,6 +178,7 @@ class PhyloAutoencoder(object):
             self.train_loss.append_mean_batch_loss()
             # print training epoch mean losses to screen
             self.train_loss.print_epoch_losses(elapsed_time=time.time() - epoch_time)
+
 
             # perform mini batch on validation data
             if self.val_loader is not None and self.val_loss is not None:
@@ -245,10 +233,6 @@ class PhyloAutoencoder(object):
             phy_batch = phy_batch.to(self.device)
             aux_batch = aux_batch.to(self.device)
                
-            # target latent distribution sample
-            # self.std_norm = torch.randn(self.latent_shape, device=self.device, generator=self.torch_g) \
-            #     if self.model.latent_layer_type == "GAUSS" else None
-
             # perform SGD step for batch
             step_function(phy_batch, aux_batch, mask_batch, self.std_norm)
 
@@ -382,6 +366,10 @@ class PhyloAutoencoder(object):
             val_loader (torch.utils.data.DataLoader, optional): Validation data loader.
                 Defaults to None.
 
+        Notes:
+            When loading a checkpoint, saved generator states are applied here so the
+            next epoch uses the same sample order as uninterrupted training.
+
         Raises:
             TypeError: If either loader is not a ``torch.utils.data.DataLoader``.
         """
@@ -394,6 +382,65 @@ class PhyloAutoencoder(object):
 
         if self.val_loader is not None and not isinstance(self.val_loader, torch.utils.data.DataLoader):
             raise TypeError(f"val_loader must be a DataLoader, got {type(self.val_loader).__name__}.")
+
+        self._pending_data_loader_rng_state = self._restore_data_loader_rng_state(
+            self._pending_data_loader_rng_state
+        )
+
+    def _get_data_loader_rng_state(self):
+        """Return generator states without serializing the DataLoaders themselves."""
+        rng_state = dict(self._pending_data_loader_rng_state or {})
+        for name, data_loader in (
+                ("train", self.train_loader), ("validation", self.val_loader)):
+            if data_loader is None:
+                continue
+            sampler_generator = getattr(data_loader.sampler, "generator", None)
+            generator = (sampler_generator if sampler_generator is not None
+                         else data_loader.generator)
+            if generator is not None:
+                rng_state[name] = generator.get_state().clone()
+        return rng_state or None
+
+    def _restore_data_loader_rng_state(self, rng_state):
+        """Apply saved states and return any awaiting a DataLoader."""
+        if rng_state is None:
+            return None
+
+        pending_state = {}
+        restored_generators = {}
+        for name, data_loader in (
+                ("train", self.train_loader), ("validation", self.val_loader)):
+            if name not in rng_state:
+                continue
+            if data_loader is None:
+                pending_state[name] = rng_state[name]
+                continue
+            generators = [
+                data_loader.generator,
+                getattr(data_loader.sampler, "generator", None),
+            ]
+            generators = [generator for generator in generators
+                          if generator is not None]
+            if not generators:
+                raise ValueError(
+                    f"Cannot restore {name} DataLoader RNG state: "
+                    "the attached DataLoader has no generator."
+                )
+
+            saved_state = rng_state[name].cpu()
+            for generator in generators:
+                generator_id = id(generator)
+                if generator_id in restored_generators:
+                    if not torch.equal(restored_generators[generator_id], saved_state):
+                        raise ValueError(
+                            "Cannot restore distinct train and validation RNG states "
+                            "to a shared DataLoader generator."
+                        )
+                    continue
+
+                generator.set_state(saved_state)
+                restored_generators[generator_id] = saved_state
+        return pending_state or None
 
 
     def load_losses(self, train_loss, val_loss):
@@ -479,6 +526,7 @@ class PhyloAutoencoder(object):
             return  # use module-level RNGs as-is
 
         self.seed = seed
+        self.torch_g = torch.Generator(self.device).manual_seed(self.seed)
         random.seed(self.seed)
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
@@ -490,12 +538,19 @@ class PhyloAutoencoder(object):
     def save_checkpoint(self, filename):
         """Save a training checkpoint to disk.
 
-        The checkpoint includes the full training object state needed to resume.
+        DataLoader objects remain external, but their generator states are included
+        and applied when replacement loaders are attached after loading.
 
         Args:
             filename (str): Output path for ``torch.save(...)``.
         """
+        if Path(filename).exists():
+            raise FileExistsError(
+                f"Refusing to overwrite existing checkpoint: {filename}"
+            )
+
         checkpoint = {
+            'checkpoint_version': 3,
             'model': self.model,
             'seed': self.seed,
             'epoch': self.epoch,
@@ -503,14 +558,37 @@ class PhyloAutoencoder(object):
             'lr_scheduler': self.lr_sched,
             'train_loss': self.train_loss,
             'val_loss': self.val_loss,
+            'trainer_state': {
+                'device': self.device,
+                'checkpoints': self.checkpoints,
+                'checkpt_file_prefix': self.checkpt_file_prefix,
+                'track_grad': self.track_grad,
+                'batch_layer_grad_norm': self.batch_layer_grad_norm,
+                'mean_layer_grad_norm': self.mean_layer_grad_norm,
+                'best_model': self.best_model,
+            },
+            'rng_state': self._get_rng_state(),
+            'data_loader_rng_state': self._get_data_loader_rng_state(),
         }
         torch.save(checkpoint, filename)
 
     @classmethod
     def load_checkpoint(cls, filename, map_location : Optional[str] = "cpu",
-                        track_grad: bool = False) -> "PhyloAutoencoder":
-        """
-        Assumes the file is a checkpoint file output by save_checkpoint() above. 
+                        track_grad=_NO_CHECKPOINT_OVERRIDE,
+                        checkpoints=_NO_CHECKPOINT_OVERRIDE,
+                        checkpt_file_prefix=_NO_CHECKPOINT_OVERRIDE) -> "PhyloAutoencoder":
+        """Restore a trainer from a checkpoint.
+
+        Trainer configuration is restored from the checkpoint unless an explicit
+        override is supplied. DataLoaders remain external and must be reattached
+        with ``set_data_loaders()``, which restores their saved generator states.
+
+        Args:
+            filename (str): Checkpoint file produced by ``save_checkpoint()``.
+            map_location (str, optional): Device mapping passed to ``torch.load``.
+            track_grad (bool, optional): Override the saved gradient-tracking setting.
+            checkpoints (list[int], optional): Override the saved checkpoint schedule.
+            checkpt_file_prefix (str, optional): Override the saved checkpoint prefix.
         """
         checkpoint = torch.load(filename, map_location=map_location, weights_only=False)
         if 'model' not in checkpoint:
@@ -524,8 +602,29 @@ class PhyloAutoencoder(object):
         lr_sched = checkpoint['lr_scheduler']
         train_loss = checkpoint['train_loss']
         val_loss = checkpoint['val_loss']
+        trainer_state = checkpoint.get('trainer_state', {})
 
-        load_device = None if map_location is None else str(map_location)
+        if map_location is None:
+            load_device = trainer_state.get('device', "auto")
+        else:
+            load_device = str(map_location)
+
+        saved_track_grad = trainer_state.get('track_grad', False)
+        restored_track_grad = (
+            saved_track_grad
+            if track_grad is _NO_CHECKPOINT_OVERRIDE
+            else bool(track_grad)
+        )
+        restored_checkpoints = (
+            trainer_state.get('checkpoints')
+            if checkpoints is _NO_CHECKPOINT_OVERRIDE
+            else checkpoints
+        )
+        restored_prefix = (
+            trainer_state.get('checkpt_file_prefix', "train_out")
+            if checkpt_file_prefix is _NO_CHECKPOINT_OVERRIDE
+            else checkpt_file_prefix
+        )
 
         self = cls(
             model=model,
@@ -534,12 +633,79 @@ class PhyloAutoencoder(object):
             train_loss=train_loss,
             val_loss=val_loss,
             seed=checkpoint['seed'],
-            device="auto" if load_device is None else load_device,
-            track_grad=track_grad,
+            device=load_device,
+            track_grad=restored_track_grad,
+            checkpoints=restored_checkpoints,
+            checkpt_file_prefix=restored_prefix,
         )
         self.epoch = checkpoint['epoch']
+        if restored_track_grad and saved_track_grad:
+            self.batch_layer_grad_norm = trainer_state.get(
+                'batch_layer_grad_norm', self.batch_layer_grad_norm
+            )
+            self.mean_layer_grad_norm = trainer_state.get(
+                'mean_layer_grad_norm', self.mean_layer_grad_norm
+            )
+        if 'best_model' in trainer_state:
+            self.best_model = trainer_state['best_model']
+        self._pending_data_loader_rng_state = checkpoint.get(
+            'data_loader_rng_state'
+        )
         self.model.train()
+        self._set_rng_state(checkpoint.get('rng_state'))
         return self
+
+    def _get_rng_state(self):
+        """Return the process and trainer RNG states needed for continuation."""
+        cuda_rng_state = None
+        if torch.cuda.is_available() and torch.cuda.is_initialized():
+            cuda_rng_state = torch.cuda.get_rng_state_all()
+
+        return {
+            'python': random.getstate(),
+            'numpy': np.random.get_state(),
+            'torch': torch.get_rng_state(),
+            'torch_cuda': cuda_rng_state,
+            'trainer_torch_generator': (
+                self.torch_g.get_state() if self.torch_g is not None else None
+            ),
+            'trainer_torch_generator_device': (
+                str(self.torch_g.device) if self.torch_g is not None else None
+            ),
+            'cudnn_deterministic': torch.backends.cudnn.deterministic,
+            'cudnn_benchmark': torch.backends.cudnn.benchmark,
+        }
+
+    def _set_rng_state(self, rng_state):
+        """Restore process and trainer RNG states from a checkpoint."""
+        if rng_state is None:
+            return
+
+        random.setstate(rng_state['python'])
+        np.random.set_state(rng_state['numpy'])
+        torch.set_rng_state(rng_state['torch'].cpu())
+
+        cuda_rng_state = rng_state.get('torch_cuda')
+        if cuda_rng_state is not None and torch.cuda.is_available():
+            for device_idx, state in enumerate(
+                    cuda_rng_state[:torch.cuda.device_count()]):
+                torch.cuda.set_rng_state(state.cpu(), device=device_idx)
+
+        generator_state = rng_state.get('trainer_torch_generator')
+        generator_device = rng_state.get('trainer_torch_generator_device')
+        if generator_state is not None:
+            current_device_type = torch.device(self.device).type
+            saved_device_type = torch.device(generator_device).type
+            if current_device_type == saved_device_type:
+                self.torch_g = torch.Generator(self.device)
+                self.torch_g.set_state(generator_state.cpu())
+
+        torch.backends.cudnn.deterministic = rng_state.get(
+            'cudnn_deterministic', torch.backends.cudnn.deterministic
+        )
+        torch.backends.cudnn.benchmark = rng_state.get(
+            'cudnn_benchmark', torch.backends.cudnn.benchmark
+        )
 
 
 
