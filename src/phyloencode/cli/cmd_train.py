@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+"""Train a phylogenetic autoencoder.
+
+Training uses three main objects. ``AECNN`` is the model and holds its architecture
+and learned state. ``AEData`` processes the input data and creates the data loaders.
+``PhyloAutoencoder`` is the trainer that uses those data loaders to train the model.
+The trainer manages the optimizer, scheduler, losses, and checkpoints. The ``phytrain``
+command creates or restores these objects, connects them, and starts training.
+"""
 
 import random
 import torch
@@ -59,12 +67,11 @@ def main():
     else:
         # create model
         if settings["pretrained_model"] is not None:
-            # TODO: important. If the pretrained model used different training data (almost certainly did)
-            # then use new normalizers.
             ae_model = AECNN.load_pretrained_from_file(
                         settings["pretrained_model"],
                         map_location = map_location
                         )
+            ae_model.set_normalizers(phy_normalizer, aux_normalizer)
         else:
             ae_model = AECNN(
                             num_structured_input_channel  = ae_data.num_channels, 
@@ -86,12 +93,9 @@ def main():
                             aux_normalizer                = aux_normalizer
                             )
 
-        # optimizer
-        # settings
+        # Setup optimizer and lr scheduler
         lr = settings['learning_rate']
         wd = settings['weight_decay']
-
-        # opt = AdamW(ae_model.parameters(), lr=lr, weight_decay=wd)
         opt = AdamW(utils.split_params_by_wd(ae_model, wd), lr=lr)
         lr_schedlr = torch.optim.lr_scheduler.OneCycleLR(
                             opt,
@@ -132,13 +136,10 @@ def main():
         settings["out_prefix"] = tree_ae.checkpt_file_prefix
     _save_settings(settings, settings['out_prefix'] + "_settings.csv")
     tree_ae.model.write_network_to_file(settings["out_prefix"] + ".network.txt")
-    # ae_model = tree_ae.model
-    
 
-    #################################
-    # Use tree_ae to train ae_model #
-    # with data from ae_data.       #
-    #################################
+    ###############################################################
+    # Use tree_ae to train ae_model with data from ae_data.       #
+    ###############################################################
     tree_ae.set_data_loaders(train_loader=trn_loader, val_loader=val_loader) 
     train_seed = None if settings["resume_from_checkpoint"] is not None else settings["seed"]
     tree_ae.train(num_epochs = settings["num_epochs"], seed = train_seed)
@@ -148,7 +149,6 @@ def main():
                             settings["out_prefix"] + ".layer_grad_norms.pdf")            
 
     # save model with normalizers
-    # tree_ae.save_model(settings["out_prefix"] + ".ae_trained.pt")
     tree_ae.model.save_model(settings["out_prefix"] + ".ae_trained.pt")
 
     # plot loss curves
