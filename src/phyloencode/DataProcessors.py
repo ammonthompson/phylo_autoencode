@@ -6,7 +6,7 @@ import numpy as np
 import sklearn.preprocessing as pp
 import torch
 from sklearn.model_selection import train_test_split
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, RandomSampler
 
 import phyloencode.utils as utils
 
@@ -158,7 +158,8 @@ class AEData:
             shuffle: Whether to shuffle the training dataset. Validation is not
                 shuffled.
             num_workers: Number of PyTorch worker processes. Each worker opens
-                its own HDF5 handle lazily through ``TreeDataSet``.
+                its own HDF5 handle lazily through ``TreeDataSet`` and remains
+                alive between epochs when multiprocessing is enabled.
 
         Returns:
             Tuple ``(train_dataloader, val_dataloader)``. Batches yield
@@ -168,19 +169,24 @@ class AEData:
             ``(B, num_channels, max_tips)``.
         """
         drop_last = (len(self.train_dataset) % batch_size) < 32
+        train_sampler = RandomSampler(
+            self.train_dataset, generator=self.torch_g
+        ) if shuffle else None
         self.train_dataloader = DataLoader(
             self.train_dataset,
             batch_size=batch_size,
-            shuffle=shuffle,
+            sampler=train_sampler,
             num_workers=num_workers,
+            persistent_workers=num_workers > 0,
             drop_last=drop_last,
-            generator=self.torch_g,
+            generator=_clone_generator(self.torch_g),
         )
         self.val_dataloader = DataLoader(
             self.val_dataset,
             batch_size=batch_size,
             num_workers=num_workers,
-            generator=self.torch_g,
+            persistent_workers=num_workers > 0,
+            generator=_clone_generator(self.torch_g),
         )
         return self.train_dataloader, self.val_dataloader
 
@@ -320,6 +326,14 @@ class TreeDataSet(Dataset):
         state["_h5"] = None
         state["_h5_pid"] = None
         return state
+
+
+def _clone_generator(generator):
+    if generator is None:
+        return None
+    cloned = torch.Generator(device=generator.device)
+    cloned.set_state(generator.get_state())
+    return cloned
 
 def _as_1d(x):
     return np.asarray(x).reshape(-1)
