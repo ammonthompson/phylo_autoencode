@@ -196,8 +196,6 @@ class AECNN(nn.Module):
                                                  hidden_width=self.aux_inner_dim)
 
         # Structured Encoder
-        print("Structured autoencoder shapes:")
-        print((1, self.num_structured_input_channel, self.structured_input_width))
         self.structured_encoder = CnnEncoder(self.num_structured_input_channel, 
                                              self.structured_input_width,
                                              self.layer_params)
@@ -778,7 +776,6 @@ class CnnEncoder(nn.Module):
                                         
         conv_out_shape = utils.get_outshape(self.cnn_layers, data_channels, data_width)
         self.conv_out_width = [conv_out_shape[2]]
-        print(conv_out_shape)
 
         # experimenting
         self.cnn_layers.add_module("norm_0", nn.BatchNorm1d(out_channels[0]))
@@ -798,7 +795,6 @@ class CnnEncoder(nn.Module):
                 
                 conv_out_shape = utils.get_outshape(self.cnn_layers, data_channels, data_width)
                 self.conv_out_width.append(conv_out_shape[2])  # bookkeeping           
-                print(conv_out_shape)
 
                 if i < (nl-1):
                     self.cnn_layers.add_module("norm_" + str(i), nn.BatchNorm1d(out_channels[i]))
@@ -883,7 +879,6 @@ class CnnDecoder(nn.Module):
         w_in = latent_width
         new_target_width = encoder_layer_widths[-2]
         npad, noutpad = self._get_paddings(new_target_width, w_in, stride[-1], kernel[-1])
-        print((1, out_channels[nl-1], latent_width))
         
         self.tcnn_layers = nn.Sequential() 
         self.tcnn_layers.add_module("trans_conv1d_0", 
@@ -896,9 +891,8 @@ class CnnDecoder(nn.Module):
                                         output_padding  = noutpad,
                                         bias            = (nl - 2) <= 0 
                                         ))
- 
+
         outshape = utils.get_outshape(self.tcnn_layers,  num_cnn_latent_channels, latent_width)
-        print(outshape)
 
         if (nl - 2) > 0:
             self.tcnn_layers.add_module("tconv_norm_0", nn.BatchNorm1d(out_channels[nl-2]))
@@ -922,8 +916,6 @@ class CnnDecoder(nn.Module):
                                             bias            = i <= 1
                                             ))  
                       
-            print(utils.get_outshape(self.tcnn_layers, num_cnn_latent_channels, latent_width))
-
             if i > 1:
                 self.tcnn_layers.add_module("tconv_norm_" + str(nl-i-1), 
                                             nn.BatchNorm1d(out_channels[i-1]))
@@ -952,9 +944,6 @@ class CnnDecoder(nn.Module):
         self.char_head_out = Head(num_chars, data_width)
 
         
-        # print out shape
-        print(utils.get_outshape(self.tcnn_layers, num_cnn_latent_channels, latent_width))
-
     def forward(self, x):
         """Decode structured outputs from a structured latent tensor.
 
@@ -1087,7 +1076,6 @@ class LatentDense(nn.Module):
             nn.ReLU(),
             nn.Linear(out_width, out_width),
         )
-        print((1, out_width))
     
     def forward(self, x):
         """Apply the latent MLP.
@@ -1119,7 +1107,6 @@ class LatentPool(nn.Module):
         self.shared_layer = nn.Sequential(
                 nn.Linear(dense_in_width, latent_dim),
             )        
-        print((1, latent_dim))
 
 
     def forward(self, struct, unstruct):
@@ -1151,7 +1138,6 @@ class LatentDenseDecoder(nn.Module): # same as LatentGauss
             # SoftPower(0.1, 3),
             nn.Linear(in_width, out_width),
         )
-        print((1, out_width))
     
     def forward(self, x):
         """Decode latent vectors.
@@ -1226,7 +1212,6 @@ class SamePadConv1d(nn.Module):
     def forward(self, x):
         input_len = x.shape[-1]
         out_len = (input_len + self.s - 1) // self.s  # ceil division
-        print(out_len)
         total_pad = max((out_len - 1) * self.s + self.k - input_len, 0)
         pad_left = total_pad // 2
         pad_right = total_pad - pad_left

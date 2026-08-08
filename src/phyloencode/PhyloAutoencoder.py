@@ -22,6 +22,7 @@ from typing import List, Dict, Tuple, Optional, Union
 
 _NO_CHECKPOINT_OVERRIDE = object()
 
+# TODO: PhyloAutoencoder should instead be called AETrainer
 
 class PhyloAutoencoder(object):
     """Train and evaluate a phylogenetic autoencoder.
@@ -170,12 +171,13 @@ class PhyloAutoencoder(object):
             self.epoch = epoch #bookeeping
             epoch_time = time.time()
 
+            # TODO: Is this vestigial?
             self.std_norm = None
-
 
             # perform all mini batch steps for the epoch for training data
             self._mini_batch(validation=False)
             self.train_loss.append_mean_batch_loss()
+
             # print training epoch mean losses to screen
             self.train_loss.print_epoch_losses(elapsed_time=time.time() - epoch_time)
 
@@ -267,8 +269,6 @@ class PhyloAutoencoder(object):
         true = (tree, char, aux, std_norm)
         pred = self.model((phy, aux))
 
-        # compute and update loss fields in train_loss
-                
         loss = self.train_loss(pred, true, segmented_mask)
 
         # compute gradient
@@ -286,8 +286,6 @@ class PhyloAutoencoder(object):
 
         # update learning rate according to schedule
         if self.lr_sched != None and self.lr_sched._step_count <= self.lr_sched.state_dict()['total_steps']:
-            # TODO delete commented code
-            # print(self.lr_sched._step_count, self.lr_sched.state_dict()['total_steps']) 
             self.lr_sched.step()
 
         

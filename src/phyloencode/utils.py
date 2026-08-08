@@ -409,25 +409,28 @@ def make_loss_plots(train_loss, val_loss = None,  *, latent_layer_type = None,
                 out_prefix = "AElossplot", log = True, starting_epoch = 10):
     fig = plt.figure(figsize=(11, 8))
     plt.plot(list(range(len(train_loss.epoch_total_loss)))[starting_epoch:],
-                np.log10(train_loss.epoch_total_loss[starting_epoch:]), 
+                _log10_positive(train_loss.epoch_total_loss[starting_epoch:]),
                 label='Training Loss', c="r")
     if val_loss:
         plt.plot(list(range(len(val_loss.epoch_total_loss)))[starting_epoch:],
-                 np.log10(val_loss.epoch_total_loss[starting_epoch:]), 
+                 _log10_positive(val_loss.epoch_total_loss[starting_epoch:]),
                  label='Validation Loss', c='b')
     plt.xlabel('Epochs')
     plt.ylabel('log10 Loss')
     plt.legend()        
     plt.grid(True)
     
-    range_y = [min(np.log10(np.concat((train_loss.epoch_total_loss[starting_epoch:], 
-                                        val_loss.epoch_total_loss[starting_epoch:])))), 
-                max(np.log10(np.concat((train_loss.epoch_total_loss[starting_epoch:], 
-                                        val_loss.epoch_total_loss[starting_epoch:]))))]
-    
-    plt.yticks(ticks = np.linspace(range_y[0], range_y[1], num = 20))
+    log_losses = _log10_positive(np.concatenate((
+        train_loss.epoch_total_loss[starting_epoch:],
+        val_loss.epoch_total_loss[starting_epoch:],
+    )))
+    finite_log_losses = log_losses[np.isfinite(log_losses)]
+    if len(finite_log_losses) and np.ptp(finite_log_losses) > 0:
+        plt.yticks(ticks=np.linspace(
+            finite_log_losses.min(), finite_log_losses.max(), num=20
+        ))
     plt.xticks(ticks=np.arange(0, len(train_loss.epoch_total_loss), 
-                                step=len(train_loss.epoch_total_loss) // 10))
+                                step=max(1, len(train_loss.epoch_total_loss) // 10)))
     plt.tight_layout()
     plt.savefig(out_prefix + ".loss.pdf", bbox_inches='tight')
     plt.close(fig)
@@ -456,16 +459,29 @@ def make_loss_plots(train_loss, val_loss = None,  *, latent_layer_type = None,
     plt.close(fig)
 
 def fill_in_loss_comp_fig(losses, plot_label, ax, starting_epoch = 10):
-    ax.plot(list(range(len(losses[0])))[starting_epoch:], 
-            np.log10(losses[0][starting_epoch:]), label="Validation", c="b")
-    ax.plot(list(range(len(losses[1])))[starting_epoch:], 
-            np.log10(losses[1][starting_epoch:]), label="Training", c="r")
+    val_log_loss = _log10_positive(losses[0][starting_epoch:])
+    train_log_loss = _log10_positive(losses[1][starting_epoch:])
+    ax.plot(list(range(len(losses[0])))[starting_epoch:],
+            val_log_loss, label="Validation", c="b")
+    ax.plot(list(range(len(losses[1])))[starting_epoch:],
+            train_log_loss, label="Training", c="r")
+    if not np.any(np.isfinite(np.concatenate((val_log_loss, train_log_loss)))):
+        ax.text(0.5, 0.5, "Zero or disabled", ha="center", transform=ax.transAxes)
     ax.set_title(f"{plot_label} Loss")
     ax.set_xlabel('Epochs')
     ax.set_ylabel('Log10 Loss')
     # ax.set_ylabel('Loss')
     ax.grid(True)
-    ax.set_xticks(ticks=np.arange(0, len(losses[0]), step=len(losses[0]) // 10))
+    ax.set_xticks(ticks=np.arange(0, len(losses[0]),
+                                 step=max(1, len(losses[0]) // 10)))
+
+
+def _log10_positive(values):
+    """Return log10 values while representing zero or negative values as NaN."""
+    values = np.asarray(values, dtype=float)
+    logged = np.full(values.shape, np.nan, dtype=float)
+    np.log10(values, out=logged, where=values > 0)
+    return logged
 
 def set_pred_pad_to_zero(phy_pred: np.ndarray, pred_num_tips: np.ndarray) -> np.ndarray:
     """
@@ -826,5 +842,4 @@ class LogStandardScaler(BaseEstimator, TransformerMixin):
 
         # Reverse the shift
         return X_exp - self.min_positive_values
-
 
