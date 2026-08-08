@@ -42,7 +42,8 @@ def main():
                         seed             = settings["seed"],
                         max_tips         = settings["max_tips"],
                         num_subset       = settings["num_subset"],
-                        which_aux        = settings["which_aux"]
+                        which_aux        = settings["which_aux"],
+                        optimize         = settings["optimize_data"],
                         )
     aux_data_names = ae_data.aux_colnames
     settings["train_phy_shape"] = ae_data.train_phy_shape
@@ -197,6 +198,7 @@ def _parse_arguments():
     parser.add_argument("-cfg", "--config",         required = False, help = "Configuration file. Settings dictionary. Default None.")
     parser.add_argument("-s", "--seed",             required = False, type = int, help = "Random seed. Default random.")
     parser.add_argument("-nw", "--num_workers",     required = False, type = int, help = "Number of workers. Default 0")
+    parser.add_argument("--optimize_data", action="store_true", default=None, help = "Create or reuse an uncompressed .phywae.hdf5 copy for faster shuffled batch loading.")
     parser.add_argument("-ne", "--num_epochs",      required = False, type = int, help = "Number of training epochs. Default 100")
     parser.add_argument("-b", "--batch_size",       required = False, type = int, help = "Batch size. Default 128")
     parser.add_argument("-aid", "--aux_inner_dim",  required = False, type = int, help = "Hidden width of auxiliary encoder/decoder MLPs. Default 10")
@@ -252,6 +254,7 @@ def _get_default_settings():
         "out_prefix": "out",
         "num_subset": "all",
         "num_workers": 0,
+        "optimize_data": False,
         "seed": np.random.randint(0, 2**32 - 1),
         "num_epochs": 100,
         "batch_size": 128,
@@ -288,6 +291,7 @@ def _update_settings_from_command_line(settings, args):
         "out_prefix"    : args.out_prefix,
         "num_subset"    : args.num_subset,
         "num_workers"   : args.num_workers,
+        "optimize_data" : args.optimize_data,
         "seed"          : args.seed,
         "num_epochs"    : args.num_epochs,
         "batch_size"    : args.batch_size,
@@ -330,7 +334,7 @@ def _update_settings_from_command_line(settings, args):
                 settings[k] = int(v)
             elif k in {"mmd_loss_weight", "vz_loss_weight", "aux_loss_weight", "phy_loss_weight", "char_loss_weight"}:
                 settings[k] = float(v)
-            elif k in {"testing", "track_grad"}:
+            elif k in {"testing", "track_grad", "optimize_data"}:
                 settings[k] = bool(v)
             elif k in {"which_aux"}:
                 settings[k] = _normalize_which_aux(v)

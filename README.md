@@ -39,6 +39,8 @@ Once you have a training dataset, use the phytrain command. There is also an exa
 - **Example command:** `phytrain --trn_data example_train_data.hdf5 --config example_config.py`  
 - Type `phytrain -h` for more info
 
+If `phytrain` warns that the HDF5 layout is inefficient, add `--optimize_data` once. This creates and trains from a reusable, uncompressed `example_train_data.phywae.hdf5` copy without changing the Phyddle file. The optimized copy uses more disk space in exchange for much faster shuffled reads.
+
 ---
 
 ## Encoding with a Trained Autoencoder

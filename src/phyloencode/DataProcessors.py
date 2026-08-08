@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
 import h5py
@@ -9,6 +10,99 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset, RandomSampler
 
 import phyloencode.utils as utils
+
+
+_OPTIMIZED_SUFFIX = ".phywae.hdf5"
+_TRAINING_DATASETS = ("phy_data", "aux_data")
+_COPY_BLOCK_BYTES = 64 * 1024 * 1024
+
+
+def optimized_hdf5_path(hdf5_file):
+    """Return the conventional optimized-file path for a Phyddle HDF5 file."""
+    path = Path(hdf5_file)
+    if path.name.endswith(_OPTIMIZED_SUFFIX):
+        return path
+    if path.suffix.lower() in {".hdf5", ".h5", ".h5py"}:
+        return path.with_suffix(_OPTIMIZED_SUFFIX)
+    return path.parent / f"{path.name}{_OPTIMIZED_SUFFIX}"
+
+
+def is_hdf5_optimized(hdf5_file):
+    """Return whether training arrays are stored contiguously and uncompressed."""
+    path = Path(hdf5_file)
+    if not path.is_file():
+        raise FileNotFoundError(f"Training data file does not exist: {path}")
+
+    with h5py.File(path, "r") as h5:
+        _validate_training_hdf5(h5, path)
+        return all(h5[name].chunks is None for name in _TRAINING_DATASETS)
+
+
+def optimize_hdf5(hdf5_file):
+    """Create or reuse a contiguous copy without changing the source file."""
+    source_path = Path(hdf5_file)
+    if is_hdf5_optimized(source_path):
+        return source_path
+
+    output_path = optimized_hdf5_path(source_path)
+    if output_path == source_path:
+        raise ValueError(
+            f"{source_path} has an optimized filename but not an optimized layout. "
+            "Rename it before creating a new optimized copy."
+        )
+    if output_path.exists():
+        if is_hdf5_optimized(output_path):
+            return output_path
+        raise FileExistsError(
+            f"Refusing to overwrite existing file that does not use the current "
+            f"optimized layout: {output_path}. Move or remove that generated copy, "
+            "then run with --optimize_data again."
+        )
+
+    created_output = False
+    try:
+        with h5py.File(source_path, "r") as source, \
+                h5py.File(output_path, "x") as output:
+            created_output = True
+            _validate_training_hdf5(source, source_path)
+            for key, value in source.attrs.items():
+                output.attrs[key] = value
+            for name in source:
+                if name in _TRAINING_DATASETS:
+                    _copy_contiguous(source[name], output, name)
+                else:
+                    source.copy(name, output)
+            output.attrs["phyloencode_format"] = "phywae"
+            output.attrs["phyloencode_format_version"] = 2
+    except BaseException:
+        if created_output and output_path.exists():
+            output_path.unlink()
+        raise
+
+    return output_path
+
+
+def prepare_training_hdf5(hdf5_file, optimize=False):
+    """Select the input file, optionally creating an optimized copy."""
+    source_path = Path(hdf5_file)
+    if is_hdf5_optimized(source_path):
+        return source_path
+
+    output_path = optimized_hdf5_path(source_path)
+    if not optimize:
+        print(
+            f"Warning: slow HDF5 layout: {source_path}\n"
+            "Run phytrain with --optimize_data on the original Phyddle file "
+            "to create a faster training copy."
+        )
+        return source_path
+
+    print(
+        f"Warning: slow HDF5 layout: {source_path}\n"
+        f"Using uncompressed training copy: {output_path} "
+        "(original unchanged)."
+    )
+    return optimize_hdf5(source_path)
 
 
 class AEData:
@@ -44,6 +138,7 @@ class AEData:
         max_tips: int = 1000,
         num_subset: Optional[Union[int, str]] = None,
         which_aux: Union[str, List[str]] = "all",
+        optimize: bool = False,
     ):
         """Create data splits, fit normalizers, and build lazy datasets.
 
@@ -69,12 +164,16 @@ class AEData:
                 or ``None``/``"all"`` to use all rows.
             which_aux: ``"all"`` or an ordered list of auxiliary column names to
                 keep. The selected columns must include ``"num_taxa"``.
+            optimize: Create or reuse a contiguous ``.phywae.hdf5`` copy when
+                the input layout is inefficient for shuffled batch reads. The
+                original file is never changed.
 
         Returns:
             None. The constructed object exposes datasets, normalizers, and
             shape metadata as attributes.
         """
-        self.hdf5_file = hdf5_file
+        self.source_hdf5_file = str(hdf5_file)
+        self.hdf5_file = str(prepare_training_hdf5(hdf5_file, optimize=optimize))
         self.prop_train = float(prop_train)
         self.num_channels = int(num_channels)
         self.char_data_type = char_data_type
@@ -84,7 +183,7 @@ class AEData:
         self.phy_width = self.max_tips
         self.torch_g = torch.Generator().manual_seed(seed) if seed is not None else None
 
-        with h5py.File(hdf5_file, "r") as h5:
+        with h5py.File(self.hdf5_file, "r") as h5:
             rows = np.arange(_nrows(num_subset, h5["phy_data"].shape[0]), dtype=np.int64)
             aux_names = _decode_names(h5["aux_data_names"][...])
             self.aux_colnames, aux_indices = _select_aux(aux_names, which_aux)
@@ -104,7 +203,7 @@ class AEData:
         self.val_aux_shape = (len(val_idx), self.aux_width)
 
         dataset_args = dict(
-            hdf5_file=hdf5_file,
+            hdf5_file=self.hdf5_file,
             phy_normalizer=self.phy_normalizer,
             aux_normalizer=self.aux_normalizer,
             max_tips=self.max_tips,
@@ -342,6 +441,38 @@ def _clone_generator(generator):
     cloned = torch.Generator(device=generator.device)
     cloned.set_state(generator.get_state())
     return cloned
+
+
+def _validate_training_hdf5(h5, path):
+    required = {"phy_data", "aux_data", "aux_data_names"}
+    missing = required.difference(h5.keys())
+    if missing:
+        raise ValueError(
+            f"Training data file {path} is missing: {', '.join(sorted(missing))}"
+        )
+
+    phy = h5["phy_data"]
+    aux = h5["aux_data"]
+    if phy.ndim != 2:
+        raise ValueError(f"phy_data must be two-dimensional, got shape {phy.shape}")
+    if aux.ndim not in {1, 2}:
+        raise ValueError(f"aux_data must be one- or two-dimensional, got shape {aux.shape}")
+    if phy.shape[0] == 0 or phy.shape[0] != aux.shape[0]:
+        raise ValueError("phy_data and aux_data must contain the same non-zero number of rows")
+
+
+def _copy_contiguous(source, output, name):
+    target = output.create_dataset(name, shape=source.shape, dtype=source.dtype)
+    for key, value in source.attrs.items():
+        target.attrs[key] = value
+
+    values_per_row = max(1, int(np.prod(source.shape[1:])))
+    bytes_per_row = values_per_row * source.dtype.itemsize
+    rows_per_block = max(1, _COPY_BLOCK_BYTES // bytes_per_row)
+    for start in range(0, source.shape[0], rows_per_block):
+        stop = min(start + rows_per_block, source.shape[0])
+        target[start:stop] = source[start:stop]
+
 
 def _as_1d(x):
     return np.asarray(x).reshape(-1)
