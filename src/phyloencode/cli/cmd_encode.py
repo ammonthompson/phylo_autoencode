@@ -12,6 +12,7 @@ import argparse
 import numpy as np
 import os
 from phyloencode.utils import get_num_tips
+from phyloencode.cli._output import print_output_files
 
 
 def main ():
@@ -43,6 +44,7 @@ def main ():
         out_file_prefix = tree_data_fn.split('/')[-1].split('.')[0]
     else:
         out_file_prefix = args.out_prefix
+    output_files = []
 
     # load trained model and normalizers and create PhyloAutoencoder object
     # ae_model = torch.load(ae_model_fn, weights_only=False)
@@ -79,7 +81,9 @@ def main ():
                 label_names = [lbl.decode('utf-8') if isinstance(lbl, bytes) 
                                else lbl for lbl in f['label_names'][...][0]]
                 df = pd.DataFrame(labels, columns=label_names)
-                df.to_csv(out_file_prefix + ".labels.csv", index = False)
+                labels_out_file = out_file_prefix + ".labels.csv"
+                df.to_csv(labels_out_file, index = False)
+                output_files.append(labels_out_file)
             else:
                 print("No labels found in the hdf5 file. Continuing without making labels file.")
 
@@ -124,9 +128,11 @@ def main ():
     # make encoded tree file
     latent_dat = ae_model.norm_and_encode(test_phy_data, test_aux_data)
     latent_dat_df = pd.DataFrame(latent_dat, columns = None, index = None)
-    latent_dat_df.to_csv(out_file_prefix + ".ae_encoded.csv", header = None, index = None)
+    encoded_out_file = out_file_prefix + ".ae_encoded.csv"
+    latent_dat_df.to_csv(encoded_out_file, header = None, index = None)
+    output_files.append(encoded_out_file)
 
-    print("Wrote to: " + out_file_prefix + ".ae_encoded.csv")
+    print_output_files(output_files)
 
 if __name__ == "__main__":
     main()

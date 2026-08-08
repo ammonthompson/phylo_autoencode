@@ -7,6 +7,7 @@ import h5py
 from types import SimpleNamespace
 import pandas as pd
 import numpy as np
+from phyloencode.cli._output import print_output_files
 
 # parse command line arguments
 # - should take in a h5py file that contains phy and aux data (either together in phyddle output, or separate csvs)
@@ -30,10 +31,10 @@ def main():
 
     pred_phy, pred_aux = model.norm_predict_denorm(data.phy_data, data.aux_data)
     pred_phy = utils.set_pred_pad_to_zero(pred_phy, pred_aux[:,model.aux_numtips_idx])
-    pred_phy = pred_phy.reshape((pred_phy.shape[0], -1), order="F")
+    pred_phy_flat = pred_phy.reshape((pred_phy.shape[0], -1), order="F")
 
     if settings['out_format'] == "csv":
-        pred_phy_df = pd.DataFrame(pred_phy)
+        pred_phy_df = pd.DataFrame(pred_phy_flat)
         pred_aux_df = pd.DataFrame(pred_aux)
 
         phy_pred_out_fn = settings['out_prefix'] + ".phy_pred.cblv.csv"
@@ -41,9 +42,11 @@ def main():
 
         pred_phy_df.to_csv(phy_pred_out_fn, header=False, index=False)
         pred_aux_df.to_csv(aux_pred_out_fn, header=False, index=False)
+        output_files = [phy_pred_out_fn, aux_pred_out_fn]
 
     elif settings['out_format'] == "hdf5":
-        with h5py.File(settings['out_prefix'] + ".hdf5", mode="w") as f:
+        hdf5_out_fn = settings['out_prefix'] + ".hdf5"
+        with h5py.File(hdf5_out_fn, mode="w") as f:
             aux_names = np.asarray(data.aux_data_names, dtype="S64").reshape((1,-1))
 
             f.create_group("input")
@@ -52,12 +55,36 @@ def main():
             f["input"].create_dataset("aux_data", data=data.aux_data)
 
             f.create_group("prediction")
-            f["prediction"].create_dataset("pred_phy", data=pred_phy)
+            f["prediction"].create_dataset("pred_phy", data=pred_phy_flat)
             f["prediction"].create_dataset("aux_data_names", data=aux_names, dtype="S64")
             f["prediction"].create_dataset("pred_aux", data=pred_aux)
+        output_files = [hdf5_out_fn]
 
     else:
         raise ValueError(f"Unrecognized out_format: {settings['out_format']}. Must be csv or hdf5")
+
+    # create nwk files for trees and their reconstructions (same order in 2 files)
+    true_phy = np.asarray(data.phy_data).reshape(pred_phy.shape, order="F")
+    true_num_tips = np.asarray(data.aux_data)[:, model.aux_numtips_idx]
+    pred_num_tips = pred_aux[:, model.aux_numtips_idx]
+    num_chars = model.num_chars
+    char_slice = slice(-num_chars, None) if num_chars else slice(0, 0)
+
+    nwk_true = utils.convert_to_newick(
+        true_phy[:, :2, :], true_num_tips, true_phy[:, char_slice, :]
+    )
+    nwk_pred = utils.convert_to_newick(
+        pred_phy[:, :2, :], pred_num_tips, pred_phy[:, char_slice, :]
+    )
+
+    true_tree_out_fn = settings['out_prefix'] + ".true.tre"
+    pred_tree_out_fn = settings['out_prefix'] + ".pred.tre"
+    with open(true_tree_out_fn, "w") as f:
+        f.writelines(nwk_true)
+    with open(pred_tree_out_fn, "w") as f:
+        f.writelines(nwk_pred)
+
+    print_output_files(output_files + [true_tree_out_fn, pred_tree_out_fn])
 
 
 

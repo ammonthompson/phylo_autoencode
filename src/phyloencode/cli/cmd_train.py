@@ -19,6 +19,7 @@ from phyloencode.PhyloAutoencoder   import PhyloAutoencoder
 from phyloencode.PhyloAEModel       import AECNN
 from phyloencode.DataProcessors     import AEData
 from phyloencode.PhyLoss            import PhyLoss
+from phyloencode.cli._output        import print_output_files
 import phyloencode.utils as utils
 
 
@@ -45,6 +46,9 @@ def main():
                         which_aux        = settings["which_aux"],
                         optimize         = settings["optimize_data"],
                         )
+    output_files = []
+    if settings["optimize_data"] and ae_data.hdf5_file != args.trn_data:
+        output_files.append(ae_data.hdf5_file)
     aux_data_names = ae_data.aux_colnames
     settings["train_phy_shape"] = ae_data.train_phy_shape
     settings["val_phy_shape"]   = ae_data.val_phy_shape
@@ -109,7 +113,7 @@ def main():
                             )
         
         # PhyLoss compute and store loss and component losses for the final objective.
-        loss_weights = {k : v for k, v in settings.items() if "_loss_weight" in k}
+        loss_weights = _get_loss_weights(settings)
         train_loss = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
                             ae_model.latent_layer_type, device = settings["device"])
         val_loss   = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
@@ -135,25 +139,44 @@ def main():
         settings["track_grad"] = tree_ae.track_grad
         settings["checkpoints"] = tree_ae.checkpoints
         settings["out_prefix"] = tree_ae.checkpt_file_prefix
-    _save_settings(settings, settings['out_prefix'] + "_settings.csv")
-    tree_ae.model.write_network_to_file(settings["out_prefix"] + ".network.txt")
+    settings_out_file = settings['out_prefix'] + "_settings.csv"
+    network_out_file = settings["out_prefix"] + ".network.txt"
+    _save_settings(settings, settings_out_file)
+    tree_ae.model.write_network_to_file(network_out_file)
+    output_files.extend([settings_out_file, network_out_file])
 
     ###############################################################
     # Use tree_ae to train ae_model with data from ae_data.       #
     ###############################################################
     tree_ae.set_data_loaders(train_loader=trn_loader, val_loader=val_loader) 
     train_seed = None if settings["resume_from_checkpoint"] is not None else settings["seed"]
+    starting_epoch = tree_ae.epoch
     tree_ae.train(num_epochs = settings["num_epochs"], seed = train_seed)
+    if tree_ae.checkpoints is not None:
+        output_files.extend(
+            settings["out_prefix"] + "_epoch_" + str(epoch) + ".ckpt.pt"
+            for epoch in range(starting_epoch + 1, settings["num_epochs"])
+            if epoch in tree_ae.checkpoints
+        )
 
     if tree_ae.track_grad:
-        tree_ae.plot_gradient_norms(tree_ae.mean_layer_grad_norm, 
-                            settings["out_prefix"] + ".layer_grad_norms.pdf")            
+        gradient_out_file = settings["out_prefix"] + ".layer_grad_norms.pdf"
+        tree_ae.plot_gradient_norms(tree_ae.mean_layer_grad_norm, gradient_out_file)
+        output_files.append(gradient_out_file)
 
     # save model with normalizers
-    tree_ae.model.save_model(settings["out_prefix"] + ".ae_trained.pt")
+    model_out_file = settings["out_prefix"] + ".ae_trained.pt"
+    tree_ae.model.save_model(model_out_file)
+    output_files.append(model_out_file)
 
     # plot loss curves
     tree_ae.plot_losses(settings["out_prefix"])
+    output_files.extend([
+        settings["out_prefix"] + ".loss.pdf",
+        settings["out_prefix"] + ".component_loss.pdf",
+    ])
+
+    print_output_files(output_files)
 
 
 
@@ -228,6 +251,9 @@ def _parse_arguments():
     parser.add_argument("--resume_from_checkpoint", required = False, help = "Resume training from a provided checkpoint file produced by save_checkpoint.")
     parser.add_argument("--pretrained_model", required = False, help = "Initialize model weights from a saved model and start a fresh training run.")
     return parser.parse_args()
+
+def _get_loss_weights(settings):
+    return {k : v for k, v in settings.items() if "_loss_weight" in k}
 
 def _load_seed_from_checkpoint(checkpoint_file: str) -> int:
     checkpoint = torch.load(checkpoint_file, map_location="cpu", weights_only=False)

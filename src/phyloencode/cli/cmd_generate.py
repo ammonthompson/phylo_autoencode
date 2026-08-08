@@ -6,6 +6,7 @@ import torch
 import phyloencode
 import phyloencode.utils as utils
 from phyloencode.PhyloAEModel import AECNN
+from phyloencode.cli._output import print_output_files
 import random
 import h5py
 import sys
@@ -40,6 +41,10 @@ def main():
     model = AECNN.load_pretrained_from_file(utils.file_exists(args.model), map_location="cpu")
     N = args.num_samples
     out_prefix = args.out_prefix
+    cblv_out_file = out_prefix + ".cblv.csv"
+    aux_out_file = out_prefix + ".aux.csv"
+    tree_out_file = out_prefix + ".tre"
+    hdf5_out_file = out_prefix + ".hdf5"
 
     # set seed
     if args.seed is None:
@@ -94,8 +99,8 @@ def main():
     df_gen_aux = pd.DataFrame(gen_aux)
 
     # # df.write_csv()
-    df_flat_gen_phy.to_csv(out_prefix + ".cblv.csv", header=False, index=False)
-    df_gen_aux.to_csv(out_prefix + ".aux.csv", header = False, index = False)
+    df_flat_gen_phy.to_csv(cblv_out_file, header=False, index=False)
+    df_gen_aux.to_csv(aux_out_file, header = False, index = False)
 
     # convert to newick or nexus
     #
@@ -112,7 +117,7 @@ def main():
     # df_gen_phy_nwk = pd.DataFrame([x.strip() for x in gen_phy_nwk])
     # df_gen_phy_nwk.to_csv(out_prefix + ".tre", header = False, index = False,
     #                       quoting=csv.QUOTE_NONE, sep = "@")
-    with open(out_prefix + ".tre", "w") as f:
+    with open(tree_out_file, "w") as f:
         [f.write(x) for x in gen_phy_nwk] # this relies on the "\n" output by dp.Tree.as_string()
 
 
@@ -125,8 +130,10 @@ def main():
     # label_names, shape (1, z)
     # labels, shape (N, z)
     # phy_data, shape (N, nc * nt)
-    with h5py.File(out_prefix + ".hdf5", "w") as f:
+    with h5py.File(hdf5_out_file, "w") as f:
         pass
+
+    print_output_files([cblv_out_file, aux_out_file, tree_out_file, hdf5_out_file])
 
 
 if __name__ == "__main__":

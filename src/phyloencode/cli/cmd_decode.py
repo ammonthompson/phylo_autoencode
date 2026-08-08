@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 # import os
 import argparse
+from phyloencode.cli._output import print_output_files
 
 # takes in an encoded tree (encoded by the same trained model as the decoder)
 # outputs a cblv file
@@ -47,10 +48,12 @@ def main ():
  
     cblv_df = pd.DataFrame(test_phy_data)
     aux_df  = pd.DataFrame(test_aux_data)
-    cblv_df.to_csv(out_file_prefix + ".ae_decoded.cblv.csv", header = None, index = None)
-    aux_df.to_csv(out_file_prefix + ".ae_decoded.aux.csv", header = None, index = None)
+    cblv_out_file = out_file_prefix + ".ae_decoded.cblv.csv"
+    aux_out_file = out_file_prefix + ".ae_decoded.aux.csv"
+    cblv_df.to_csv(cblv_out_file, header = None, index = None)
+    aux_df.to_csv(aux_out_file, header = None, index = None)
 
-    print("Wrote to: " + out_file_prefix + ".ae_decoded.cblv.csv and " + out_file_prefix + ".ae_decoded.aux.csv")
+    print_output_files([cblv_out_file, aux_out_file])
 
 if __name__ == "__main__":
     main()
