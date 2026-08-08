@@ -22,9 +22,8 @@ from typing import List, Dict, Tuple, Optional, Union
 
 _NO_CHECKPOINT_OVERRIDE = object()
 
-# TODO: PhyloAutoencoder should instead be called AETrainer
 
-class PhyloAutoencoder(object):
+class AETrainer(object):
     """Train and evaluate a phylogenetic autoencoder.
 
     This class is a lightweight training loop around an ``phyloencode.PhyloAEModel.AECNN``
@@ -574,7 +573,7 @@ class PhyloAutoencoder(object):
     def load_checkpoint(cls, filename, map_location : Optional[str] = "cpu",
                         track_grad=_NO_CHECKPOINT_OVERRIDE,
                         checkpoints=_NO_CHECKPOINT_OVERRIDE,
-                        checkpt_file_prefix=_NO_CHECKPOINT_OVERRIDE) -> "PhyloAutoencoder":
+                        checkpt_file_prefix=_NO_CHECKPOINT_OVERRIDE) -> "AETrainer":
         """Restore a trainer from a checkpoint.
 
         Trainer configuration is restored from the checkpoint unless an explicit
@@ -795,3 +794,7 @@ class PhyloAutoencoder(object):
             char_mask = None
 
         return tree, char, tree_mask, char_mask
+
+
+# Backward compatibility for imports and checkpoints created before the rename.
+PhyloAutoencoder = AETrainer

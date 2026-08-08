@@ -3,7 +3,7 @@
 
 Training uses three main objects. ``AECNN`` is the model and holds its architecture
 and learned state. ``AEData`` processes the input data and creates the data loaders.
-``PhyloAutoencoder`` is the trainer that uses those data loaders to train the model.
+``AETrainer`` is the trainer that uses those data loaders to train the model.
 The trainer manages the optimizer, scheduler, losses, and checkpoints. The ``phytrain``
 command creates or restores these objects, connects them, and starts training.
 """
@@ -15,7 +15,7 @@ import numpy  as np
 import pandas as pd
 import argparse
 
-from phyloencode.PhyloAutoencoder   import PhyloAutoencoder
+from phyloencode.PhyloAutoencoder   import AETrainer
 from phyloencode.PhyloAEModel       import AECNN
 from phyloencode.DataProcessors     import AEData
 from phyloencode.PhyLoss            import PhyLoss
@@ -64,7 +64,7 @@ def main():
     map_location = None if settings["device"] == "auto" else settings["device"]
 
     if settings["resume_from_checkpoint"] is not None:
-        tree_ae = PhyloAutoencoder.load_checkpoint(
+        tree_ae = AETrainer.load_checkpoint(
                         settings["resume_from_checkpoint"],
                         map_location = map_location,
                         **checkpoint_overrides
@@ -121,9 +121,9 @@ def main():
                             validation = True)
 
 
-        # PhyloAutoencoder is the model trainer
+        # AETrainer is the model trainer
         # the model, the data, and the loss come together here
-        tree_ae = PhyloAutoencoder(
+        tree_ae = AETrainer(
                             model           = ae_model, 
                             optimizer       = opt, 
                             lr_scheduler    = lr_schedlr,

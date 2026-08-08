@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # test a pretrained model
-# from phyloencode.PhyloAutoencoder import PhyloAutoencoder
 import phyloencode.utils as utils
 from phyloencode.PhyloAEModel import AECNN
 import torch
@@ -33,7 +32,7 @@ def main ():
     else:
         out_file_prefix = args.out_prefix
 
-    # load trained model and normalizers and create PhyloAutoencoder object
+    # load the trained model and normalizers
     # ae_model = torch.load(ae_model_fn, weights_only=False)
     ae_model = AECNN.load_pretrained_from_file(ae_model_fn, map_location="cpu")
 

@@ -12,7 +12,7 @@ import argparse
 
 import phyloencode as ph
 from phyloencode import utils
-from phyloencode.PhyloAutoencoder import PhyloAutoencoder
+from phyloencode.PhyloAutoencoder import AETrainer
 import cProfile
 import pstats
 def main():
@@ -170,7 +170,7 @@ ae_model  = ph.PhyloAEModel.AECNN(num_structured_input_channel  = ae_data.nchann
                                     )
 
 # create Trainer
-tree_autoencoder = PhyloAutoencoder(model           = ae_model, 
+tree_autoencoder = AETrainer(model           = ae_model,
                                     optimizer       = torch.optim.Adam(ae_model.parameters()), 
                                     loss_func       = ph.utils.recon_loss, 
                                     batch_size      = batch_size,

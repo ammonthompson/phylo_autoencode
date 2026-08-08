@@ -144,7 +144,7 @@ class PhyLoss(nn.Module):
     def forward(self, pred : Tuple, true : Tuple, mask : Tuple):
         """Compute the weighted loss for a batch and update internal buffers.
 
-        Expected tuple formats (as used by ``phyloencode.PhyloAutoencoder.PhyloAutoencoder``):
+        Expected tuple formats (as used by ``phyloencode.PhyloAutoencoder.AETrainer``):
 
         - ``pred``: ``(phy_hat, char_hat, aux_hat, latent_hat)``
         - ``true``: ``(phy, char, aux, std_norm)``
