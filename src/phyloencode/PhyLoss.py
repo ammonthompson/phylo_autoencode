@@ -117,7 +117,7 @@ class PhyLoss(nn.Module):
         self.latent_layer_type = latent_layer_Type
         
         # latent loss
-        self.mmd = MMDLoss()
+        self.mmd = MMDLoss(n_kernels=3)
         # TODO: delete all VZLoss implementation. Nolonger in use.
         self.vz  = VZLoss(generator=self.torch_g)
         
@@ -432,7 +432,7 @@ class MMDLoss(nn.Module):
         self.fixed_bw = None if bw is None else torch.tensor(float(bw))
 
     @torch.no_grad()
-    def _estimate_base_bw(self, X: torch.Tensor) -> torch.Tensor:
+    def _estimate_base_bw(self, X: torch.Tensor, L2_xx: torch.Tensor) -> torch.Tensor:
         """Estimate a base RBF bandwidth from the batch.
 
         Uses pairwise squared distances and either a median or mean heuristic (configured by
@@ -441,6 +441,8 @@ class MMDLoss(nn.Module):
 
         Args:
             X (torch.Tensor): Input tensor with shape ``(m, d)``.
+            L2_xx (torch.Tensor): Pairwise squared distances for ``X``, with shape
+                ``(m, m)``.
 
         Returns:
             torch.Tensor: Scalar base bandwidth (same dtype/device as ``X``).
@@ -450,7 +452,8 @@ class MMDLoss(nn.Module):
 
         # upper-triangular off-diagonal distances
         iu = torch.triu_indices(m, m, offset=1, device=X.device)
-        vals = (torch.cdist(X, X) ** 2)[iu[0], iu[1]]
+        # vals = (torch.cdist(X, X) ** 2)[iu[0], iu[1]]
+        vals = L2_xx[iu[0], iu[1]]
         vals = vals[vals > 0]
 
         if vals.numel() > 0:
@@ -465,16 +468,18 @@ class MMDLoss(nn.Module):
 
 
     @torch.no_grad()
-    def _bws_from_x(self, X: torch.Tensor) -> torch.Tensor:
+    def _bws_from_x(self, X: torch.Tensor, L2_xx: torch.Tensor) -> torch.Tensor:
         """Create the per-kernel bandwidth vector from a batch.
 
         Args:
             X (torch.Tensor): Input tensor with shape ``(m, d)``.
+            L2_xx (torch.Tensor): Pairwise squared distances for ``X``, with shape
+                ``(m, m)``.
 
         Returns:
             torch.Tensor: Bandwidths with shape ``(K,)`` where ``K == n_kernels``.
         """
-        base = self.fixed_bw.to(X.device, X.dtype) if self.fixed_bw is not None else self._estimate_base_bw(X)
+        base = self.fixed_bw.to(X.device, X.dtype) if self.fixed_bw is not None else self._estimate_base_bw(X, L2_xx=L2_xx)
         return base * self.bw_multipliers.to(X.device, X.dtype)  # (K,)
 
     def forward(self, X: torch.Tensor, Y: torch.Tensor | None = None) -> torch.Tensor:
@@ -489,12 +494,12 @@ class MMDLoss(nn.Module):
             torch.Tensor: Scalar MMD value (``sqrt(MMD^2)``).
         """
         m, d = X.shape
-        bws = self._bws_from_x(X)  # (K,)  bws = 2 * l_i^2 in Briol et al. 2025
         delta = 1e-6
 
         # Data–data term (unbiased) averaged over kernels
         #  E[k(x, x')] = 1/m(m-1) * sum_{i =\= j}^m(exp(-||x_i - x'_j||^2 / bw))
         L2_xx = torch.cdist(X, X) ** 2                       # (m, m)
+        bws = self._bws_from_x(X, L2_xx)  # (K,)  bws = 2 * l_i^2 in Briol et al. 2025
         Kxx_k = torch.exp(-L2_xx[None, :, :] / bws[:, None, None])  # (K, m, m)
         Kxx = Kxx_k.mean(dim=0)                              # average over K -> (m, m)
         Kxx.fill_diagonal_(0.0)
