@@ -438,8 +438,8 @@ def make_loss_plots(train_loss, val_loss = None,  *, latent_layer_type = None,
     # plot each loss separately (only validation losses are recorded). 
     # create subplots for each loss component   
     # TODO: fix x-axis tick marks            
-    num_subplots = 6 if latent_layer_type == "GAUSS" else 4
-    fig, axs = plt.subplots(num_subplots//2, 2, figsize=(11, 8), sharex=True)
+    num_subplots = 5 if latent_layer_type == "GAUSS" else 4
+    fig, axs = plt.subplots((num_subplots + 1)//2, 2, figsize=(11, 8), sharex=True)
     fig.subplots_adjust(hspace=0.4, wspace=0.4)
     fill_in_loss_comp_fig((val_loss.epoch_total_loss, train_loss.epoch_total_loss), 
                           "combined", axs[0,0], starting_epoch)
@@ -453,8 +453,7 @@ def make_loss_plots(train_loss, val_loss = None,  *, latent_layer_type = None,
     if latent_layer_type == "GAUSS":
         fill_in_loss_comp_fig((val_loss.epoch_mmd_loss, train_loss.epoch_mmd_loss),
                               "mmd", axs[2,0], starting_epoch)
-        fill_in_loss_comp_fig((val_loss.epoch_vz_loss, train_loss.epoch_vz_loss),
-                              "vz", axs[2,1], starting_epoch)
+        axs[2,1].axis("off")
     plt.savefig(out_prefix + ".component_loss.pdf", bbox_inches='tight')
     plt.close(fig)
 
@@ -842,4 +841,3 @@ class LogStandardScaler(BaseEstimator, TransformerMixin):
 
         # Reverse the shift
         return X_exp - self.min_positive_values
-

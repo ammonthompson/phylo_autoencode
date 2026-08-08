@@ -100,21 +100,18 @@ def _make_trainer(data, loaders, checkpoint_prefix=None):
         "char_loss_weight": 0.0,
         "aux_loss_weight": 0.1,
         "mmd_loss_weight": 0.0,
-        "vz_loss_weight": 0.0,
     }
     train_loss = PhyLoss(
         weights,
         data.ntax_cidx,
         model.char_type,
         model.latent_layer_type,
-        device="cpu",
     )
     val_loss = PhyLoss(
         weights,
         data.ntax_cidx,
         model.char_type,
         model.latent_layer_type,
-        device="cpu",
         validation=True,
     )
     trainer = PhyloAutoencoder(
@@ -196,7 +193,6 @@ def test_checkpoint_resume_matches_uninterrupted_training(tmp_path):
         "epoch_char_loss",
         "epoch_aux_loss",
         "epoch_mmd_loss",
-        "epoch_vz_loss",
     ):
         assert getattr(resumed.train_loss, history_name) == getattr(
             uninterrupted.train_loss, history_name

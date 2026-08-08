@@ -115,10 +115,9 @@ def main():
         # PhyLoss compute and store loss and component losses for the final objective.
         loss_weights = _get_loss_weights(settings)
         train_loss = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
-                            ae_model.latent_layer_type, device = settings["device"])
+                            ae_model.latent_layer_type)
         val_loss   = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
-                            ae_model.latent_layer_type, device = settings["device"], 
-                            validation = True)
+                            ae_model.latent_layer_type, validation = True)
 
 
         # AETrainer is the model trainer
@@ -226,7 +225,6 @@ def _parse_arguments():
     parser.add_argument("-b", "--batch_size",       required = False, type = int, help = "Batch size. Default 128")
     parser.add_argument("-aid", "--aux_inner_dim",  required = False, type = int, help = "Hidden width of auxiliary encoder/decoder MLPs. Default 10")
     parser.add_argument("-mmd","--mmd_loss_weight", required = False, type = float, help = "MMD lambda (>= 0). Default 1.0")
-    parser.add_argument("-vz", "--vz_loss_weight",  required = False, type = float, help = "VZ lambda (>= 0). Default 1.0")
     parser.add_argument("-pw", "--phy_loss_weight", required = False, type = float, help = "Phylogenetic loss weight. Default 0.9")
     parser.add_argument("-aw", "--aux_loss_weight", required = False, type = float, help = "Auxiliary loss weight. Default 0.1")
     parser.add_argument("-cw", "--char_loss_weight",required = False, type = float, help = "how much weight to give to char loss. Default 0.0")
@@ -289,7 +287,6 @@ def _get_default_settings():
         "num_channels": 2,
         "max_tips": 1000,
         "mmd_loss_weight": 1.0,
-        "vz_loss_weight": 1.0,
         "phy_loss_weight": 0.9,
         "aux_loss_weight": 0.1,
         "char_loss_weight": 1.0,
@@ -326,7 +323,6 @@ def _update_settings_from_command_line(settings, args):
         "num_channels"  : args.num_channels,
         "max_tips"      : args.max_tips,
         "mmd_loss_weight" : args.mmd_loss_weight,
-        "vz_loss_weight"  : args.vz_loss_weight,
         "phy_loss_weight": args.phy_loss_weight,
         "char_loss_weight" : args.char_loss_weight,
         "aux_loss_weight": args.aux_loss_weight,
@@ -358,7 +354,7 @@ def _update_settings_from_command_line(settings, args):
             elif k in {"latent_output_dim", "num_channels", "num_chars", "num_subset",
                        "num_epochs", "batch_size", "max_tips", "num_workers", "seed", "aux_inner_dim"}:
                 settings[k] = int(v)
-            elif k in {"mmd_loss_weight", "vz_loss_weight", "aux_loss_weight", "phy_loss_weight", "char_loss_weight"}:
+            elif k in {"mmd_loss_weight", "aux_loss_weight", "phy_loss_weight", "char_loss_weight"}:
                 settings[k] = float(v)
             elif k in {"testing", "track_grad", "optimize_data"}:
                 settings[k] = bool(v)

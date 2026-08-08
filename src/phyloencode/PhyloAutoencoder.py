@@ -102,10 +102,6 @@ class AETrainer(object):
         else:
             self.device = device
         
-        # This class sets module level rng behavior through the set_seed method. 
-        # the Generator object is, as of 9/19/2025 only used for std_norm random variates in _mini_batch.
-
-        self.torch_g = None
         self.seed = None
         if seed is not None:
             self.set_seed(seed)
@@ -170,9 +166,6 @@ class AETrainer(object):
             self.epoch = epoch #bookeeping
             epoch_time = time.time()
 
-            # TODO: Is this vestigial?
-            self.std_norm = None
-
             # perform all mini batch steps for the epoch for training data
             self._mini_batch(validation=False)
             self.train_loss.append_mean_batch_loss()
@@ -235,7 +228,7 @@ class AETrainer(object):
             aux_batch = aux_batch.to(self.device)
                
             # perform SGD step for batch
-            step_function(phy_batch, aux_batch, mask_batch, self.std_norm)
+            step_function(phy_batch, aux_batch, mask_batch)
 
         # compute mean of batch grad norms per layer
         if self.track_grad and not validation:
@@ -245,7 +238,7 @@ class AETrainer(object):
 
     
     def _train_step(self, phy: torch.Tensor, aux: torch.Tensor, 
-                   mask: Optional[torch.Tensor] = None, std_norm : Optional[torch.Tensor] = None):
+                   mask: Optional[torch.Tensor] = None):
         """Run a single gradient update on one batch.
 
         Args:
@@ -253,9 +246,6 @@ class AETrainer(object):
             aux (torch.Tensor): Unstructured/auxiliary input tensor shaped ``(batch, aux_dim)``.
             mask (torch.Tensor, optional): Optional boolean mask shaped like ``phy``. Defaults
                 to None.
-            std_norm (torch.Tensor, optional): Optional sample from a target latent
-                distribution (e.g. standard normal) used by some latent losses. Defaults to
-                None.
         """
         # batch train loss
         # set model to train mode
@@ -265,7 +255,7 @@ class AETrainer(object):
         tree, char, tree_mask, char_mask = self._split_tree_char(phy, mask)
 
         segmented_mask = (tree_mask, char_mask)          
-        true = (tree, char, aux, std_norm)
+        true = (tree, char, aux)
         pred = self.model((phy, aux))
 
         loss = self.train_loss(pred, true, segmented_mask)
@@ -289,7 +279,7 @@ class AETrainer(object):
 
         
     def evaluate(self, phy: torch.Tensor, aux: torch.Tensor,
-                  mask: Optional[torch.Tensor] = None, std_norm: Optional[torch.Tensor] = None):
+                  mask: Optional[torch.Tensor] = None):
         """Evaluate the model on one batch and update validation loss state.
 
         This method does not disable gradients by itself; call it under
@@ -300,8 +290,6 @@ class AETrainer(object):
             aux (torch.Tensor): Unstructured/auxiliary input tensor shaped ``(batch, aux_dim)``.
             mask (torch.Tensor, optional): Optional boolean mask shaped like ``phy``. Defaults
                 to None.
-            std_norm (torch.Tensor, optional): Optional sample from a target latent
-                distribution used by some latent losses. Defaults to None.
         """
         
         # batch val loss        
@@ -311,7 +299,7 @@ class AETrainer(object):
         tree, char, tree_mask, char_mask = self._split_tree_char(phy, mask)
 
         segmented_mask = (tree_mask, char_mask)
-        true = (tree, char, aux, std_norm)
+        true = (tree, char, aux)
         pred = self.model((phy, aux))
 
         # compute and update loss fields in val_loss
@@ -523,7 +511,6 @@ class AETrainer(object):
             return  # use module-level RNGs as-is
 
         self.seed = seed
-        self.torch_g = torch.Generator(self.device).manual_seed(self.seed)
         random.seed(self.seed)
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
@@ -547,7 +534,7 @@ class AETrainer(object):
             )
 
         checkpoint = {
-            'checkpoint_version': 3,
+            'checkpoint_version': 4,
             'model': self.model,
             'seed': self.seed,
             'epoch': self.epoch,
@@ -663,12 +650,6 @@ class AETrainer(object):
             'numpy': np.random.get_state(),
             'torch': torch.get_rng_state(),
             'torch_cuda': cuda_rng_state,
-            'trainer_torch_generator': (
-                self.torch_g.get_state() if self.torch_g is not None else None
-            ),
-            'trainer_torch_generator_device': (
-                str(self.torch_g.device) if self.torch_g is not None else None
-            ),
             'cudnn_deterministic': torch.backends.cudnn.deterministic,
             'cudnn_benchmark': torch.backends.cudnn.benchmark,
         }
@@ -687,15 +668,6 @@ class AETrainer(object):
             for device_idx, state in enumerate(
                     cuda_rng_state[:torch.cuda.device_count()]):
                 torch.cuda.set_rng_state(state.cpu(), device=device_idx)
-
-        generator_state = rng_state.get('trainer_torch_generator')
-        generator_device = rng_state.get('trainer_torch_generator_device')
-        if generator_state is not None:
-            current_device_type = torch.device(self.device).type
-            saved_device_type = torch.device(generator_device).type
-            if current_device_type == saved_device_type:
-                self.torch_g = torch.Generator(self.device)
-                self.torch_g.set_state(generator_state.cpu())
 
         torch.backends.cudnn.deterministic = rng_state.get(
             'cudnn_deterministic', torch.backends.cudnn.deterministic

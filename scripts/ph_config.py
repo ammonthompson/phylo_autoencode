@@ -12,7 +12,6 @@ settings = {
     "num_chars"         : 3,
     "max_tips"          : 500,
     "mmd_loss_weight"   : 200.,
-    "vz_loss_weight"    : 10.,
     "phy_loss_weight"   : 1.0,
     "char_loss_weight"  : 0.2,
     "aux_loss_weight"   : 0.1,
