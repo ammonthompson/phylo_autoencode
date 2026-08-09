@@ -18,7 +18,7 @@ from phyloencode.cli._output import print_output_files
 
 def main ():
     cmd = argparse.ArgumentParser(description="Encode phylogenetic trees and auxiliary data with trained autodencoder.")
-    cmd.add_argument("-m", "--model", required=True, help="Path to the trained model.pt file")
+    cmd.add_argument("-m", "--model", required=True, help="Path to a trained model artifact or trainer checkpoint")
     cmd.add_argument("-e", "--encoded-data", required=True, help="Path to the model encoded data file")
     cmd.add_argument("-o", "--out-prefix", required=False, help="Path to out file prefix")
 

@@ -16,7 +16,7 @@ from phyloencode.cli._output import print_output_files
 
 def main ():
     cmd = argparse.ArgumentParser(description="Encode phylogenetic trees and auxiliary data with trained autodencoder.")
-    cmd.add_argument("-m", "--model", required=True, help="Path to the trained model.pt file")
+    cmd.add_argument("-m", "--model", required=True, help="Path to a trained model artifact or trainer checkpoint")
     cmd.add_argument("-t", "--tree-data", required=True, help="Path to the phyddle formated tree CBLV(S). If using a phyddle -s F output hdf5, " \
     "use the key 'phy_data' for the tree data and 'aux_data' for the auxiliary data. If using csv, for the cblv tree data, then" \
         " use the -s [--aux-data] flag to specify the auxiliary data file.")

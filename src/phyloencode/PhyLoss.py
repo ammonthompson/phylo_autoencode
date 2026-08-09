@@ -39,7 +39,8 @@ class PhyLoss(nn.Module):
                  ntax_cidx : int,
                  char_type : str = None, 
                  latent_layer_Type = "GAUSS",
-                 validation  = False) -> None:
+                 validation  = False,
+                 mmd_num_kernels: int = 3) -> None:
         """Initialize a stateful loss accumulator.
 
         Args:
@@ -59,6 +60,8 @@ class PhyLoss(nn.Module):
                 Defaults to ``"GAUSS"``.
             validation (bool): If True, ``print_epoch_losses()`` labels output as validation.
                 Defaults to False.
+            mmd_num_kernels (int): Positive odd number of RBF bandwidths used by MMD.
+                Defaults to 3.
         """
 
         
@@ -91,7 +94,7 @@ class PhyLoss(nn.Module):
         self.latent_layer_type = latent_layer_Type
         
         # latent loss
-        self.mmd = MMDLoss(n_kernels=3)
+        self.mmd = MMDLoss(n_kernels=mmd_num_kernels)
         
     def set_weights(self, weights : dict[str, torch.Tensor]):
         """Set loss weights from a mapping.
@@ -358,12 +361,18 @@ class MMDLoss(nn.Module):
                  bw: float | None = None,
                  bw_mode: str = "median"):
         super().__init__()
+        if n_kernels < 1 or n_kernels % 2 == 0:
+            raise ValueError("mmd_num_kernels must be a positive odd integer")
         self.bw_mode = bw_mode
         self.register_buffer(
             "bw_multipliers",
             (mul_factor ** (torch.arange(n_kernels) - n_kernels // 2)).float()
         )
         self.fixed_bw = None if bw is None else torch.tensor(float(bw))
+
+    @property
+    def num_kernels(self) -> int:
+        return self.bw_multipliers.numel()
 
     @torch.no_grad()
     def _estimate_base_bw(self, X: torch.Tensor, L2_xx: torch.Tensor) -> torch.Tensor:

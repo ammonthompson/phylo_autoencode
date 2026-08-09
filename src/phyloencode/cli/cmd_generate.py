@@ -22,7 +22,7 @@ def main():
     cmd = argparse.ArgumentParser(prog = "", usage = "")
 
     cmd.add_argument("-m", "--model", type=str, required=True, 
-                    help="Path to trained autoencoder (.pt file) used for generating new samples.")
+                    help="Path to a trained model artifact or trainer checkpoint used for generating new samples.")
     cmd.add_argument("-n", "--num-samples", required=True, type=int, 
                     help="Number of trees to generate.")
     cmd.add_argument("-o", "--out-prefix", type = str, required=True, 

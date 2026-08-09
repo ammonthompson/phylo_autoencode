@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
-"""Train a phylogenetic autoencoder.
+"""Train a phylogenetic Wasserstein autoencoder (PhyWAE).
 
-Training uses three main objects. ``AECNN`` is the model and holds its architecture
-and learned state. ``AEData`` processes the input data and creates the data loaders.
-``AETrainer`` is the trainer that uses those data loaders to train the model.
-The trainer manages the optimizer, scheduler, losses, and checkpoints. The ``phytrain``
-command creates or restores these objects, connects them, and starts training.
+Training uses four main objects; AEData, AECNN, PhyLoss and AETrainer.
+The ``phytrain`` CLI tool creates or restores these objects and starts
+training.
+
+`API:`
+``AEData`` processes the input data and creates the data loaders.
+``AECNN`` holds the PhyWAE neural network.
+``PhyLoss`` holds and computes the WAE loss.
+``AETrainer`` is the trainer object that uses AEData and PhyLoss to
+train AECNN. The trainer manages the optimizer, scheduler, losses, and
+checkpoints.
+
 """
 
 import random
@@ -115,9 +122,11 @@ def main():
         # PhyLoss compute and store loss and component losses for the final objective.
         loss_weights = _get_loss_weights(settings)
         train_loss = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
-                            ae_model.latent_layer_type)
+                            ae_model.latent_layer_type,
+                            mmd_num_kernels=settings["mmd_num_kernels"])
         val_loss   = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
-                            ae_model.latent_layer_type, validation = True)
+                            ae_model.latent_layer_type, validation=True,
+                            mmd_num_kernels=settings["mmd_num_kernels"])
 
 
         # AETrainer is the model trainer
@@ -138,6 +147,7 @@ def main():
         settings["track_grad"] = tree_ae.track_grad
         settings["checkpoints"] = tree_ae.checkpoints
         settings["out_prefix"] = tree_ae.checkpt_file_prefix
+        settings["mmd_num_kernels"] = tree_ae.train_loss.mmd.num_kernels
     settings_out_file = settings['out_prefix'] + "_settings.csv"
     network_out_file = settings["out_prefix"] + ".network.txt"
     _save_settings(settings, settings_out_file)
@@ -225,6 +235,7 @@ def _parse_arguments():
     parser.add_argument("-b", "--batch_size",       required = False, type = int, help = "Batch size. Default 128")
     parser.add_argument("-aid", "--aux_inner_dim",  required = False, type = int, help = "Hidden width of auxiliary encoder/decoder MLPs. Default 10")
     parser.add_argument("-mmd","--mmd_loss_weight", required = False, type = float, help = "MMD lambda (>= 0). Default 1.0")
+    parser.add_argument("--mmd-num-kernels", required=False, type=int, help="Positive odd number of MMD RBF kernels. Default 3")
     parser.add_argument("-pw", "--phy_loss_weight", required = False, type = float, help = "Phylogenetic loss weight. Default 0.9")
     parser.add_argument("-aw", "--aux_loss_weight", required = False, type = float, help = "Auxiliary loss weight. Default 0.1")
     parser.add_argument("-cw", "--char_loss_weight",required = False, type = float, help = "how much weight to give to char loss. Default 0.0")
@@ -247,7 +258,7 @@ def _parse_arguments():
     parser.add_argument("-waux", "--which_aux",     required = False, help = "Comma separated list of auxilliary data column names to inclued. Default: All")
     parser.add_argument("-ckpt", "--checkpoints", required = False, help = "Comma separated list of epochs to save training checkpoints. Default: None")
     parser.add_argument("--resume_from_checkpoint", required = False, help = "Resume training from a provided checkpoint file produced by save_checkpoint.")
-    parser.add_argument("--pretrained_model", required = False, help = "Initialize model weights from a saved model and start a fresh training run.")
+    parser.add_argument("--pretrained_model", required = False, help = "Initialize model weights from a model artifact or trainer checkpoint and start a fresh training run.")
     return parser.parse_args()
 
 def _get_loss_weights(settings):
@@ -287,6 +298,7 @@ def _get_default_settings():
         "num_channels": 2,
         "max_tips": 1000,
         "mmd_loss_weight": 1.0,
+        "mmd_num_kernels": 3,
         "phy_loss_weight": 0.9,
         "aux_loss_weight": 0.1,
         "char_loss_weight": 1.0,
@@ -323,6 +335,7 @@ def _update_settings_from_command_line(settings, args):
         "num_channels"  : args.num_channels,
         "max_tips"      : args.max_tips,
         "mmd_loss_weight" : args.mmd_loss_weight,
+        "mmd_num_kernels" : args.mmd_num_kernels,
         "phy_loss_weight": args.phy_loss_weight,
         "char_loss_weight" : args.char_loss_weight,
         "aux_loss_weight": args.aux_loss_weight,
@@ -352,7 +365,8 @@ def _update_settings_from_command_line(settings, args):
             if k in {"kernel", "stride", "out_channels", "checkpoints"} and isinstance(v, str):
                 settings[k] = [int(x) for x in v.split(",")]
             elif k in {"latent_output_dim", "num_channels", "num_chars", "num_subset",
-                       "num_epochs", "batch_size", "max_tips", "num_workers", "seed", "aux_inner_dim"}:
+                       "num_epochs", "batch_size", "max_tips", "num_workers", "seed", "aux_inner_dim",
+                       "mmd_num_kernels"}:
                 settings[k] = int(v)
             elif k in {"mmd_loss_weight", "aux_loss_weight", "phy_loss_weight", "char_loss_weight"}:
                 settings[k] = float(v)

@@ -94,7 +94,7 @@ def _process_args() -> dict:
     parser.add_argument("-d", "--data", required=True,
                         help="hdf5 file. Contains cblv formated phylogenetic data from Phyddle.")
     parser.add_argument("-m", "--model", required=True,
-                        help=".pt file. Trained PhyloAEModel model.")
+                        help="Trained model artifact or trainer checkpoint.")
     parser.add_argument("-o", "--out-prefix", required=True,
                         help="Output files prefix.")
     parser.add_argument("-ofmt", "--out-format", required=False,

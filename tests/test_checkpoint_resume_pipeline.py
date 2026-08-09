@@ -170,6 +170,14 @@ def test_checkpoint_resume_matches_uninterrupted_training(tmp_path):
     first_segment.train(2, seed=SEED)
     assert checkpoint_file.exists()
 
+    checkpoint_model = AECNN.load_pretrained_from_file(
+        checkpoint_file, map_location="cpu"
+    )
+    _assert_nested_equal(
+        checkpoint_model.state_dict(), first_segment.model.state_dict()
+    )
+    assert not checkpoint_model.training
+
     resumed_data, resumed_loaders = _make_data_and_loaders(data_file)
     resumed = PhyloAutoencoder.load_checkpoint(
         checkpoint_file, map_location="cpu"
@@ -218,3 +226,16 @@ def test_save_checkpoint_refuses_to_overwrite_existing_file(tmp_path):
         trainer.save_checkpoint(checkpoint_file)
 
     assert checkpoint_file.read_bytes() == b"existing checkpoint"
+
+
+@pytest.mark.parametrize("num_kernels", [0, 2])
+def test_mmd_kernel_count_must_be_positive_and_odd(num_kernels):
+    weights = {
+        "phy_loss_weight": 1.0,
+        "char_loss_weight": 0.0,
+        "aux_loss_weight": 0.1,
+        "mmd_loss_weight": 1.0,
+    }
+    assert PhyLoss(weights, ntax_cidx=0, mmd_num_kernels=5).mmd.num_kernels == 5
+    with pytest.raises(ValueError, match="positive odd integer"):
+        PhyLoss(weights, ntax_cidx=0, mmd_num_kernels=num_kernels)

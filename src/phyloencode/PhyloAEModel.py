@@ -698,7 +698,7 @@ class AECNN(nn.Module):
         trained_model_fn: str,
         map_location: Optional[Union[str, torch.device]] = "cpu") -> "AECNN":
         """
-        Load a pretrained model produced by ``save_model`` or old full-object saves.
+        Load a model artifact, trainer checkpoint, or old full-object save.
 
         Args:
             trained_model_fn (str): Input file.
@@ -707,6 +707,9 @@ class AECNN(nn.Module):
                 Use ``None`` to keep original device placement from the artifact.
         """
         model_obj = torch.load(trained_model_fn, map_location = map_location, weights_only=False)
+        if isinstance(model_obj, dict) and isinstance(model_obj.get("model"), cls):
+            model_obj = model_obj["model"]
+
         # new saved format
         if isinstance(model_obj, dict) and "model_config" in model_obj:
             model_config = dict(model_obj["model_config"])
@@ -732,7 +735,7 @@ class AECNN(nn.Module):
             return model_obj
         
         raise ValueError(f"Wrong model format in {trained_model_fn}. "
-        "Expected AECNN object or dict with model_config/model_state_dict.")
+        "Expected an AECNN object, model artifact, or trainer checkpoint containing an AECNN model.")
 
 # encoder classes
 class DenseEncoder(nn.Module):
