@@ -96,7 +96,6 @@ def main():
                             kernel                        = settings["kernel"],
                             out_channels                  = settings["out_channels"],
                             latent_output_dim             = settings["latent_output_dim"],
-                            latent_layer_type             = settings["latent_model_type"],
                             num_chars                     = settings["num_chars"],
                             char_type                     = settings["char_type"],
                             out_prefix                    = settings["out_prefix"],
@@ -122,10 +121,9 @@ def main():
         # PhyLoss compute and store loss and component losses for the final objective.
         loss_weights = _get_loss_weights(settings)
         train_loss = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
-                            ae_model.latent_layer_type,
                             mmd_num_kernels=settings["mmd_num_kernels"])
         val_loss   = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
-                            ae_model.latent_layer_type, validation=True,
+                            validation=True,
                             mmd_num_kernels=settings["mmd_num_kernels"])
 
 
@@ -244,7 +242,6 @@ def _parse_arguments():
     parser.add_argument("-nchans", "--num_channels",  required = False, type = int, help = "number of data channels. Default 9")
     parser.add_argument("-num_chars", "--num_chars",  required = False, type = int, help = "number of characters. Default 5")
     parser.add_argument("-ld", "--latent_output_dim", required = False, type = int, help = "latent output dimension. Default None (determined by structured encoder output shape)")
-    parser.add_argument("-l", "--latent_model_type",  required = False, help = "latent model type (GAUSS, DENSE, or CNN). Default GAUSS")
     parser.add_argument("-k", "--kernel",           required = False, type = int, help = "kernel size. Default 3,5,5")
     parser.add_argument("-r", "--stride",           required = False, type = int, help = "stride size. Default 2,4,4")
     parser.add_argument("-oc", "--out_channels",    required = False, type = int, help = "output channels. Default 32,32,128")
@@ -302,7 +299,6 @@ def _get_default_settings():
         "phy_loss_weight": 0.9,
         "aux_loss_weight": 0.1,
         "char_loss_weight": 1.0,
-        "latent_model_type": "GAUSS",
         "latent_output_dim": None,
         "stride": [2, 4, 8],
         "kernel": [3, 5, 9],
@@ -339,7 +335,6 @@ def _update_settings_from_command_line(settings, args):
         "phy_loss_weight": args.phy_loss_weight,
         "char_loss_weight" : args.char_loss_weight,
         "aux_loss_weight": args.aux_loss_weight,
-        "latent_model_type": args.latent_model_type,
         "latent_output_dim": args.latent_output_dim,
         "kernel"        : args.kernel,
         "stride"        : args.stride,

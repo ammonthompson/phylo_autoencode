@@ -15,7 +15,6 @@ settings = {
     "phy_loss_weight"   : 1.0,
     "char_loss_weight"  : 0.2,
     "aux_loss_weight"   : 0.1,
-    "latent_model_type" : "GAUSS", # ["GAUSS", "CNN", "DENSE"]
     "stride"            : [2,2,2,4],
     "kernel"            : [3,3,5,5],
     "out_channels"      : [16,16,32,32],

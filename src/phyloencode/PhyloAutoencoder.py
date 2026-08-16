@@ -734,9 +734,9 @@ class AETrainer(object):
             starting_epoch (int, optional): First epoch to include in plot. Defaults to 10.
         """
 
-        utils.make_loss_plots(self.train_loss, self.val_loss, 
-                                latent_layer_type=self.model.latent_layer_type,
-                                out_prefix=out_prefix, log=log, starting_epoch=starting_epoch)
+        utils.make_loss_plots(self.train_loss, self.val_loss,
+                              out_prefix=out_prefix, log=log,
+                              starting_epoch=starting_epoch)
 
     def _split_tree_char(self, phy : torch.Tensor, mask : Optional[torch.Tensor]) -> Tuple[torch.Tensor, 
                                                                                  torch.Tensor,

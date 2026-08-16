@@ -32,7 +32,6 @@ parser.add_argument("-mt", "--max_tips",         required = False, help = "maxim
 parser.add_argument("-w", "--phy_loss_weight",  required = False, help = "Phylogenetic loss weight (in [0,1]) . Default 0.9")
 parser.add_argument("-ns", "--num_subset",       required = False, help = "subset of data used for training/testing. Default 10000")
 parser.add_argument("-nc", "--num_channels",     required = False, help = "number of data channels. Default 9")
-parser.add_argument("-l", "--latent_model_type", required = False, help = "latent model type (GAUSS, DENSE, or CNN). Default GAUSS")
 parser.add_argument("-k", "--kernel",           required = False, help = "kernel size. Default 3,5,5")
 parser.add_argument("-r", "--stride",           required = False, help = "stride size. Default 2,4,4")
 parser.add_argument("-oc", "--out_channels",    required = False, help = "output channels. Default 32,32,128")
@@ -56,7 +55,6 @@ max_tips    = 1000
 mmd_lambda  = 1. # xxx5
 vz_lambda   = 1. # xxx5
 phy_loss_weight = 0.9
-latent_model_type = "GAUSS"
 stride          = [2,2,4]
 kernel          = [3,3,5]
 out_channels    = [32,64,128]
@@ -79,8 +77,6 @@ if args.vz_lambda is not None:
     vz_lambda = float(args.vz_lambda)
 if args.phy_loss_weight is not None:
     phy_loss_weight = float(args.phy_loss_weight)
-if args.latent_model_type is not None:
-    latent_model_type = args.latent_model_type
 if args.kernel is not None:
     kernel = [int(i) for i in args.kernel.split(",")]
 if args.stride is not None:
@@ -109,8 +105,6 @@ if args.config is not None:
         vz_lambda = config["vz_lambda"]
     if "phy_loss_weight" in config:
         phy_loss_weight = config["phy_loss_weight"]
-    if "latent_model_type" in config:
-        latent_model_type = config["latent_model_type"]
     if "kernel" in config:
         kernel = config["kernel"]
     if "stride" in config:      
@@ -166,7 +160,6 @@ ae_model  = ph.PhyloAEModel.AECNN(num_structured_input_channel  = ae_data.nchann
                                     stride                        = stride,
                                     kernel                        = kernel,
                                     out_channels                  = out_channels,
-                                    latent_layer_type             = latent_model_type,
                                     )
 
 # create Trainer

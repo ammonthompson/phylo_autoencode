@@ -53,7 +53,6 @@ class AECNN(nn.Module):
                  kernel = [3,3],
                  out_channels = [16, 32],
                  latent_output_dim = None, # if None, then controled by structured latent channels
-                 latent_layer_type = "CNN",     # CNN, DENSE, GAUSS
                  out_prefix = "out",
                  device = "auto",
                  seed = None,
@@ -69,9 +68,7 @@ class AECNN(nn.Module):
             structured_input_width (int): Structured input width (e.g., maximum number of tips).
             unstructured_input_width (int): Number of auxiliary features per sample.
             unstructured_latent_width (Optional[int]): Width of the auxiliary embedding produced
-                by the unstructured encoder. If ``latent_layer_type == "CNN"``, this must be an
-                integer multiple of the final structured latent channel count (``out_channels[-1]``).
-                If None, defaults to ``out_channels[-1]`` for CNN latent layers, otherwise 10.
+                by the unstructured encoder. If None, defaults to 10.
             aux_inner_dim (int): Hidden width used in the auxiliary encoder/decoder MLPs
                 (``DenseEncoder`` and ``DenseDecoder``). Defaults to 10.
             aux_numtips_idx (Optional[int]): Column index in the auxiliary vector that contains
@@ -88,11 +85,8 @@ class AECNN(nn.Module):
                 to ``[3, 3]``.
             out_channels (List[int]): Output channels for each structured encoder layer. Defaults to
                 ``[16, 32]``.
-            latent_output_dim (Optional[int]): Size of the shared latent vector when
-                ``latent_layer_type`` is ``"DENSE"`` or ``"GAUSS"``. If None, defaults to the
-                flattened structured embedding width.
-            latent_layer_type (str): Shared latent layer type: ``"CNN"``, ``"DENSE"``, or ``"GAUSS"``.
-                Defaults to ``"CNN"``.
+            latent_output_dim (Optional[int]): Size of the shared Gaussian latent vector. If
+                None, defaults to the flattened structured embedding width.
             out_prefix (str): Prefix for output files written during initialization (currently the
                 ``.network.txt`` architecture dump). Defaults to ``"out"``.
             device (str): ``"auto"``, ``"cpu"``, or ``"cuda"``. If ``"auto"``, selects CUDA when
@@ -105,9 +99,6 @@ class AECNN(nn.Module):
 
         Raises:
             ValueError: If ``stride``, ``kernel``, and ``out_channels`` lengths differ.
-            ValueError: If ``latent_layer_type == "CNN"`` and ``unstructured_latent_width`` is not
-                divisible by ``out_channels[-1]``.
-            ValueError: If ``latent_layer_type`` is not one of ``{"CNN", "DENSE", "GAUSS"}``.
         """
 
         super().__init__()
@@ -164,7 +155,6 @@ class AECNN(nn.Module):
                             "stride"      : stride,
                             "latent_dim"  : latent_output_dim}
                 
-        self.latent_layer_type = latent_layer_type
         self.latent_layer_dim = latent_output_dim
         
 
@@ -172,18 +162,9 @@ class AECNN(nn.Module):
         self.unstructured_latent_width = unstructured_latent_width
         self.num_structured_latent_channels = out_channels[-1]
         
-        # if not set, then set to structured latent channels
+        # if not set, use a compact auxiliary embedding
         if unstructured_latent_width is None:
-            if self.latent_layer_type == "CNN":
-                self.unstructured_latent_width = self.num_structured_latent_channels
-            else: 
-                self.unstructured_latent_width = 10
-
-        # Validate divisibility of the two latent sizes if CNN latent layer is used
-        if self.latent_layer_type == "CNN":
-            if self.unstructured_latent_width % self.num_structured_latent_channels != 0:
-                raise ValueError("""unstructured_latent_width must be an integer 
-                                 multiple of num_structured_latent_channels""")
+            self.unstructured_latent_width = 10
         
        
         ######################################
@@ -213,24 +194,10 @@ class AECNN(nn.Module):
         
         self.combined_latent_inwidth = self.flat_struct_outwidth + self.unstructured_latent_width
 
-        if self.latent_layer_type == "CNN":
-            self.latent_layer = LatentCNN(self.struct_outshape, kernel_size = self.layer_params['kernel'][-1])
-            self.reshaped_shared_latent_width = self.combined_latent_inwidth // self.struct_outshape[1]
-            if self.latent_layer_dim is not None:
-                raise Warning("""latent_layer_dim is set but not used.
-                                Latent layer type is CNN, so reshaped_shared_latent_width is set to 
-                                combined_latent_inwidth // num_structured_latent_channels""")
-            self.latent_outwidth = self.combined_latent_inwidth
-            self.latent_layer_decoder = LatentCNNDecoder(self.struct_outshape, kernel_size = self.layer_params['kernel'][-1])
-
-        elif self.latent_layer_type in {"GAUSS", "DENSE"}:
-            self.reshaped_shared_latent_width = self.struct_outshape[2]
-            self.latent_outwidth = self.flat_struct_outwidth if self.latent_layer_dim is None else self.latent_layer_dim
-            self.latent_layer = LatentDense(self.combined_latent_inwidth, self.latent_outwidth)
-            self.latent_layer_decoder = LatentDenseDecoder(self.latent_outwidth, self.flat_struct_outwidth)
-
-        else:
-            raise ValueError("""Must set latent_layer_type to either CNN, GAUSS or DENSE""")
+        self.reshaped_shared_latent_width = self.struct_outshape[2]
+        self.latent_outwidth = self.flat_struct_outwidth if self.latent_layer_dim is None else self.latent_layer_dim
+        self.latent_layer = LatentDense(self.combined_latent_inwidth, self.latent_outwidth)
+        self.latent_layer_decoder = LatentDenseDecoder(self.latent_outwidth, self.flat_struct_outwidth)
 
         self.unstructured_decoder = DenseDecoder(self.flat_struct_outwidth,
                                                  self.unstructured_input_width,
@@ -278,7 +245,7 @@ class AECNN(nn.Module):
             - ``phy_decoded``: Phylogeny reconstruction excluding character channels.
             - ``char_decoded``: Character reconstruction (or None if ``num_chars == 0``).
             - ``aux_decoded``: Auxiliary reconstruction.
-            - ``latent``: The latent representation if ``latent_layer_type == "GAUSS"``, otherwise None.
+            - ``latent``: The Gaussian latent representation.
         """
 
         # data is a tuple (structured, unstructured)
@@ -297,10 +264,6 @@ class AECNN(nn.Module):
         else:
             phy_decoded_x = structured_decoded_x
             char_decoded_x = None
-        # model should output the latent layer if layer type is "GAUSS"
-        if self.latent_layer_type != "GAUSS":
-            latent = None
-
         return phy_decoded_x, char_decoded_x, unstructured_decoded_x, latent
 
 
@@ -341,14 +304,8 @@ class AECNN(nn.Module):
                 flat_structured_encoded_x = structured_encoded_x.flatten(start_dim=1)                
                 combined_latent = torch.cat((flat_structured_encoded_x, unstructured_encoded_x), dim=1)
         
-                # get combined latent output
-                if self.latent_layer_type   == "CNN":
-                    reshaped_shared_latent = combined_latent.view(-1, self.num_structured_latent_channels, 
-                                                                    self.reshaped_shared_latent_width)
-                    shared_latent_out = self.latent_layer(reshaped_shared_latent)
-
-                elif self.latent_layer_type in {"GAUSS", "DENSE"}:
-                    shared_latent_out = self.latent_layer(combined_latent)
+                # get combined Gaussian latent output
+                shared_latent_out = self.latent_layer(combined_latent)
 
             if inference and detach:
                 shared_latent_out = shared_latent_out.detach()
@@ -529,7 +486,6 @@ class AECNN(nn.Module):
             "kernel": list(self.layer_params["kernel"]),
             "out_channels": list(self.layer_params["out_channels"]),
             "latent_output_dim": self.layer_params.get("latent_dim"),
-            "latent_layer_type": self.latent_layer_type,
             "out_prefix": getattr(self, "out_prefix", "out"),
             "device": getattr(self, "device_setting", self.device),
             "seed": getattr(self, "seed", None),
@@ -589,15 +545,6 @@ class AECNN(nn.Module):
         # inverse_transform
         # phy output shape is (N, nc, mt)
         latent = torch.tensor(latent, dtype=torch.float32)
-        if self.latent_layer_type == "CNN" and latent.ndim == 2:
-            expected_width = self.num_structured_latent_channels * self.reshaped_shared_latent_width
-            if latent.shape[1] != expected_width:
-                raise ValueError(
-                    "CNN latent vectors must have width "
-                    f"{expected_width} (= num_structured_latent_channels * reshaped_shared_latent_width), "
-                    f"but got {latent.shape[1]}."
-                )
-            latent = latent.view(-1, self.num_structured_latent_channels, self.reshaped_shared_latent_width)
         norm_phy, norm_aux = self.decode(latent, inference = True, detach = True)
         flat_norm_phy = norm_phy.cpu().numpy().reshape((norm_phy.shape[0], -1), order = "F")
         phy = self.phy_normalizer.inverse_transform(flat_norm_phy)
@@ -713,6 +660,12 @@ class AECNN(nn.Module):
         # new saved format
         if isinstance(model_obj, dict) and "model_config" in model_obj:
             model_config = dict(model_obj["model_config"])
+            legacy_latent_type = model_config.pop("latent_layer_type", "GAUSS")
+            if legacy_latent_type != "GAUSS":
+                raise ValueError(
+                    f"Unsupported legacy latent layer type: {legacy_latent_type}. "
+                    "Only Gaussian latent models are supported."
+                )
             if "seed" not in model_config and "seed" in model_obj:
                 model_config["seed"] = model_obj["seed"]
             # If caller pins load device, construct module on that device to avoid CUDA-init errors.
@@ -729,6 +682,12 @@ class AECNN(nn.Module):
         
         # old saved format (remove?)
         if isinstance(model_obj, cls):
+            legacy_latent_type = getattr(model_obj, "latent_layer_type", "GAUSS")
+            if legacy_latent_type != "GAUSS":
+                raise ValueError(
+                    f"Unsupported legacy latent layer type: {legacy_latent_type}. "
+                    "Only Gaussian latent models are supported."
+                )
             if map_location is not None:
                 model_obj.to(map_location)
             model_obj.eval()
@@ -1044,31 +1003,6 @@ class Head(nn.Module):
 
 
 # Latent layer classes
-class LatentCNN(nn.Module):
-    """CNN latent layer that preserves ``(channels, width)`` shape."""
-    def __init__(self, in_cnn_shape: Tuple[int, int], kernel_size = 9):
-        # creates a tensor with shape (in_cnn_shape[1], in_cnn_shape[2] + 1)
-        super().__init__()
-        odd_kernel = kernel_size - kernel_size % 2 + 1
-        self.shared_layer = nn.Sequential( # preserve input shape
-            nn.Conv1d(in_cnn_shape[1], 
-                      in_cnn_shape[1], 
-                      stride = 1, 
-                      kernel_size = odd_kernel, 
-                      padding = (odd_kernel-1)//2)
-        )
-    
-    def forward(self, x):
-        """Apply the latent CNN.
-
-        Args:
-            x (torch.Tensor): Tensor of shape ``(N, C, W)``.
-
-        Returns:
-            torch.Tensor: Tensor of shape ``(N, C, W)``.
-        """
-        return self.shared_layer(x)
-    
 class LatentDense(nn.Module):
     """Dense latent layer operating on flattened embeddings."""
     def __init__(self, in_width: int, out_width: int):
@@ -1095,41 +1029,7 @@ class LatentDense(nn.Module):
         return iter(self.shared_layer)
 
     
-# might be more work than its worth
-class LatentPool(nn.Module):
-    """Experimental latent layer using adaptive average pooling plus a linear map."""
-    def __init__(self, 
-                 struct_encoder_out_shape : Tuple[int, int], 
-                 unstruct_encoder_out_width : int, 
-                 latent_dim: int):
-        super().__init__()
-        struct_flat_width = struct_encoder_out_shape[0] * struct_encoder_out_shape[1]
-        avg_pool_out_size = struct_flat_width // latent_dim
-        dense_in_width = avg_pool_out_size + unstruct_encoder_out_width
-        self.avg_pool_layer = nn.AdaptiveAvgPool1d(output_size=avg_pool_out_size)
-        self.shared_layer = nn.Sequential(
-                nn.Linear(dense_in_width, latent_dim),
-            )        
-
-
-    def forward(self, struct, unstruct):
-        """Apply pooled latent mapping.
-
-        Args:
-            struct (torch.Tensor): Structured embedding tensor.
-            unstruct (torch.Tensor): Unstructured embedding tensor.
-
-        Returns:
-            torch.Tensor: Latent tensor of shape ``(N, latent_dim)``.
-        """
-        #
-        avg_pool = self.avg_pool_layer(struct)
-        flat_avg_pool = avg_pool.flatten(start_dim=1)                
-        combined_latent = torch.cat((flat_avg_pool, unstruct), dim=1)
-        return self.shared_layer(combined_latent)
-
-    
-class LatentDenseDecoder(nn.Module): # same as LatentGauss
+class LatentDenseDecoder(nn.Module):
     """Dense decoder that expands the latent vector back to a flattened structured embedding."""
     def __init__(self, in_width: int, out_width: int):
         super().__init__()
@@ -1155,33 +1055,6 @@ class LatentDenseDecoder(nn.Module): # same as LatentGauss
     
     def __iter__(self):
         return iter(self.shared_layer)
-    
-class LatentCNNDecoder(nn.Module):
-    """CNN decoder counterpart to ``LatentCNN`` that preserves ``(channels, width)`` shape."""
-    def __init__(self, in_cnn_shape: Tuple[int, int], kernel_size = 9):
-        super().__init__()
-        odd_kernel = kernel_size - kernel_size % 2 + 1
-        self.shared_layer = nn.Sequential( # preserve input shape
-            nn.Conv1d(in_cnn_shape[1], 
-                      in_cnn_shape[1], 
-                      stride = 1, 
-                      kernel_size = odd_kernel, 
-                      padding = (odd_kernel-1)//2)
-        )
-    
-    def forward(self, x):
-        """Apply the latent CNN decoder.
-
-        Args:
-            x (torch.Tensor): Tensor of shape ``(N, C, W)``.
-
-        Returns:
-            torch.Tensor: Tensor of shape ``(N, C, W)``.
-        """
-        return self.shared_layer(x)
-
-
-
 # Dev
 class TwoSidedReLU(nn.Module):
     """Clamp an input tensor elementwise between per-element min/max bounds."""

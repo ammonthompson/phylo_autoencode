@@ -405,8 +405,8 @@ def phylo_scatterplot(pred_phy_data, true_phy_data,
             f.savefig(fig)
             plt.close()
 
-def make_loss_plots(train_loss, val_loss = None,  *, latent_layer_type = None,
-                out_prefix = "AElossplot", log = True, starting_epoch = 10):
+def make_loss_plots(train_loss, val_loss = None,  *, out_prefix = "AElossplot",
+                    log = True, starting_epoch = 10):
     fig = plt.figure(figsize=(11, 8))
     plt.plot(list(range(len(train_loss.epoch_total_loss)))[starting_epoch:],
                 _log10_positive(train_loss.epoch_total_loss[starting_epoch:]),
@@ -438,7 +438,7 @@ def make_loss_plots(train_loss, val_loss = None,  *, latent_layer_type = None,
     # plot each loss separately (only validation losses are recorded). 
     # create subplots for each loss component   
     # TODO: fix x-axis tick marks            
-    num_subplots = 5 if latent_layer_type == "GAUSS" else 4
+    num_subplots = 5
     fig, axs = plt.subplots((num_subplots + 1)//2, 2, figsize=(11, 8), sharex=True)
     fig.subplots_adjust(hspace=0.4, wspace=0.4)
     fill_in_loss_comp_fig((val_loss.epoch_total_loss, train_loss.epoch_total_loss), 
@@ -450,10 +450,9 @@ def make_loss_plots(train_loss, val_loss = None,  *, latent_layer_type = None,
                           "char", axs[1,1], starting_epoch)
     fill_in_loss_comp_fig((val_loss.epoch_aux_loss, train_loss.epoch_aux_loss),
                           "aux", axs[1,0], starting_epoch)
-    if latent_layer_type == "GAUSS":
-        fill_in_loss_comp_fig((val_loss.epoch_mmd_loss, train_loss.epoch_mmd_loss),
-                              "mmd", axs[2,0], starting_epoch)
-        axs[2,1].axis("off")
+    fill_in_loss_comp_fig((val_loss.epoch_mmd_loss, train_loss.epoch_mmd_loss),
+                          "mmd", axs[2,0], starting_epoch)
+    axs[2,1].axis("off")
     plt.savefig(out_prefix + ".component_loss.pdf", bbox_inches='tight')
     plt.close(fig)
 

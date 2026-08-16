@@ -38,7 +38,6 @@ class PhyLoss(nn.Module):
                  weights : dict[str, torch.Tensor], 
                  ntax_cidx : int,
                  char_type : str = None, 
-                 latent_layer_Type = "GAUSS",
                  validation  = False,
                  mmd_num_kernels: int = 3) -> None:
         """Initialize a stateful loss accumulator.
@@ -56,8 +55,6 @@ class PhyLoss(nn.Module):
                 number of taxa/tips (e.g. ``num_taxa``). Used for the separate num-tips loss.
             char_type (Optional[str]): Character type, typically ``"categorical"`` or
                 ``"continuous"``. Defaults to None.
-            latent_layer_Type (str): Latent layer type string (used for bookkeeping/logging).
-                Defaults to ``"GAUSS"``.
             validation (bool): If True, ``print_epoch_losses()`` labels output as validation.
                 Defaults to False.
             mmd_num_kernels (int): Positive odd number of RBF bandwidths used by MMD.
@@ -91,7 +88,6 @@ class PhyLoss(nn.Module):
         self.set_weights(weights)
 
         self.char_type = char_type
-        self.latent_layer_type = latent_layer_Type
         
         # latent loss
         self.mmd = MMDLoss(n_kernels=mmd_num_kernels)

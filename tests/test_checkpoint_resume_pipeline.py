@@ -77,7 +77,6 @@ def _make_trainer(data, loaders, checkpoint_prefix=None):
         kernel=[3, 3],
         out_channels=[4, 4],
         latent_output_dim=4,
-        latent_layer_type="DENSE",
         num_chars=0,
         char_type="continuous",
         out_prefix="integration-test",
@@ -105,13 +104,11 @@ def _make_trainer(data, loaders, checkpoint_prefix=None):
         weights,
         data.ntax_cidx,
         model.char_type,
-        model.latent_layer_type,
     )
     val_loss = PhyLoss(
         weights,
         data.ntax_cidx,
         model.char_type,
-        model.latent_layer_type,
         validation=True,
     )
     trainer = PhyloAutoencoder(
@@ -167,6 +164,10 @@ def test_checkpoint_resume_matches_uninterrupted_training(tmp_path):
     first_segment = _make_trainer(
         first_data, first_loaders, checkpoint_prefix
     )
+    # Simulate a checkpoint emitted by an in-flight run using the former option.
+    first_segment.model.latent_layer_type = "GAUSS"
+    first_segment.train_loss.latent_layer_type = "GAUSS"
+    first_segment.val_loss.latent_layer_type = "GAUSS"
     first_segment.train(2, seed=SEED)
     assert checkpoint_file.exists()
 
@@ -177,6 +178,26 @@ def test_checkpoint_resume_matches_uninterrupted_training(tmp_path):
         checkpoint_model.state_dict(), first_segment.model.state_dict()
     )
     assert not checkpoint_model.training
+    assert "latent_layer_type" not in checkpoint_model.get_config_dict()
+
+    legacy_model_file = tmp_path / "legacy_gaussian.ae_trained.pt"
+    checkpoint_model.save_model(legacy_model_file)
+    legacy_artifact = torch.load(
+        legacy_model_file, map_location="cpu", weights_only=False
+    )
+    legacy_artifact["model_config"]["latent_layer_type"] = "GAUSS"
+    torch.save(legacy_artifact, legacy_model_file)
+    legacy_model = AECNN.load_pretrained_from_file(
+        legacy_model_file, map_location="cpu"
+    )
+    _assert_nested_equal(
+        legacy_model.state_dict(), checkpoint_model.state_dict()
+    )
+
+    legacy_artifact["model_config"]["latent_layer_type"] = "DENSE"
+    torch.save(legacy_artifact, legacy_model_file)
+    with pytest.raises(ValueError, match="Only Gaussian latent models"):
+        AECNN.load_pretrained_from_file(legacy_model_file, map_location="cpu")
 
     resumed_data, resumed_loaders = _make_data_and_loaders(data_file)
     resumed = PhyloAutoencoder.load_checkpoint(
