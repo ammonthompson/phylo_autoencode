@@ -272,8 +272,7 @@ class PhyLoss(nn.Module):
             y (torch.Tensor): Target character tensor, shape ``(N, C_char, W)``. For categorical
                 characters this is typically one-hot (or a probability simplex) over channels.
             mask (Optional[torch.Tensor]): Optional boolean/0-1 mask with shape ``(N, C_char, W)``
-                indicating which tips are present (padding tips are False). When provided, the
-                mask from the first channel is used as a per-tip mask.
+                indicating which tips are present (padding tips are False).
 
         Returns:
             torch.Tensor: Scalar batch-mean character reconstruction loss.
@@ -287,7 +286,17 @@ class PhyLoss(nn.Module):
             char_loss = fun.mse_loss(x, y, reduction = 'none')
 
         if mask is not None:
-            pb_char_loss = (char_loss * mask[:,0,:] ).sum(dim=1) / mask[:,0,:].sum(dim=1)# match dims (all columns are the same in mask)
+            if char_loss.ndim == mask.ndim:
+                loss_mask = mask
+                reduce_dims = (1, 2)
+            else:
+                # Cross entropy has already reduced the categorical channel axis.
+                loss_mask = mask[:, 0, :]
+                reduce_dims = (1,)
+            pb_char_loss = (
+                (char_loss * loss_mask).sum(dim=reduce_dims)
+                / loss_mask.sum(dim=reduce_dims).clamp_min(1)
+            )
         else:
             pb_char_loss = char_loss
 

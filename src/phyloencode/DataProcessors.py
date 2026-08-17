@@ -216,7 +216,12 @@ class AEData:
 
     def _fit_normalizers(self, phy, aux):
         if self.char_data_type == "continuous":
-            self.phy_normalizer = utils.PositiveStandardScaler().fit(phy)
+            num_tips = aux[:, self.ntax_cidx].astype(np.int64)
+            mask = np.arange(self.max_tips)[None, None, :] < num_tips[:, None, None]
+            mask = np.broadcast_to(mask, (len(phy), self.num_channels, self.max_tips))
+            self.phy_normalizer = utils.PositiveStandardScaler().fit(
+                phy, mask=mask.reshape(phy.shape, order="F")
+            )
         elif self.char_data_type == "categorical":
             self.phy_normalizer = utils.StandardScalerPhyCategorical(
                 self.num_chars, self.num_channels, self.max_tips

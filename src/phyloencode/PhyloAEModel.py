@@ -448,7 +448,13 @@ class AECNN(nn.Module):
             self.train(is_training)
 
     def set_normalizers(self, phy_normalizer, aux_normalizer) -> None:
-        """Replace fitted normalizers and refresh normalization-dependent bounds."""
+        """Replace fitted normalizers and refresh normalization-dependent bounds.
+
+        Continuous-character scalers contain statistics for every structured
+        channel, while categorical-character scalers contain statistics only
+        for the tree channels.  The decoder bounds apply only to tree channels,
+        so accept either layout and select the relevant statistics here.
+        """
         self.phy_normalizer = phy_normalizer
         self.aux_normalizer = aux_normalizer
 
@@ -458,12 +464,30 @@ class AECNN(nn.Module):
         self.ntip_base = (2.0 - aux_normalizer.mean_[self.aux_numtips_idx]) / ntip_sd
         self.ntip_scale = (self.structured_input_width - 2.0) / ntip_sd
 
-        phy_shape = (
-            self.num_structured_input_channel - self.num_chars,
-            self.structured_input_width,
-        )
-        phy_mean = phy_normalizer.mean_.reshape(phy_shape, order="F")
-        phy_sd = phy_normalizer.std_.reshape(phy_shape, order="F")
+        num_tree_channels = self.num_structured_input_channel - self.num_chars
+        tree_shape = (num_tree_channels, self.structured_input_width)
+        full_shape = (self.num_structured_input_channel, self.structured_input_width)
+        phy_mean = np.asarray(phy_normalizer.mean_)
+        phy_sd = np.asarray(phy_normalizer.std_)
+        if phy_mean.size != phy_sd.size:
+            raise ValueError(
+                "Structured normalizer mean and standard-deviation statistics "
+                f"have different sizes ({phy_mean.size} and {phy_sd.size})."
+            )
+        tree_size = np.prod(tree_shape)
+        full_size = np.prod(full_shape)
+        if phy_mean.size == full_size:
+            phy_mean = phy_mean.reshape(full_shape, order="F")[:num_tree_channels]
+            phy_sd = phy_sd.reshape(full_shape, order="F")[:num_tree_channels]
+        elif phy_mean.size == tree_size:
+            phy_mean = phy_mean.reshape(tree_shape, order="F")
+            phy_sd = phy_sd.reshape(tree_shape, order="F")
+        else:
+            raise ValueError(
+                "Structured normalizer statistics have "
+                f"{phy_mean.size} values; expected {tree_size} "
+                f"(tree channels only) or {full_size} (all channels)."
+            )
         device = self._runtime_device()
         phy_lower_bound = torch.as_tensor(-phy_mean / phy_sd, dtype=torch.float32, device=device)
         phy_upper_bound = torch.as_tensor((1 - phy_mean) / phy_sd, dtype=torch.float32, device=device)

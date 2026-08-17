@@ -37,9 +37,12 @@ class PositiveStandardScaler(BaseEstimator, TransformerMixin):
         self.std_ = None
         self.scale_ = None
 
-    def fit(self, X, y=None):
-        mask = X > 0
-        mask[:, 0:2] = True  # Always include the first elements
+    def fit(self, X, y=None, mask=None):
+        if mask is None:
+            mask = X > 0
+            mask[:, 0:2] = True  # Always include the first elements
+        elif np.shape(mask) != np.shape(X):
+            raise ValueError("mask must have the same shape as X")
 
         sum_X = np.sum(X * mask, axis=0)
         num_nonzero = np.sum(mask, axis=0)

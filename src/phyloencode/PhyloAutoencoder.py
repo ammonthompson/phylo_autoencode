@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import numpy as np
 import torch
+from torch.optim.lr_scheduler import LRScheduler
 # from torch import optim
 # from torch.utils.data import Dataset, DataLoader, TensorDataset
 # from sklearn.preprocessing import StandardScaler
@@ -60,7 +61,7 @@ class AETrainer(object):
                  model: AECNN, 
                  optimizer : torch.optim.Optimizer, 
                  *, 
-                 lr_scheduler : Optional[torch.optim.lr_scheduler.LRScheduler] = None, 
+                 lr_scheduler : Optional[LRScheduler] = None, 
                  train_loss : Optional[PhyLoss] = None, 
                  val_loss : Optional[PhyLoss] = None, 
                  seed : Optional[int] = None, 
