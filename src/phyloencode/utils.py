@@ -67,12 +67,8 @@ class PositiveStandardScaler(BaseEstimator, TransformerMixin):
     def inverse_transform(self, X):
         return np.array(X * self.std_ + self.mean_, dtype=np.float32)
 
-class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
-    # this is a modified version of sklearn's StandardScaler. 
-    # For one-hot encoded categorical data.
-    # normalizes the tree data to have mean 0 and std 1.
-    # ignores the categorical data
-    # uses PositiveStandardScaler (see above)
+class _StandardScalerPhy(BaseEstimator, TransformerMixin):
+    """Shared structured-channel bookkeeping for phylogenetic scalers."""
 
     def __init__(self, num_chars, num_chans, max_tips):
         super().__init__()
@@ -94,6 +90,21 @@ class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
         self.char_idxs = (dim1_idx[:, None] + char_idx).flatten()
         self.tree_idxs = (dim1_idx[:, None] + phy_idx).flatten()
 
+    def tree_statistics(self):
+        """Return fitted tree-channel means and standard deviations by channel."""
+        tree_shape = (self.num_chans - self.num_chars, self.max_tips)
+        return (
+            self.cblv_scaler.mean_.reshape(tree_shape, order="F"),
+            self.cblv_scaler.std_.reshape(tree_shape, order="F"),
+        )
+
+
+class StandardScalerPhyCategorical(_StandardScalerPhy):
+    # this is a modified version of sklearn's StandardScaler.
+    # For one-hot encoded categorical data.
+    # normalizes the tree data to have mean 0 and std 1.
+    # ignores the categorical data
+    # uses PositiveStandardScaler (see above)
 
     def fit(self, X, y=None):
         # Ensure X is a NumPy array
@@ -141,6 +152,62 @@ class StandardScalerPhyCategorical(BaseEstimator, TransformerMixin):
 
         return X
     
+
+class StandardScalerPhyContinuous(_StandardScalerPhy):
+    """Scale each continuous character across all observed tips."""
+
+    def __init__(self, num_chars, num_chans, max_tips):
+        super().__init__(num_chars, num_chans, max_tips)
+        self.char_scaler = StandardScaler()
+
+    def fit(self, X, y=None, mask=None):
+        X = np.asarray(X)
+        if mask is None or np.shape(mask) != X.shape:
+            raise ValueError("mask must have the same shape as X")
+
+        self.cblv_scaler.fit(
+            X[:, self.tree_idxs], mask=np.asarray(mask)[:, self.tree_idxs]
+        )
+        if self.num_chars:
+            char_data = X[:, self.char_idxs].reshape(-1, self.num_chars)
+            char_mask = np.asarray(mask)[:, self.char_idxs].reshape(
+                -1, self.num_chars
+            )
+            char_data = np.where(char_mask, char_data, np.nan)
+            char_data[:, ~char_mask.any(axis=0)] = 0.0
+            self.char_scaler.fit(char_data)
+
+        self.mean_ = self.cblv_scaler.mean_
+        self.std_ = self.cblv_scaler.std_
+        self.scale_ = self.std_
+        return self
+
+    def transform(self, X):
+        X = np.asarray(X)
+        transformed = np.empty_like(X, dtype=np.float32)
+        transformed[:, self.tree_idxs] = self.cblv_scaler.transform(
+            X[:, self.tree_idxs]
+        )
+        if self.num_chars:
+            transformed[:, self.char_idxs] = self.char_scaler.transform(
+                X[:, self.char_idxs].reshape(-1, self.num_chars)
+            ).reshape(len(X), -1)
+        return transformed
+
+    def inverse_transform(self, X):
+        if isinstance(X, torch.Tensor):
+            X = X.numpy()
+        X = np.asarray(X)
+        restored = np.empty_like(X, dtype=np.float32)
+        restored[:, self.tree_idxs] = self.cblv_scaler.inverse_transform(
+            X[:, self.tree_idxs]
+        )
+        if self.num_chars:
+            restored[:, self.char_idxs] = self.char_scaler.inverse_transform(
+                X[:, self.char_idxs].reshape(-1, self.num_chars)
+            ).reshape(len(X), -1)
+        return restored
+
 
 # other functions
 def file_exists(fname):

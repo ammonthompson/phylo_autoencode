@@ -151,11 +151,10 @@ class AEData:
                 ``phy_data``. If the file has more channels, channels after this
                 count are ignored.
             char_data_type: Structured-data normalization mode. Use
-                ``"continuous"`` for ``utils.PositiveStandardScaler`` or
+                ``"continuous"`` for ``utils.StandardScalerPhyContinuous`` or
                 ``"categorical"`` for ``utils.StandardScalerPhyCategorical``.
             num_chars: Number of trailing structured channels treated as
-                categorical character channels when ``char_data_type`` is
-                ``"categorical"``.
+                character channels.
             seed: Random seed passed to the train/validation split and to the
                 PyTorch ``DataLoader`` generator.
             max_tips: Structured matrix width. ``phy_data.shape[1]`` must be an
@@ -219,9 +218,9 @@ class AEData:
             num_tips = aux[:, self.ntax_cidx].astype(np.int64)
             mask = np.arange(self.max_tips)[None, None, :] < num_tips[:, None, None]
             mask = np.broadcast_to(mask, (len(phy), self.num_channels, self.max_tips))
-            self.phy_normalizer = utils.PositiveStandardScaler().fit(
-                phy, mask=mask.reshape(phy.shape, order="F")
-            )
+            self.phy_normalizer = utils.StandardScalerPhyContinuous(
+                self.num_chars, self.num_channels, self.max_tips
+            ).fit(phy, mask=mask.reshape(phy.shape, order="F"))
         elif self.char_data_type == "categorical":
             self.phy_normalizer = utils.StandardScalerPhyCategorical(
                 self.num_chars, self.num_channels, self.max_tips
