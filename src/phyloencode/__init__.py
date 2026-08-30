@@ -11,7 +11,7 @@ Key modules:
       See ``phyloencode.PhyloAEModel.AECNN``.
     - ``phyloencode.PhyloAutoencoder``: Training loop / trainer wrapper around a model, optimizer,
       and loss objects. See ``phyloencode.PhyloAutoencoder.AETrainer``.
-    - ``phyloencode.PhyLoss``: Stateful composite losses used during training.
+    - ``phyloencode.PhyLoss``: Composite objectives and component metrics used during training.
       See ``phyloencode.PhyLoss.PhyLoss``.
     - ``phyloencode.utils``: Assorted helper functions (plotting, reshaping, etc.).
 

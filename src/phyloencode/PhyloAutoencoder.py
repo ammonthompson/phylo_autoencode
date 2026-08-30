@@ -22,6 +22,7 @@ from typing import List, Dict, Tuple, Optional, Union
 
 
 _NO_CHECKPOINT_OVERRIDE = object()
+_LOSS_METRIC_NAMES = ("total", "phy", "char", "aux", "mmd")
 
 
 class AETrainer(object):
@@ -32,7 +33,7 @@ class AETrainer(object):
 
     - Device placement and optional global seeding for reproducibility.
     - Epoch-based training and validation over PyTorch DataLoader instances.
-    - Tracking/printing losses via stateful loss objects (e.g. ``phyloencode.PhyLoss.PhyLoss``).
+    - Tracking and reporting detached training and validation loss metrics.
 
     Notes:
         The data loaders are expected to yield either ``(phy, aux)`` or ``(phy, aux, mask)``:
@@ -55,6 +56,8 @@ class AETrainer(object):
         total_epochs (int): Total epochs trained so far (cumulative across ``train()`` calls).
         train_loss: Loss object used for training batches.
         val_loss: Loss object used for validation batches.
+        train_metrics (_LossMetricTracker): Training loss metric history.
+        val_metrics (_LossMetricTracker): Validation loss metric history.
     """
 
     def __init__(self,
@@ -78,13 +81,11 @@ class AETrainer(object):
             lr_scheduler: Optional learning-rate scheduler with a ``.step()`` method.
                 If provided, it is stepped once per training batch (not per epoch).
             train_loss: Loss object/callable used during training. It must be callable as
-                ``train_loss(pred, true, segmented_mask)`` and return a scalar tensor used for
-                backprop. ``segmented_mask`` is a ``(tree_mask, char_mask)`` tuple (each element
-                may be None). For logging, it is expected to provide
-                ``.append_mean_batch_loss()`` and ``.print_epoch_losses(...)``.
+                ``train_loss(pred, true, segmented_mask)`` and return the scalar objective
+                plus a component-metric mapping. ``segmented_mask`` is a
+                ``(tree_mask, char_mask)`` tuple (each element may be None).
             val_loss: Loss object/callable used during validation. It is called like
-                ``val_loss(pred, true, segmented_mask)`` and is expected to track/print losses
-                similarly to ``train_loss``.
+                ``train_loss``.
             seed (int, optional): If provided, seeds Python, NumPy, and PyTorch RNGs and
                 enables deterministic cuDNN behavior for reproducibility. Defaults to None.
             device (str, optional): ``"auto"``, ``"cuda"``, or ``"cpu"``. If ``"auto"``, selects
@@ -130,6 +131,8 @@ class AETrainer(object):
 
         self.train_loss = train_loss
         self.val_loss   = val_loss
+        self.train_metrics = _LossMetricTracker()
+        self.val_metrics = _LossMetricTracker()
 
         self.track_grad = False
         self.batch_layer_grad_norm = None
@@ -169,26 +172,30 @@ class AETrainer(object):
 
             # perform all mini batch steps for the epoch for training data
             self._mini_batch(validation=False)
-            self.train_loss.append_mean_batch_loss()
+            self.train_metrics.finalize_epoch()
 
             # print training epoch mean losses to screen
-            self.train_loss.print_epoch_losses(elapsed_time=time.time() - epoch_time)
+            _print_latest_loss_metrics(
+                self.train_metrics, "Train loss: ", time.time() - epoch_time,
+                print_epoch=True,
+            )
 
 
             # perform mini batch on validation data
             if self.val_loader is not None and self.val_loss is not None:
                 with torch.no_grad():
                     self._mini_batch(validation=True)             
-                    self.val_loss.append_mean_batch_loss()
+                    self.val_metrics.finalize_epoch()
                     # print epoch mean component losses to screen       
-                    self.val_loss.print_epoch_losses(elapsed_time = time.time() - epoch_time)
+                    _print_latest_loss_metrics(
+                        self.val_metrics, "Val loss:   ", time.time() - epoch_time
+                    )
 
             # save checkpoints
             if self.checkpoints != None:
                 if self.epoch in self.checkpoints:
                     self.save_checkpoint(self.checkpt_file_prefix + "_epoch_" + str(self.epoch) + ".ckpt.pt")
 
-       
     def _mini_batch(self, validation = False):
         """Run one full pass over a data loader (train or validation).
 
@@ -200,7 +207,7 @@ class AETrainer(object):
                 If False, uses ``train_loader`` and ``_train_step()``. Defaults to False.
 
         Returns:
-            None: This method updates loss state as a side-effect.
+            None: This method updates trainer-owned metric state as a side-effect.
         """
         # 
 
@@ -259,10 +266,11 @@ class AETrainer(object):
         true = (tree, char, aux)
         pred = self.model((phy, aux))
 
-        loss = self.train_loss(pred, true, segmented_mask)
+        objective, metrics = self.train_loss(pred, true, segmented_mask)
+        self.train_metrics.record_batch(metrics)
 
         # compute gradient
-        loss.backward()
+        objective.backward()
 
         # record gradient for assessments
         if self.track_grad:
@@ -281,7 +289,7 @@ class AETrainer(object):
         
     def evaluate(self, phy: torch.Tensor, aux: torch.Tensor,
                   mask: Optional[torch.Tensor] = None):
-        """Evaluate the model on one batch and update validation loss state.
+        """Evaluate the model on one batch and record validation metrics.
 
         This method does not disable gradients by itself; call it under
         ``torch.no_grad()`` during evaluation.
@@ -303,8 +311,8 @@ class AETrainer(object):
         true = (tree, char, aux)
         pred = self.model((phy, aux))
 
-        # compute and update loss fields in val_loss
-        self.val_loss(pred, true, segmented_mask)
+        _, metrics = self.val_loss(pred, true, segmented_mask)
+        self.val_metrics.record_batch(metrics)
         
     def predict(self, phy: torch.Tensor, aux: torch.Tensor, *,
                 inference = False, detach = False) -> Tuple[np.ndarray, np.ndarray]:
@@ -535,7 +543,7 @@ class AETrainer(object):
             )
 
         checkpoint = {
-            'checkpoint_version': 4,
+            'checkpoint_version': 5,
             'model': self.model,
             'seed': self.seed,
             'epoch': self.epoch,
@@ -543,6 +551,10 @@ class AETrainer(object):
             'lr_scheduler': self.lr_sched,
             'train_loss': self.train_loss,
             'val_loss': self.val_loss,
+            'loss_metric_state': {
+                'train': self.train_metrics.state_dict(),
+                'validation': self.val_metrics.state_dict(),
+            },
             'trainer_state': {
                 'device': self.device,
                 'checkpoints': self.checkpoints,
@@ -587,6 +599,7 @@ class AETrainer(object):
         lr_sched = checkpoint['lr_scheduler']
         train_loss = checkpoint['train_loss']
         val_loss = checkpoint['val_loss']
+        loss_metric_state = checkpoint.get('loss_metric_state')
         trainer_state = checkpoint.get('trainer_state', {})
 
         if map_location is None:
@@ -624,6 +637,14 @@ class AETrainer(object):
             checkpt_file_prefix=restored_prefix,
         )
         self.epoch = checkpoint['epoch']
+        if loss_metric_state is None:
+            self.train_metrics.load_legacy_loss_history(self.train_loss)
+            self.val_metrics.load_legacy_loss_history(self.val_loss)
+        else:
+            self.train_metrics.load_state_dict(loss_metric_state.get('train', {}))
+            self.val_metrics.load_state_dict(
+                loss_metric_state.get('validation', {})
+            )
         if restored_track_grad and saved_track_grad:
             self.batch_layer_grad_norm = trainer_state.get(
                 'batch_layer_grad_norm', self.batch_layer_grad_norm
@@ -735,7 +756,7 @@ class AETrainer(object):
             starting_epoch (int, optional): First epoch to include in plot. Defaults to 10.
         """
 
-        utils.make_loss_plots(self.train_loss, self.val_loss,
+        utils.make_loss_plots(self.train_metrics, self.val_metrics,
                               out_prefix=out_prefix, log=log,
                               starting_epoch=starting_epoch)
 
@@ -771,3 +792,97 @@ class AETrainer(object):
 
 # Backward compatibility for imports and checkpoints created before the rename.
 PhyloAutoencoder = AETrainer
+
+
+class _LossMetricTracker:
+    """Accumulate detached batch loss metrics and retain epoch histories."""
+
+    def __init__(self):
+        self.epoch_history = {name: [] for name in _LOSS_METRIC_NAMES}
+        self._batch_history = {name: [] for name in _LOSS_METRIC_NAMES}
+
+    def record_batch(self, metrics):
+        """Record one batch of metric tensors without retaining autograd graphs."""
+        missing = set(_LOSS_METRIC_NAMES).difference(metrics)
+        if missing:
+            raise KeyError(f"Missing loss metrics: {sorted(missing)}")
+
+        for name in _LOSS_METRIC_NAMES:
+            value = metrics[name]
+            if not isinstance(value, torch.Tensor):
+                raise TypeError(
+                    f"Loss metric '{name}' must be a tensor, got "
+                    f"{type(value).__name__}."
+                )
+            self._batch_history[name].append(value.detach())
+
+    def finalize_epoch(self):
+        """Append mean batch metrics to epoch history and clear batch history."""
+        if not self._batch_history["total"]:
+            raise ValueError("Cannot finalize loss metrics without any batches.")
+
+        for name in _LOSS_METRIC_NAMES:
+            values = self._batch_history[name]
+            self.epoch_history[name].append(torch.stack(values).mean().item())
+            values.clear()
+
+    def state_dict(self):
+        """Return all state needed to resume metric tracking."""
+        return {
+            "epoch_history": {
+                name: list(values) for name, values in self.epoch_history.items()
+            },
+            "batch_history": {
+                name: [value.clone() for value in values]
+                for name, values in self._batch_history.items()
+            },
+        }
+
+    def load_state_dict(self, state):
+        """Restore metric tracking state."""
+        epoch_history = state.get("epoch_history", {})
+        batch_history = state.get("batch_history", {})
+        self.epoch_history = {
+            name: list(epoch_history.get(name, [])) for name in _LOSS_METRIC_NAMES
+        }
+        self._batch_history = {
+            name: [value.detach() for value in batch_history.get(name, [])]
+            for name in _LOSS_METRIC_NAMES
+        }
+
+    def load_legacy_loss_history(self, loss):
+        """Move history fields from a loss object saved by an older checkpoint."""
+        if loss is None:
+            return
+
+        for period, destination in (
+                ("epoch", self.epoch_history), ("batch", self._batch_history)):
+            for name in _LOSS_METRIC_NAMES:
+                for attribute in (
+                        f"{period}_{name}_loss_history", f"{period}_{name}_loss"):
+                    if not hasattr(loss, attribute):
+                        continue
+                    values = list(getattr(loss, attribute))
+                    if period == "batch":
+                        values = [value.detach() for value in values]
+                    destination[name] = values
+                    delattr(loss, attribute)
+                    break
+
+        if hasattr(loss, "validation"):
+            delattr(loss, "validation")
+
+
+def _print_latest_loss_metrics(metrics, label, elapsed_time, print_epoch=False):
+    """Print the latest epoch summary from a loss metric tracker."""
+    history = metrics.epoch_history
+    if print_epoch:
+        print(f"Epoch {len(history['total'])}")
+    print(
+        f"\t {label}{history['total'][-1]:.4f},  "
+        f"phy L: {history['phy'][-1]:.4f},  "
+        f"char L: {history['char'][-1]:.4f},  "
+        f"aux L: {history['aux'][-1]:.4f},  "
+        f"MMD L: {history['mmd'][-1]:.4f},  "
+        f"Run time: {elapsed_time:.3f} sec"
+    )

@@ -9,7 +9,7 @@ from torch.optim import AdamW
 from phyloencode import utils
 from phyloencode.DataProcessors import AEData
 from phyloencode.PhyloAEModel import AECNN
-from phyloencode.PhyloAutoencoder import PhyloAutoencoder
+from phyloencode.PhyloAutoencoder import PhyloAutoencoder, _LossMetricTracker
 from phyloencode.PhyLoss import PhyLoss
 
 
@@ -109,7 +109,6 @@ def _make_trainer(data, loaders, checkpoint_prefix=None):
         weights,
         data.ntax_cidx,
         model.char_type,
-        validation=True,
     )
     trainer = PhyloAutoencoder(
         model=model,
@@ -216,19 +215,12 @@ def test_checkpoint_resume_matches_uninterrupted_training(tmp_path):
     _assert_nested_equal(
         resumed.lr_sched.state_dict(), uninterrupted.lr_sched.state_dict()
     )
-    for history_name in (
-        "epoch_total_loss",
-        "epoch_phy_loss",
-        "epoch_char_loss",
-        "epoch_aux_loss",
-        "epoch_mmd_loss",
-    ):
-        assert getattr(resumed.train_loss, history_name) == getattr(
-            uninterrupted.train_loss, history_name
-        )
-        assert getattr(resumed.val_loss, history_name) == getattr(
-            uninterrupted.val_loss, history_name
-        )
+    assert resumed.train_metrics.epoch_history == (
+        uninterrupted.train_metrics.epoch_history
+    )
+    assert resumed.val_metrics.epoch_history == (
+        uninterrupted.val_metrics.epoch_history
+    )
 
     assert resumed.checkpoints == [1]
     assert resumed.checkpt_file_prefix == str(checkpoint_prefix)
@@ -247,6 +239,33 @@ def test_save_checkpoint_refuses_to_overwrite_existing_file(tmp_path):
         trainer.save_checkpoint(checkpoint_file)
 
     assert checkpoint_file.read_bytes() == b"existing checkpoint"
+
+
+def test_loss_metric_tracker_migrates_legacy_loss_history():
+    weights = {
+        "phy_loss_weight": 1.0,
+        "char_loss_weight": 0.0,
+        "aux_loss_weight": 0.1,
+        "mmd_loss_weight": 0.0,
+    }
+    loss = PhyLoss(weights, ntax_cidx=0)
+    for name in ("total", "phy", "char", "aux", "mmd"):
+        setattr(loss, f"epoch_{name}_loss", [1.0])
+        setattr(loss, f"batch_{name}_loss", [torch.tensor(2.0, requires_grad=True)])
+    loss.validation = True
+
+    metrics = _LossMetricTracker()
+    metrics.load_legacy_loss_history(loss)
+
+    assert metrics.epoch_history == {
+        name: [1.0] for name in ("total", "phy", "char", "aux", "mmd")
+    }
+    assert all(
+        not values[0].requires_grad for values in metrics._batch_history.values()
+    )
+    assert not hasattr(loss, "epoch_total_loss")
+    assert not hasattr(loss, "batch_total_loss")
+    assert not hasattr(loss, "validation")
 
 
 @pytest.mark.parametrize("num_kernels", [0, 2])

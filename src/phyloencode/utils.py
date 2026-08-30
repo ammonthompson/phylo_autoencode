@@ -475,15 +475,21 @@ def phylo_scatterplot(pred_phy_data, true_phy_data,
             f.savefig(fig)
             plt.close()
 
-def make_loss_plots(train_loss, val_loss = None,  *, out_prefix = "AElossplot",
+def make_loss_plots(train_metrics, val_metrics = None,  *, out_prefix = "AElossplot",
                     log = True, starting_epoch = 10):
+    train_history = train_metrics.epoch_history
+    val_history = (
+        val_metrics.epoch_history
+        if val_metrics is not None
+        else {name: [] for name in ("total", "phy", "char", "aux", "mmd")}
+    )
     fig = plt.figure(figsize=(11, 8))
-    plt.plot(list(range(len(train_loss.epoch_total_loss)))[starting_epoch:],
-                _log10_positive(train_loss.epoch_total_loss[starting_epoch:]),
+    plt.plot(list(range(len(train_history["total"])))[starting_epoch:],
+                _log10_positive(train_history["total"][starting_epoch:]),
                 label='Training Loss', c="r")
-    if val_loss:
-        plt.plot(list(range(len(val_loss.epoch_total_loss)))[starting_epoch:],
-                 _log10_positive(val_loss.epoch_total_loss[starting_epoch:]),
+    if val_metrics:
+        plt.plot(list(range(len(val_history["total"])))[starting_epoch:],
+                 _log10_positive(val_history["total"][starting_epoch:]),
                  label='Validation Loss', c='b')
     plt.xlabel('Epochs')
     plt.ylabel('log10 Loss')
@@ -491,16 +497,16 @@ def make_loss_plots(train_loss, val_loss = None,  *, out_prefix = "AElossplot",
     plt.grid(True)
     
     log_losses = _log10_positive(np.concatenate((
-        train_loss.epoch_total_loss[starting_epoch:],
-        val_loss.epoch_total_loss[starting_epoch:],
+        train_history["total"][starting_epoch:],
+        val_history["total"][starting_epoch:],
     )))
     finite_log_losses = log_losses[np.isfinite(log_losses)]
     if len(finite_log_losses) and np.ptp(finite_log_losses) > 0:
         plt.yticks(ticks=np.linspace(
             finite_log_losses.min(), finite_log_losses.max(), num=20
         ))
-    plt.xticks(ticks=np.arange(0, len(train_loss.epoch_total_loss), 
-                                step=max(1, len(train_loss.epoch_total_loss) // 10)))
+    plt.xticks(ticks=np.arange(0, len(train_history["total"]),
+                                step=max(1, len(train_history["total"]) // 10)))
     plt.tight_layout()
     plt.savefig(out_prefix + ".loss.pdf", bbox_inches='tight')
     plt.close(fig)
@@ -511,16 +517,16 @@ def make_loss_plots(train_loss, val_loss = None,  *, out_prefix = "AElossplot",
     num_subplots = 5
     fig, axs = plt.subplots((num_subplots + 1)//2, 2, figsize=(11, 8), sharex=True)
     fig.subplots_adjust(hspace=0.4, wspace=0.4)
-    fill_in_loss_comp_fig((val_loss.epoch_total_loss, train_loss.epoch_total_loss), 
+    fill_in_loss_comp_fig((val_history["total"], train_history["total"]),
                           "combined", axs[0,0], starting_epoch)
     axs[0,0].legend()
-    fill_in_loss_comp_fig((val_loss.epoch_phy_loss, train_loss.epoch_phy_loss),
+    fill_in_loss_comp_fig((val_history["phy"], train_history["phy"]),
                           "phy", axs[0,1], starting_epoch)
-    fill_in_loss_comp_fig((val_loss.epoch_char_loss, train_loss.epoch_char_loss),
+    fill_in_loss_comp_fig((val_history["char"], train_history["char"]),
                           "char", axs[1,1], starting_epoch)
-    fill_in_loss_comp_fig((val_loss.epoch_aux_loss, train_loss.epoch_aux_loss),
+    fill_in_loss_comp_fig((val_history["aux"], train_history["aux"]),
                           "aux", axs[1,0], starting_epoch)
-    fill_in_loss_comp_fig((val_loss.epoch_mmd_loss, train_loss.epoch_mmd_loss),
+    fill_in_loss_comp_fig((val_history["mmd"], train_history["mmd"]),
                           "mmd", axs[2,0], starting_epoch)
     axs[2,1].axis("off")
     plt.savefig(out_prefix + ".component_loss.pdf", bbox_inches='tight')

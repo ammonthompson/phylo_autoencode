@@ -15,32 +15,23 @@ from typing import Tuple
 # TODO: experiment with time-dependent loss weights. Annealing strategies.
 
 class PhyLoss(nn.Module):
-    """Stateful composite loss for training phylogenetic autoencoders.
+    """Compute the composite objective for a phylogenetic autoencoder.
 
-    This loss object computes a weighted sum of several components and stores both
-    per-batch and per-epoch summaries for logging:
+    The returned objective remains connected to autograd. Component values are
+    returned separately so the trainer can record them as metrics:
 
     - Structured reconstruction loss (tree/phy channels).
     - Character reconstruction loss (optional; categorical via cross-entropy or continuous via MSE).
     - Auxiliary reconstruction loss (MSE; optionally skipped when aux has a single column).
     - MMD latent regularization when a latent representation is provided.
 
-    The ``forward()`` method appends component losses to internal ``batch_*`` buffers. Call
-    ``append_mean_batch_loss()`` once per epoch to compute epoch means and clear the batch
-    buffers. Use ``print_epoch_losses()`` to print the latest epoch summary.
     """
-    # holds component losses over epochs
-    # to be called for an individual batch
-    # methods:
-        # compute, stores, and returns component and total loss for val and train sets
-        # plots loss curves
     def __init__(self, 
                  weights : dict[str, torch.Tensor], 
                  ntax_cidx : int,
                  char_type : str = None, 
-                 validation  = False,
                  mmd_num_kernels: int = 3) -> None:
-        """Initialize a stateful loss accumulator.
+        """Initialize the composite loss.
 
         Args:
             weights (dict[str, torch.Tensor]): Mapping of component-weight names to scalar
@@ -55,8 +46,6 @@ class PhyLoss(nn.Module):
                 number of taxa/tips (e.g. ``num_taxa``). Used for the separate num-tips loss.
             char_type (Optional[str]): Character type, typically ``"categorical"`` or
                 ``"continuous"``. Defaults to None.
-            validation (bool): If True, ``print_epoch_losses()`` labels output as validation.
-                Defaults to False.
             mmd_num_kernels (int): Positive odd number of RBF bandwidths used by MMD.
                 Defaults to 3.
         """
@@ -64,25 +53,7 @@ class PhyLoss(nn.Module):
         
         super().__init__()
 
-        self.validation = validation
         self.ntax_cidx = ntax_cidx
-        # weights for all components
-        # initialize component loss vectors for train and validation losses
-
-        # epoch losses are the average of the batch losses
-        # epoch losses
-        # TODO: put these in dictionaries (more generic)
-        self.epoch_total_loss   = []
-        self.epoch_phy_loss     = []
-        self.epoch_char_loss    = []
-        self.epoch_aux_loss     = []
-        self.epoch_mmd_loss     = []
-        # batch losses 
-        self.batch_total_loss   = []
-        self.batch_phy_loss     = []
-        self.batch_char_loss    = []
-        self.batch_aux_loss     = []
-        self.batch_mmd_loss     = []
 
         # loss weights TODO: make a dictionary
         self.set_weights(weights)
@@ -111,8 +82,10 @@ class PhyLoss(nn.Module):
             print(f"\nMissing loss weight parameter:\n {e}\n")
             raise
 
-    def forward(self, pred : Tuple, true : Tuple, mask : Tuple):
-        """Compute the weighted loss for a batch and update internal buffers.
+    def forward(
+        self, pred: Tuple, true: Tuple, mask: Tuple
+    ) -> Tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Compute the weighted objective and its component metrics for a batch.
 
         Expected tuple formats (as used by ``phyloencode.PhyloAutoencoder.AETrainer``):
 
@@ -137,14 +110,9 @@ class PhyLoss(nn.Module):
             mask (Tuple): ``(tree_mask, char_mask)`` masks (each element may be None).
 
         Returns:
-            torch.Tensor: Scalar loss tensor for backpropagation.
+            Tuple[torch.Tensor, dict[str, torch.Tensor]]: The scalar objective
+                used for backpropagation and a mapping of component metric tensors.
         """
-        # appends to the self.losses and returns the current batch loss
-        # pred is a tuple (dictionary maybe?) of predictions for a batch
-        # true is a tuple of the true values for a batch
-        # both contain: 
-            # phy, char, mask, aux, ntips
-
         # separate components
         phy_hat, char_hat, aux_hat, latent_hat = pred
         phy, char, aux = true
@@ -167,71 +135,21 @@ class PhyLoss(nn.Module):
             if latent_hat is not None and self.mmd_w > 0. else torch.tensor(0.).to(device)
 
         # computed weighted total loss
-        total_loss =    self.phy_w  * phy_loss  + \
-                        self.char_w * char_loss + \
-                        self.aux_w  * aux_loss  + \
-                        self.phy_w  * ntips_loss + \
-                        self.mmd_w  * mmd_loss
+        total_loss = self.phy_w  * phy_loss  + \
+                     self.char_w * char_loss + \
+                     self.aux_w  * aux_loss  + \
+                     self.phy_w  * ntips_loss + \
+                     self.mmd_w  * mmd_loss
 
         
-        self._append_minibatch_losses(total_loss, phy_loss, char_loss, aux_loss, mmd_loss)
-
-        return total_loss
-
-    def append_mean_batch_loss(self):
-        """Aggregate the current batch buffers into epoch means and reset them."""
-        # averages the batch loss arrays and return 
-        mean_total_loss = torch.mean(torch.stack(self.batch_total_loss)).item()
-        mean_phy_loss   = torch.mean(torch.stack(self.batch_phy_loss)).item()
-        mean_char_loss  = torch.mean(torch.stack(self.batch_char_loss)).item()
-        mean_aux_loss   = torch.mean(torch.stack(self.batch_aux_loss)).item()
-        mean_mmd_loss   = torch.mean(torch.stack(self.batch_mmd_loss)).item()
-
-        self._append_epoch_losses(mean_total_loss, mean_phy_loss, mean_char_loss, 
-                                  mean_aux_loss, mean_mmd_loss)
-        
-        # reset batch losses
-        self.batch_total_loss   = []
-        self.batch_phy_loss     = []
-        self.batch_char_loss    = []
-        self.batch_aux_loss     = []
-        self.batch_mmd_loss     = []
-
-    def print_epoch_losses(self, elapsed_time):
-        """Print the most recent epoch loss summary.
-
-        Args:
-            elapsed_time (float): Elapsed time for the epoch, in seconds.
-        """
-        if self.validation:
-            loss_type = "Val loss:   "
-        else:
-            print(f"Epoch {len(self.epoch_total_loss)}")
-            loss_type = "Train loss: "
-
-        print(  f"\t {loss_type}{self.epoch_total_loss[-1]:.4f},  " +
-                f"phy L: {self.epoch_phy_loss[-1]:.4f},  " +
-                f"char L: {self.epoch_char_loss[-1]:.4f},  " +
-                f"aux L: {self.epoch_aux_loss[-1]:.4f},  " +
-                f"MMD L: {self.epoch_mmd_loss[-1]:.4f},  " +
-                f"Run time: {elapsed_time:.3f} sec" )
-
-    # helpers
-    def _append_minibatch_losses(self, total_loss, phy_loss, 
-                                 char_loss, aux_loss, mmd_loss):
-        self.batch_total_loss.append(total_loss)
-        self.batch_phy_loss.append(phy_loss)
-        self.batch_char_loss.append(char_loss)
-        self.batch_aux_loss.append(aux_loss)
-        self.batch_mmd_loss.append(mmd_loss)
-
-    def _append_epoch_losses(self, total_loss, phy_loss, 
-                             char_loss, aux_loss, mmd_loss):
-        self.epoch_total_loss.append(total_loss)
-        self.epoch_phy_loss.append(phy_loss)
-        self.epoch_char_loss.append(char_loss)
-        self.epoch_aux_loss.append(aux_loss)
-        self.epoch_mmd_loss.append(mmd_loss)
+        metrics = {
+            "total": total_loss,
+            "phy": phy_loss,
+            "char": char_loss,
+            "aux": aux_loss,
+            "mmd": mmd_loss,
+        }
+        return total_loss, metrics
 
     def _phy_recon_loss(self, x, y, mask = None):
         """Compute reconstruction loss for structured phylogenetic channels.

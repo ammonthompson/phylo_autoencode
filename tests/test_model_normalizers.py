@@ -134,5 +134,7 @@ def test_continuous_character_training_minibatch():
 
     trainer.train(num_epochs=2, seed=1)
 
-    assert len(train_loss.epoch_char_loss) == 1
-    assert np.isfinite(train_loss.epoch_char_loss[0])
+    assert len(trainer.train_metrics.epoch_history["char"]) == 1
+    assert np.isfinite(trainer.train_metrics.epoch_history["char"][0])
+    assert isinstance(trainer.train_metrics.epoch_history["char"][0], float)
+    assert not hasattr(train_loss, "epoch_char_loss_history")

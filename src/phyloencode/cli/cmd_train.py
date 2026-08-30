@@ -118,13 +118,20 @@ def main():
                             cycle_momentum=False
                             )
         
-        # PhyLoss compute and store loss and component losses for the final objective.
+        # PhyLoss computes the objective and component metrics.
         loss_weights = _get_loss_weights(settings)
-        train_loss = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
-                            mmd_num_kernels=settings["mmd_num_kernels"])
-        val_loss   = PhyLoss(loss_weights, ae_data.ntax_cidx, ae_model.char_type,
-                            validation=True,
-                            mmd_num_kernels=settings["mmd_num_kernels"])
+        train_loss = PhyLoss(
+                            loss_weights,
+                            ae_data.ntax_cidx,
+                            ae_model.char_type,
+                            mmd_num_kernels = settings["mmd_num_kernels"]
+                            )
+        val_loss   = PhyLoss(
+                            loss_weights,
+                            ae_data.ntax_cidx,
+                            ae_model.char_type,
+                            mmd_num_kernels = settings["mmd_num_kernels"]
+                            )
 
 
         # AETrainer is the model trainer
