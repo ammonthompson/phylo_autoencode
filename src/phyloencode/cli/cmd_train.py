@@ -360,7 +360,6 @@ def _update_settings_from_command_line(settings, args):
     }
 
     # override defaults and config with command line args
-    # TODO: many of these havent been tested well
     for k, v in arg_map.items():
         v = _normalize_cli_value(v)
         if v is not None:

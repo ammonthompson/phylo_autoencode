@@ -95,9 +95,9 @@ class AETrainer(object):
             checkpoints (list[int], optional): Epoch numbers to save checkpoints. defaults to None.
         """
         
-        # TODO: define the model object better (autoencoder ...)
-        # TODO: run checks that the model has the expected attributes
-        # TODO: add checks that the loss objects are correct (contain certain fields and methods)
+        # TODO: 
+        # TODO: define the model object better (autoencoder ...) in docs and run checks that the model has the expected attributes
+
 
         if device == "auto":
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -118,16 +118,6 @@ class AETrainer(object):
         self.lr_sched  = lr_scheduler
         self.checkpoints = checkpoints
         self.checkpt_file_prefix = checkpt_file_prefix
-
-        # TODO: implement tracking model.state_dict for best validation score 
-        self.best_model   = model.state_dict()
-
-
-        # some data shape parameters
-        self.nchars             = self.model.num_chars
-        self.char_type          = self.model.char_type
-        self.phy_channels       = self.model.num_structured_input_channel
-        self.num_tree_chans     = self.phy_channels - self.nchars
 
         self.train_loss = train_loss
         self.val_loss   = val_loss
@@ -314,28 +304,6 @@ class AETrainer(object):
         _, metrics = self.val_loss(pred, true, segmented_mask)
         self.val_metrics.record_batch(metrics)
         
-    def predict(self, phy: torch.Tensor, aux: torch.Tensor, *,
-                inference = False, detach = False) -> Tuple[np.ndarray, np.ndarray]:
-        """Reconstruct inputs with the current model.
-
-        This is a thin wrapper around ``model.predict(...)``.
-
-        Args:
-            phy (torch.Tensor): Structured input tensor shaped ``(batch, channels, width)``.
-            aux (torch.Tensor): Unstructured/auxiliary input tensor shaped ``(batch, aux_dim)``.
-            inference (bool, optional): If True, runs in eval mode and disables gradients in
-                the underlying model method. Defaults to False.
-            detach (bool, optional): If True and ``inference`` is True, detaches outputs
-                before returning. Defaults to False.
-
-        Returns:
-            Tuple[np.ndarray, np.ndarray]: ``(phy_pred, aux_pred)`` reconstructed outputs as
-            NumPy arrays on CPU.
-        """
-
-        return self.model.predict(phy, aux, inference = inference, detach = detach)
-
-
     def to_device(self, device):
         """Move the model and this trainer to a new device.
 
@@ -562,7 +530,6 @@ class AETrainer(object):
                 'track_grad': self.track_grad,
                 'batch_layer_grad_norm': self.batch_layer_grad_norm,
                 'mean_layer_grad_norm': self.mean_layer_grad_norm,
-                'best_model': self.best_model,
             },
             'rng_state': self._get_rng_state(),
             'data_loader_rng_state': self._get_data_loader_rng_state(),
@@ -652,8 +619,6 @@ class AETrainer(object):
             self.mean_layer_grad_norm = trainer_state.get(
                 'mean_layer_grad_norm', self.mean_layer_grad_norm
             )
-        if 'best_model' in trainer_state:
-            self.best_model = trainer_state['best_model']
         self._pending_data_loader_rng_state = checkpoint.get(
             'data_loader_rng_state'
         )
@@ -698,55 +663,6 @@ class AETrainer(object):
             'cudnn_benchmark', torch.backends.cudnn.benchmark
         )
 
-
-
-    def tree_encode(self, phy: torch.Tensor, aux: torch.Tensor, *,
-               inference = False, detach = False ):
-        """Encode inputs into the latent representation.
-
-        This is a thin wrapper around ``model.encode(...)``.
-
-        Args:
-            phy (torch.Tensor): Structured input tensor shaped ``(batch, channels, width)``.
-            aux (torch.Tensor): Unstructured/auxiliary input tensor shaped ``(batch, aux_dim)``.
-            inference (bool, optional): If True, runs in eval mode and disables gradients in
-                the underlying model method. Defaults to False.
-            detach (bool, optional): If True and ``inference`` is True, detaches outputs.
-                Defaults to False.
-
-        Returns:
-            torch.Tensor: Flattened latent representation shaped ``(batch, latent_dim)``.
-        """
-        # same defaults as model.encode
-        return self.model.encode(phy, aux, inference = inference, detach = detach)
-
-    def latent_decode(self, encoded_tree: torch.Tensor, *,
-               inference = False, detach = False):
-        """Decode a latent representation back to ``(phy, aux)`` outputs.
-
-        This is a thin wrapper around ``model.decode(...)``.
-
-        Args:
-            encoded_tree (torch.Tensor): Latent tensor shaped ``(batch, latent_dim)``.
-            inference (bool, optional): If True, runs in eval mode and disables gradients in
-                the underlying model method. Defaults to False.
-            detach (bool, optional): If True and ``inference`` is True, detaches outputs.
-                Defaults to False.
-
-        Returns:
-            Tuple[torch.Tensor, torch.Tensor]: ``(phy_decoded, aux_decoded)`` tensors.
-        """
-        # same defaults as model.decode
-        return self.model.decode(encoded_tree, inference = inference, detach = detach)
-
-    def get_latent_shape(self):
-        """Return the structured latent shape used by the model.
-
-        Returns:
-            Tuple[int, int]: ``(num_structured_latent_channels, reshaped_shared_latent_width)``.
-        """
-        return self.model.num_structured_latent_channels, self.model.reshaped_shared_latent_width
-       
     def plot_losses(self, out_prefix = "AElossplot", log = True, starting_epoch = 10):
         """Plot training and validation loss curves.
 
@@ -776,11 +692,12 @@ class AETrainer(object):
             ``char_mask`` are returned as None.
         """
         # divide phy into tree and character data
-        if self.nchars > 0:
-            tree = phy[:, :self.num_tree_chans, :]
-            char = phy[:, self.num_tree_chans:, :]
-            tree_mask = mask[:, :self.num_tree_chans, :] if mask is not None else None
-            char_mask = mask[:, self.num_tree_chans:, :] if mask is not None else None
+        if self.model.num_chars > 0:
+            char_start_idx = self.model.char_start_idx
+            tree = phy[:, :char_start_idx, :]
+            char = phy[:, char_start_idx:, :]
+            tree_mask = mask[:, :char_start_idx, :] if mask is not None else None
+            char_mask = mask[:, char_start_idx:, :] if mask is not None else None
         else:
             tree = phy
             char = None

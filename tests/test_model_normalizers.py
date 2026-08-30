@@ -101,6 +101,35 @@ def test_model_constructs_bounds_from_tree_statistics():
     )
 
 
+def test_trainer_uses_model_schema_without_cached_proxies():
+    phy_normalizer = SimpleNamespace(
+        tree_statistics=lambda: (
+            np.zeros((NUM_TREE_CHANNELS, WIDTH)),
+            np.ones((NUM_TREE_CHANNELS, WIDTH)),
+        )
+    )
+    model = _make_model(phy_normalizer)
+    trainer = AETrainer(
+        model=model,
+        optimizer=AdamW(model.parameters(), lr=1e-3),
+        device="cpu",
+    )
+
+    for attribute in (
+        "nchars", "char_type", "phy_channels", "num_tree_chans", "best_model"
+    ):
+        assert not hasattr(trainer, attribute)
+    for passthrough in ("predict", "tree_encode", "latent_decode", "get_latent_shape"):
+        assert not hasattr(trainer, passthrough)
+
+    phy = torch.zeros(2, NUM_CHANNELS, WIDTH)
+    mask = torch.ones_like(phy, dtype=torch.bool)
+    tree, char, tree_mask, char_mask = trainer._split_tree_char(phy, mask)
+
+    assert tree.shape[1] == tree_mask.shape[1] == model.char_start_idx
+    assert char.shape[1] == char_mask.shape[1] == model.num_chars
+
+
 def test_continuous_character_training_minibatch():
     phy_normalizer = SimpleNamespace(
         tree_statistics=lambda: (
