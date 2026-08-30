@@ -275,7 +275,7 @@ class AEData:
         train_sampler = RandomSampler(
             self.train_dataset, generator=self.torch_g
         ) if shuffle else None
-        self.train_dataloader = DataLoader(
+        train_dataloader = DataLoader(
             self.train_dataset,
             batch_size=batch_size,
             sampler=train_sampler,
@@ -284,14 +284,14 @@ class AEData:
             drop_last=drop_last,
             generator=_clone_generator(self.torch_g),
         )
-        self.val_dataloader = DataLoader(
+        val_dataloader = DataLoader(
             self.val_dataset,
             batch_size=batch_size,
             num_workers=num_workers,
             persistent_workers=num_workers > 0,
             generator=_clone_generator(self.torch_g),
         )
-        return self.train_dataloader, self.val_dataloader
+        return train_dataloader, val_dataloader
 
 class TreeDataSet(Dataset):
     """Lazy HDF5-backed PyTorch dataset for normalized tree samples.
