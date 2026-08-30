@@ -5,12 +5,6 @@ from matplotlib.backends.backend_pdf import PdfPages
 import numpy as np
 import torch
 from torch.optim.lr_scheduler import LRScheduler
-# from torch import optim
-# from torch.utils.data import Dataset, DataLoader, TensorDataset
-# from sklearn.preprocessing import StandardScaler
-# from sklearn.model_selection import train_test_split
-# from phyloencode import utils
-# from phyloencode.PhyLoss import PhyLoss
 from phyloencode.PhyLoss import PhyLoss
 from phyloencode.DataProcessors import AEData
 from phyloencode.PhyloAEModel import AECNN
@@ -61,7 +55,7 @@ class AETrainer(object):
     """
 
     def __init__(self,
-                 model: AECNN, 
+                 model: AECNN,
                  optimizer : torch.optim.Optimizer, 
                  *, 
                  lr_scheduler : Optional[LRScheduler] = None, 
@@ -75,7 +69,8 @@ class AETrainer(object):
         """Initialize the training loop.
 
         Args:
-            model (AECNN): Autoencoder model to train.
+            model (AECNN): Phylogenetic autoencoder model to train. It accepts a
+                ``(phy, aux)`` tuple and returns ``(tree, char, aux, latent)``.
             optimizer: Instantiated PyTorch optimizer (e.g. ``torch.optim.AdamW``) configured
                 with ``model.parameters()``.
             lr_scheduler: Optional learning-rate scheduler with a ``.step()`` method.
@@ -95,9 +90,10 @@ class AETrainer(object):
             checkpoints (list[int], optional): Epoch numbers to save checkpoints. defaults to None.
         """
         
-        # TODO: 
-        # TODO: define the model object better (autoencoder ...) in docs and run checks that the model has the expected attributes
-
+        if not isinstance(model, AECNN):
+            raise TypeError(
+                f"model must be an AECNN instance, got {type(model).__name__}."
+            )
 
         if device == "auto":
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
