@@ -124,7 +124,8 @@ class AEData:
     Public attributes used by training include ``train_dataset``,
     ``val_dataset``, ``phy_width`` (``max_tips``), ``aux_width``,
     ``ntax_cidx``, ``aux_colnames``, fitted ``phy_normalizer`` and
-    ``aux_normalizer``, plus train/validation shape metadata.
+    ``aux_normalizer``, input-schema metadata (``num_channels``, ``num_chars``,
+    ``char_data_type``, and ``max_tips``), plus train/validation shape metadata.
     """
 
     def __init__(

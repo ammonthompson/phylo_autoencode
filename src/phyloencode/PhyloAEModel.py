@@ -488,6 +488,50 @@ class AECNN(nn.Module):
             "aux_normalizer": self.aux_normalizer,
         }
 
+    def validate_data_compatibility(self, data) -> None:
+        """Validate that an ``AEData`` object matches this model's input schema.
+
+        Raises:
+            ValueError: If any structured dimensions, character settings, or
+                auxiliary-column metadata differ from the model configuration.
+        """
+        def normalize_names(names):
+            if names is None:
+                return None
+            return tuple(
+                name.decode() if isinstance(name, (bytes, np.bytes_)) else str(name)
+                for name in np.asarray(names).reshape(-1)
+            )
+
+        model_schema = {
+            "num_structured_input_channel": self.num_structured_input_channel,
+            "structured_input_width": self.structured_input_width,
+            "unstructured_input_width": self.unstructured_input_width,
+            "num_chars": self.num_chars,
+            "char_type": self.char_type,
+            "aux_numtips_idx": self.aux_numtips_idx,
+            "aux_data_names": normalize_names(self.aux_data_names),
+        }
+        data_schema = {
+            "num_structured_input_channel": data.num_channels,
+            "structured_input_width": data.phy_width,
+            "unstructured_input_width": data.aux_width,
+            "num_chars": data.num_chars,
+            "char_type": data.char_data_type,
+            "aux_numtips_idx": data.ntax_cidx,
+            "aux_data_names": normalize_names(data.aux_colnames),
+        }
+        mismatches = [
+            f"{name} (model={model_value!r}, data={data_schema[name]!r})"
+            for name, model_value in model_schema.items()
+            if model_value != data_schema[name]
+        ]
+        if mismatches:
+            raise ValueError(
+                "Training data schema is incompatible with the model: "
+                + "; ".join(mismatches)
+            )
+
     # inference machinery. Handles normalization too.
     def validate_num_tips(self, aux: np.ndarray) -> None:
         """Reject auxiliary data containing trees wider than this model supports."""

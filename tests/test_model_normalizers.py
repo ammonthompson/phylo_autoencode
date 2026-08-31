@@ -70,6 +70,7 @@ def _make_model(phy_normalizer):
         structured_input_width=WIDTH,
         unstructured_input_width=1,
         aux_numtips_idx=0,
+        aux_data_names=["num_taxa"],
         num_chars=NUM_CHARS,
         char_type="continuous",
         stride=[1, 1],
@@ -79,6 +80,31 @@ def _make_model(phy_normalizer):
         phy_normalizer=phy_normalizer,
         aux_normalizer=aux_normalizer,
     )
+
+
+def test_model_validates_data_schema_compatibility():
+    phy_normalizer = SimpleNamespace(
+        tree_statistics=lambda: (
+            np.zeros((NUM_TREE_CHANNELS, WIDTH)),
+            np.ones((NUM_TREE_CHANNELS, WIDTH)),
+        )
+    )
+    model = _make_model(phy_normalizer)
+    data = SimpleNamespace(
+        num_channels=NUM_CHANNELS,
+        phy_width=WIDTH,
+        aux_width=1,
+        num_chars=NUM_CHARS,
+        char_data_type="continuous",
+        ntax_cidx=0,
+        aux_colnames=np.array(["num_taxa"]),
+    )
+
+    model.validate_data_compatibility(data)
+
+    data.aux_colnames = np.array(["different_column"])
+    with pytest.raises(ValueError, match="aux_data_names"):
+        model.validate_data_compatibility(data)
 
 
 def test_model_constructs_bounds_from_tree_statistics():

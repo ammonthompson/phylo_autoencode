@@ -76,6 +76,7 @@ def main():
                         map_location = map_location,
                         **checkpoint_overrides
                         )
+        tree_ae.model.validate_data_compatibility(ae_data)
     else:
         # create model
         if settings["pretrained_model"] is not None:
@@ -83,7 +84,6 @@ def main():
                         settings["pretrained_model"],
                         map_location = map_location
                         )
-            ae_model.set_normalizers(phy_normalizer, aux_normalizer)
         else:
             ae_model = AECNN(
                             num_structured_input_channel  = ae_data.num_channels, 
@@ -104,6 +104,10 @@ def main():
                             aux_normalizer                = aux_normalizer
                             )
 
+        ae_model.validate_data_compatibility(ae_data)
+        if settings["pretrained_model"] is not None:
+            ae_model.set_normalizers(phy_normalizer, aux_normalizer)
+
         # Setup optimizer and lr scheduler
         lr = settings['learning_rate']
         wd = settings['weight_decay']
@@ -122,13 +126,13 @@ def main():
         loss_weights = _get_loss_weights(settings)
         train_loss = PhyLoss(
                             loss_weights,
-                            ae_data.ntax_cidx,
+                            ae_model.aux_numtips_idx,
                             ae_model.char_type,
                             mmd_num_kernels = settings["mmd_num_kernels"]
                             )
         val_loss   = PhyLoss(
                             loss_weights,
-                            ae_data.ntax_cidx,
+                            ae_model.aux_numtips_idx,
                             ae_model.char_type,
                             mmd_num_kernels = settings["mmd_num_kernels"]
                             )
