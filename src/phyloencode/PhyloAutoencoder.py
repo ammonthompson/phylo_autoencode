@@ -48,8 +48,7 @@ class AETrainer(object):
         train_loader (Optional[torch.utils.data.DataLoader]): Training data loader.
         val_loader (Optional[torch.utils.data.DataLoader]): Validation data loader.
         total_epochs (int): Total epochs trained so far (cumulative across ``train()`` calls).
-        train_loss: Loss object used for training batches.
-        val_loss: Loss object used for validation batches.
+        loss (PhyLoss): Objective used for both training and validation batches.
         train_metrics (_LossMetricTracker): Training loss metric history.
         val_metrics (_LossMetricTracker): Validation loss metric history.
     """
@@ -58,9 +57,8 @@ class AETrainer(object):
                  model: AECNN,
                  optimizer : torch.optim.Optimizer, 
                  *, 
+                 loss : PhyLoss,
                  lr_scheduler : Optional[LRScheduler] = None, 
-                 train_loss : Optional[PhyLoss] = None, 
-                 val_loss : Optional[PhyLoss] = None, 
                  seed : Optional[int] = None, 
                  device : Optional[str] = "auto",
                  track_grad : Optional[bool] = False,
@@ -75,12 +73,10 @@ class AETrainer(object):
                 with ``model.parameters()``.
             lr_scheduler: Optional learning-rate scheduler with a ``.step()`` method.
                 If provided, it is stepped once per training batch (not per epoch).
-            train_loss: Loss object/callable used during training. It must be callable as
-                ``train_loss(pred, true, segmented_mask)`` and return the scalar objective
-                plus a component-metric mapping. ``segmented_mask`` is a
-                ``(tree_mask, char_mask)`` tuple (each element may be None).
-            val_loss: Loss object/callable used during validation. It is called like
-                ``train_loss``.
+            loss: Objective used during training and validation. It is called as
+                ``loss(pred, true, segmented_mask)`` and returns the scalar objective plus
+                a component-metric mapping. ``segmented_mask`` is a ``(tree_mask,
+                char_mask)`` tuple (each element may be None).
             seed (int, optional): If provided, seeds Python, NumPy, and PyTorch RNGs and
                 enables deterministic cuDNN behavior for reproducibility. Defaults to None.
             device (str, optional): ``"auto"``, ``"cuda"``, or ``"cpu"``. If ``"auto"``, selects
@@ -94,7 +90,6 @@ class AETrainer(object):
             raise TypeError(
                 f"model must be an AECNN instance, got {type(model).__name__}."
             )
-
         if device == "auto":
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
         else:
@@ -115,8 +110,7 @@ class AETrainer(object):
         self.checkpoints = checkpoints
         self.checkpt_file_prefix = checkpt_file_prefix
 
-        self.train_loss = train_loss
-        self.val_loss   = val_loss
+        self.set_loss(loss)
         self.train_metrics = _LossMetricTracker()
         self.val_metrics = _LossMetricTracker()
 
@@ -129,10 +123,9 @@ class AETrainer(object):
     def train(self, num_epochs, seed = None):
         """Train the model for a number of epochs.
 
-        This method requires that ``train_loader`` and ``train_loss`` have been set
-        (typically via ``set_data_loaders()`` and ``set_losses()``).
+        This method requires that ``train_loader`` has been set.
 
-        If ``val_loader`` and ``val_loss`` are set, a validation pass is run after each epoch.
+        If ``val_loader`` is set, a validation pass is run after each epoch.
 
         Args:
             num_epochs (int): Number of epochs to train for.
@@ -141,13 +134,10 @@ class AETrainer(object):
 
         Raises:
             ValueError: If training data has not been loaded.
-            ValueError: If training loss has not been set.
         """
 
         if self.train_loader is None:
             raise ValueError("Must load training data.")
-        if self.train_loss is None:
-            raise ValueError("Must load loss layer.")
 
         # A loaded checkpoint has already restored the RNG state. Only an explicit seed
         # should replace that state here.
@@ -168,7 +158,7 @@ class AETrainer(object):
 
 
             # perform mini batch on validation data
-            if self.val_loader is not None and self.val_loss is not None:
+            if self.val_loader is not None:
                 with torch.no_grad():
                     self._mini_batch(validation=True)             
                     self.val_metrics.finalize_epoch()
@@ -252,7 +242,7 @@ class AETrainer(object):
         true = (tree, char, aux)
         pred = self.model((phy, aux))
 
-        objective, metrics = self.train_loss(pred, true, segmented_mask)
+        objective, metrics = self.loss(pred, true, segmented_mask)
         self.train_metrics.record_batch(metrics)
 
         # compute gradient
@@ -297,7 +287,7 @@ class AETrainer(object):
         true = (tree, char, aux)
         pred = self.model((phy, aux))
 
-        _, metrics = self.val_loss(pred, true, segmented_mask)
+        _, metrics = self.loss(pred, true, segmented_mask)
         self.val_metrics.record_batch(metrics)
         
     def to_device(self, device):
@@ -401,17 +391,17 @@ class AETrainer(object):
         return pending_state or None
 
 
-    def load_losses(self, train_loss, val_loss):
-        """Set the loss objects used for training and validation.
+    def set_loss(self, loss: PhyLoss):
+        """Set the objective used for training and validation.
 
         Args:
-            train_loss: Loss object/callable used during training. It must be callable as
-                ``train_loss(pred, true, segmented_mask)``, where ``segmented_mask`` is a
-                ``(tree_mask, char_mask)`` tuple.
-            val_loss: Loss object/callable used during validation, called like ``train_loss``.
+            loss: ``PhyLoss`` object called as ``loss(pred, true, segmented_mask)``.
         """
-        self.train_loss = train_loss
-        self.val_loss = val_loss
+        if not isinstance(loss, PhyLoss):
+            raise TypeError(
+                f"loss must be a PhyLoss instance, got {type(loss).__name__}."
+            )
+        self.loss = loss
 
     def set_track_grad(self, track_grad: bool = False):
         """Enable or disable gradient-norm tracking for future training steps."""
@@ -507,14 +497,13 @@ class AETrainer(object):
             )
 
         checkpoint = {
-            'checkpoint_version': 5,
+            'checkpoint_version': 6,
             'model': self.model,
             'seed': self.seed,
             'epoch': self.epoch,
             'optimizer': self.optimizer,
             'lr_scheduler': self.lr_sched,
-            'train_loss': self.train_loss,
-            'val_loss': self.val_loss,
+            'loss': self.loss,
             'loss_metric_state': {
                 'train': self.train_metrics.state_dict(),
                 'validation': self.val_metrics.state_dict(),
@@ -542,6 +531,8 @@ class AETrainer(object):
         Trainer configuration is restored from the checkpoint unless an explicit
         override is supplied. DataLoaders remain external and must be reattached
         with ``set_data_loaders()``, which restores their saved generator states.
+        For older checkpoints with separate objectives, the training objective
+        becomes the shared objective.
 
         Args:
             filename (str): Checkpoint file produced by ``save_checkpoint()``.
@@ -560,8 +551,16 @@ class AETrainer(object):
         model = checkpoint['model']
         opt = checkpoint['optimizer']
         lr_sched = checkpoint['lr_scheduler']
-        train_loss = checkpoint['train_loss']
-        val_loss = checkpoint['val_loss']
+        legacy_train_loss = checkpoint.get('train_loss')
+        legacy_val_loss = checkpoint.get('val_loss')
+        if 'loss' in checkpoint:
+            loss = checkpoint['loss']
+        elif legacy_train_loss is not None:
+            loss = legacy_train_loss
+        else:
+            loss = legacy_val_loss
+        if loss is None:
+            raise ValueError("Checkpoint does not contain a loss object.")
         loss_metric_state = checkpoint.get('loss_metric_state')
         trainer_state = checkpoint.get('trainer_state', {})
 
@@ -591,8 +590,7 @@ class AETrainer(object):
             model=model,
             optimizer=opt,
             lr_scheduler=lr_sched,
-            train_loss=train_loss,
-            val_loss=val_loss,
+            loss=loss,
             seed=checkpoint['seed'],
             device=load_device,
             track_grad=restored_track_grad,
@@ -601,8 +599,14 @@ class AETrainer(object):
         )
         self.epoch = checkpoint['epoch']
         if loss_metric_state is None:
-            self.train_metrics.load_legacy_loss_history(self.train_loss)
-            self.val_metrics.load_legacy_loss_history(self.val_loss)
+            self.train_metrics.load_legacy_loss_history(
+                legacy_train_loss
+                if legacy_train_loss is not None else self.loss
+            )
+            self.val_metrics.load_legacy_loss_history(
+                legacy_val_loss
+                if legacy_val_loss is not None else self.loss
+            )
         else:
             self.train_metrics.load_state_dict(loss_metric_state.get('train', {}))
             self.val_metrics.load_state_dict(

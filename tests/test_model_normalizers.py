@@ -135,9 +135,20 @@ def test_trainer_uses_model_schema_without_cached_proxies():
         )
     )
     model = _make_model(phy_normalizer)
+    loss = PhyLoss(
+        {
+            "phy_loss_weight": 1.0,
+            "char_loss_weight": 1.0,
+            "aux_loss_weight": 0.0,
+            "mmd_loss_weight": 0.0,
+        },
+        ntax_cidx=0,
+        char_type="continuous",
+    )
     trainer = AETrainer(
         model=model,
         optimizer=AdamW(model.parameters(), lr=1e-3),
+        loss=loss,
         device="cpu",
     )
 
@@ -171,11 +182,11 @@ def test_continuous_character_training_minibatch():
         "aux_loss_weight": 0.0,
         "mmd_loss_weight": 0.0,
     }
-    train_loss = PhyLoss(weights, ntax_cidx=0, char_type="continuous")
+    loss = PhyLoss(weights, ntax_cidx=0, char_type="continuous")
     trainer = AETrainer(
         model=model,
         optimizer=optimizer,
-        train_loss=train_loss,
+        loss=loss,
         device="cpu",
     )
     batch_size = 5
@@ -192,4 +203,4 @@ def test_continuous_character_training_minibatch():
     assert len(trainer.train_metrics.epoch_history["char"]) == 1
     assert np.isfinite(trainer.train_metrics.epoch_history["char"][0])
     assert isinstance(trainer.train_metrics.epoch_history["char"][0], float)
-    assert not hasattr(train_loss, "epoch_char_loss_history")
+    assert not hasattr(loss, "epoch_char_loss_history")

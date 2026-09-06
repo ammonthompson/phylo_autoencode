@@ -18,6 +18,7 @@ checkpoints.
 import random
 import torch
 from torch.optim import AdamW
+from torch.optim.lr_scheduler import OneCycleLR
 import numpy  as np
 import pandas as pd
 import argparse
@@ -30,7 +31,6 @@ from phyloencode.cli._output        import print_output_files
 import phyloencode.utils as utils
 
 
-# TODO: includ min tips
 def main():
 
     args = _parse_arguments()
@@ -112,7 +112,7 @@ def main():
         lr = settings['learning_rate']
         wd = settings['weight_decay']
         opt = AdamW(utils.split_params_by_wd(ae_model, wd), lr=lr)
-        lr_schedlr = torch.optim.lr_scheduler.OneCycleLR(
+        lr_schedlr = OneCycleLR(
                             opt,
                             max_lr=lr,
                             epochs=settings["num_epochs"], 
@@ -122,20 +122,14 @@ def main():
                             cycle_momentum=False
                             )
         
-        # PhyLoss computes the objective and component metrics.
+        # Create loss objetc. PhyLoss computes the objective and component metrics.
         loss_weights = _get_loss_weights(settings)
-        train_loss = PhyLoss(
-                            loss_weights,
-                            ae_model.aux_numtips_idx,
-                            ae_model.char_type,
-                            mmd_num_kernels = settings["mmd_num_kernels"]
-                            )
-        val_loss   = PhyLoss(
-                            loss_weights,
-                            ae_model.aux_numtips_idx,
-                            ae_model.char_type,
-                            mmd_num_kernels = settings["mmd_num_kernels"]
-                            )
+        loss = PhyLoss(
+                        loss_weights,
+                        ae_model.aux_numtips_idx,
+                        ae_model.char_type,
+                        mmd_num_kernels = settings["mmd_num_kernels"]
+                        )
 
 
         # AETrainer is the model trainer
@@ -144,32 +138,36 @@ def main():
                             model           = ae_model, 
                             optimizer       = opt, 
                             lr_scheduler    = lr_schedlr,
-                            train_loss      = train_loss,
-                            val_loss        = val_loss,
+                            loss            = loss,
                             device          = settings["device"],
                             track_grad      = settings["track_grad"],
                             checkpoints     = settings["checkpoints"],
                             checkpt_file_prefix = settings["out_prefix"]
                             )
 
+    # Create some data for output files describing model attributes etc.
     if settings["resume_from_checkpoint"] is not None:
         settings["track_grad"] = tree_ae.track_grad
         settings["checkpoints"] = tree_ae.checkpoints
         settings["out_prefix"] = tree_ae.checkpt_file_prefix
-        settings["mmd_num_kernels"] = tree_ae.train_loss.mmd.num_kernels
+        settings["mmd_num_kernels"] = tree_ae.loss.mmd.num_kernels
     settings_out_file = settings['out_prefix'] + "_settings.csv"
     network_out_file = settings["out_prefix"] + ".network.txt"
     _save_settings(settings, settings_out_file)
     tree_ae.model.write_network_to_file(network_out_file)
     output_files.extend([settings_out_file, network_out_file])
 
+
     ###############################################################
     # Use tree_ae to train ae_model with data from ae_data.       #
     ###############################################################
     tree_ae.set_data_loaders(train_loader=trn_loader, val_loader=val_loader) 
+
     train_seed = None if settings["resume_from_checkpoint"] is not None else settings["seed"]
     starting_epoch = tree_ae.epoch
+
     tree_ae.train(num_epochs = settings["num_epochs"], seed = train_seed)
+
     if tree_ae.checkpoints is not None:
         output_files.extend(
             settings["out_prefix"] + "_epoch_" + str(epoch) + ".ckpt.pt"
@@ -177,6 +175,7 @@ def main():
             if epoch in tree_ae.checkpoints
         )
 
+    # insepect layer gradient norms if interested
     if tree_ae.track_grad:
         gradient_out_file = settings["out_prefix"] + ".layer_grad_norms.pdf"
         tree_ae.plot_gradient_norms(tree_ae.mean_layer_grad_norm, gradient_out_file)
@@ -189,10 +188,7 @@ def main():
 
     # plot loss curves
     tree_ae.plot_losses(settings["out_prefix"])
-    output_files.extend([
-        settings["out_prefix"] + ".loss.pdf",
-        settings["out_prefix"] + ".component_loss.pdf",
-    ])
+    output_files.append(settings["out_prefix"] + ".component_loss.pdf")
 
     print_output_files(output_files)
 

@@ -30,5 +30,5 @@ def test_loss_plots_handle_zero_components_without_runtime_warning(tmp_path):
             starting_epoch=0,
         )
 
-    assert (tmp_path / "losses.loss.pdf").is_file()
     assert (tmp_path / "losses.component_loss.pdf").is_file()
+    assert not (tmp_path / "losses.loss.pdf").exists()

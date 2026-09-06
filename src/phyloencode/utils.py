@@ -483,36 +483,7 @@ def make_loss_plots(train_metrics, val_metrics = None,  *, out_prefix = "AElossp
         if val_metrics is not None
         else {name: [] for name in ("total", "phy", "char", "aux", "mmd")}
     )
-    fig = plt.figure(figsize=(11, 8))
-    plt.plot(list(range(len(train_history["total"])))[starting_epoch:],
-                _log10_positive(train_history["total"][starting_epoch:]),
-                label='Training Loss', c="r")
-    if val_metrics:
-        plt.plot(list(range(len(val_history["total"])))[starting_epoch:],
-                 _log10_positive(val_history["total"][starting_epoch:]),
-                 label='Validation Loss', c='b')
-    plt.xlabel('Epochs')
-    plt.ylabel('log10 Loss')
-    plt.legend()        
-    plt.grid(True)
-    
-    log_losses = _log10_positive(np.concatenate((
-        train_history["total"][starting_epoch:],
-        val_history["total"][starting_epoch:],
-    )))
-    finite_log_losses = log_losses[np.isfinite(log_losses)]
-    if len(finite_log_losses) and np.ptp(finite_log_losses) > 0:
-        plt.yticks(ticks=np.linspace(
-            finite_log_losses.min(), finite_log_losses.max(), num=20
-        ))
-    plt.xticks(ticks=np.arange(0, len(train_history["total"]),
-                                step=max(1, len(train_history["total"]) // 10)))
-    plt.tight_layout()
-    plt.savefig(out_prefix + ".loss.pdf", bbox_inches='tight')
-    plt.close(fig)
-
-    # plot each loss separately (only validation losses are recorded). 
-    # create subplots for each loss component   
+    # Create subplots for the total and each loss component.
     # TODO: fix x-axis tick marks            
     num_subplots = 5
     fig, axs = plt.subplots((num_subplots + 1)//2, 2, figsize=(11, 8), sharex=True)

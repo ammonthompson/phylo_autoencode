@@ -100,12 +100,7 @@ def _make_trainer(data, loaders, checkpoint_prefix=None):
         "aux_loss_weight": 0.1,
         "mmd_loss_weight": 0.0,
     }
-    train_loss = PhyLoss(
-        weights,
-        data.ntax_cidx,
-        model.char_type,
-    )
-    val_loss = PhyLoss(
+    loss = PhyLoss(
         weights,
         data.ntax_cidx,
         model.char_type,
@@ -114,8 +109,7 @@ def _make_trainer(data, loaders, checkpoint_prefix=None):
         model=model,
         optimizer=optimizer,
         lr_scheduler=scheduler,
-        train_loss=train_loss,
-        val_loss=val_loss,
+        loss=loss,
         seed=SEED,
         device="cpu",
         checkpoints=[1] if checkpoint_prefix is not None else None,
@@ -165,8 +159,7 @@ def test_checkpoint_resume_matches_uninterrupted_training(tmp_path):
     )
     # Simulate a checkpoint emitted by an in-flight run using the former option.
     first_segment.model.latent_layer_type = "GAUSS"
-    first_segment.train_loss.latent_layer_type = "GAUSS"
-    first_segment.val_loss.latent_layer_type = "GAUSS"
+    first_segment.loss.latent_layer_type = "GAUSS"
     first_segment.train(2, seed=SEED)
     assert checkpoint_file.exists()
 
