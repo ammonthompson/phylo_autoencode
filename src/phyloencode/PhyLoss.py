@@ -271,6 +271,18 @@ class MMDLoss(nn.Module):
     The base bandwidth is either fixed or estimated from the batch, then expanded into a
     geometric grid of bandwidths (multi-kernel MMD).
 
+    Args:
+        n_kernels (int): Positive odd number of RBF kernels. Defaults to 5.
+        mul_factor (float): Multiplicative spacing between adjacent bandwidths.
+            Defaults to 2.
+        bw (Optional[float]): Fixed base bandwidth. When omitted, the bandwidth
+            is estimated from the current batch.
+        bw_mode (str): ``"median"`` or ``"mean"`` bandwidth heuristic.
+            Defaults to ``"median"``.
+        max_bw_pairs (int): Maximum number of pairwise distances used to
+            estimate the bandwidth. Smaller batches use every unique pair.
+            Defaults to 131,072.
+
     Notes:
         This implementation returns ``sqrt(MMD^2)`` (clipped to a small epsilon for numerical
         stability).
@@ -278,15 +290,21 @@ class MMDLoss(nn.Module):
     References:
         Briol et al. (2025), ``10.48550/arXiv.2504.18830``.
     """
+    DEFAULT_MAX_BW_PAIRS = 131_072
+
     def __init__(self,
                  n_kernels: int = 5,
                  mul_factor: float = 2.0,
                  bw: float | None = None,
-                 bw_mode: str = "median"):
+                 bw_mode: str = "median",
+                 max_bw_pairs: int = DEFAULT_MAX_BW_PAIRS):
         super().__init__()
         if n_kernels < 1 or n_kernels % 2 == 0:
             raise ValueError("mmd_num_kernels must be a positive odd integer")
+        if max_bw_pairs < 1:
+            raise ValueError("max_bw_pairs must be positive")
         self.bw_mode = bw_mode
+        self.max_bw_pairs = max_bw_pairs
         self.register_buffer(
             "bw_multipliers",
             (mul_factor ** (torch.arange(n_kernels) - n_kernels // 2)).float()
@@ -301,9 +319,11 @@ class MMDLoss(nn.Module):
     def _estimate_base_bw(self, X: torch.Tensor, L2_xx: torch.Tensor) -> torch.Tensor:
         """Estimate a base RBF bandwidth from the batch.
 
-        Uses pairwise squared distances and either a median or mean heuristic (configured by
-        ``bw_mode``). If all off-diagonal distances are zero, falls back to a variance-based
-        estimate.
+        Uses pairwise squared distances and either a median or mean heuristic
+        (configured by ``bw_mode``). All unique pairs are used for small
+        batches. For large batches, at most ``max_bw_pairs`` uniformly sampled
+        off-diagonal pairs are used. If all selected distances are zero, the
+        estimate falls back to the total variance.
 
         Args:
             X (torch.Tensor): Input tensor with shape ``(m, d)``.
@@ -316,10 +336,20 @@ class MMDLoss(nn.Module):
         delta = 1e-8
         m = X.shape[0]
 
-        # upper-triangular off-diagonal distances
-        iu = torch.triu_indices(m, m, offset=1, device=X.device)
-        # vals = (torch.cdist(X, X) ** 2)[iu[0], iu[1]]
-        vals = L2_xx[iu[0], iu[1]]
+        num_unique_pairs = m * (m - 1) // 2
+        max_bw_pairs = getattr(
+            self, "max_bw_pairs", self.DEFAULT_MAX_BW_PAIRS
+        )
+
+        if num_unique_pairs <= max_bw_pairs:
+            pair_idx = torch.triu_indices(m, m, offset=1, device=X.device)
+            vals = L2_xx[pair_idx[0], pair_idx[1]]
+        else:
+            first = torch.randint(m, (max_bw_pairs,), device=X.device)
+            second = torch.randint(m - 1, (max_bw_pairs,), device=X.device)
+            second += second >= first
+            vals = L2_xx[first, second]
+
         vals = vals[vals > 0]
 
         if vals.numel() > 0:
