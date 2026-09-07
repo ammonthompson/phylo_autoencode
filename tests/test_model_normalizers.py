@@ -160,11 +160,10 @@ def test_trainer_uses_model_schema_without_cached_proxies():
         assert not hasattr(trainer, passthrough)
 
     phy = torch.zeros(2, NUM_CHANNELS, WIDTH)
-    mask = torch.ones_like(phy, dtype=torch.bool)
-    tree, char, tree_mask, char_mask = trainer._split_tree_char(phy, mask)
+    tree, char = trainer._split_tree_char(phy)
 
-    assert tree.shape[1] == tree_mask.shape[1] == model.char_start_idx
-    assert char.shape[1] == char_mask.shape[1] == model.num_chars
+    assert tree.shape[1] == model.char_start_idx
+    assert char.shape[1] == model.num_chars
 
 
 def test_continuous_character_training_minibatch():
@@ -192,10 +191,9 @@ def test_continuous_character_training_minibatch():
     batch_size = 5
     phy = torch.rand(batch_size, NUM_CHANNELS, WIDTH)
     aux = torch.zeros(batch_size, 1)
-    mask = torch.ones_like(phy, dtype=torch.bool)
-    mask[:, :, -1] = False
+    num_tips = torch.full((batch_size,), WIDTH - 1, dtype=torch.int64)
     trainer.set_data_loaders(
-        DataLoader(TensorDataset(phy, aux, mask), batch_size=batch_size)
+        DataLoader(TensorDataset(phy, aux, num_tips), batch_size=batch_size)
     )
 
     trainer.train(num_epochs=2, seed=1)

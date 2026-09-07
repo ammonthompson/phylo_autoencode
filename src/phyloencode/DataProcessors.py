@@ -119,7 +119,9 @@ class AEData:
           only the first ``num_channels`` channels are used by ``AEData``.
         - ``aux_data`` with shape ``(N, A)`` or ``(N,)``.
         - ``aux_data_names`` with shape ``(A,)`` or ``(1, A)``. One selected
-          column must be named ``"num_taxa"``; it is used to build masks.
+          column must be named ``"num_taxa"``. Its raw value is used when
+          fitting the continuous-data normalizer and is returned with each
+          dataset sample for downstream padding-mask construction.
 
     Public attributes used by training include ``train_dataset``,
     ``val_dataset``, ``phy_width`` (``max_tips``), ``aux_width``,
@@ -235,9 +237,10 @@ class AEData:
 
         Returns:
             Tuple ``(train_dataset, val_dataset)`` where each item is a
-            ``TreeDataSet``. Dataset samples are ``(phy, aux, mask)`` tensors
-            with shapes ``(num_channels, max_tips)``, ``(aux_width,)``, and
-            ``(num_channels, max_tips)`` respectively.
+            ``TreeDataSet``. Dataset samples are ``(phy, aux, num_tips)``
+            tensors. ``phy`` has shape ``(num_channels, max_tips)``, ``aux``
+            has shape ``(aux_width,)``, and ``num_tips`` is an unnormalized
+            scalar tip count.
         """
         return self.train_dataset, self.val_dataset
 
@@ -267,10 +270,10 @@ class AEData:
 
         Returns:
             Tuple ``(train_dataloader, val_dataloader)``. Batches yield
-            ``(phy, aux, mask)`` where ``phy`` has shape
+            ``(phy, aux, num_tips)`` where ``phy`` has shape
             ``(B, num_channels, max_tips)``, ``aux`` has shape
-            ``(B, aux_width)``, and ``mask`` has shape
-            ``(B, num_channels, max_tips)``.
+            ``(B, aux_width)``, and ``num_tips`` is an unnormalized
+            ``torch.int64`` tensor with shape ``(B,)``.
         """
         drop_last = (len(self.train_dataset) % batch_size) < 32
         train_sampler = RandomSampler(
@@ -298,10 +301,11 @@ class TreeDataSet(Dataset):
     """Lazy HDF5-backed PyTorch dataset for normalized tree samples.
 
     ``TreeDataSet`` stores row indices and fitted normalizers.
-    Each worker process opens its own read-only HDF5 handle on
-    first access. Each sample is read from disk, channel-selected, normalized,
-    reshaped, and returned with a boolean mask derived from the raw
-    ``num_taxa`` auxiliary column.
+    Each worker process opens its own read-only HDF5 handle on first access.
+    Each sample is read from disk, channel-selected, normalized, reshaped,
+    and returned with the unnormalized tip count from the raw ``num_taxa``
+    auxiliary column. Downstream consumers can use this compact value to
+    construct padding masks on the compute device.
     """
 
     def __init__(
@@ -327,13 +331,14 @@ class TreeDataSet(Dataset):
                 structured rows with shape ``(1, num_channels * max_tips)``.
             aux_normalizer: Fitted sklearn-like transformer for selected
                 auxiliary rows with shape ``(1, aux_width)``.
-            max_tips: Structured matrix width before padding wiht zeros.
+            max_tips: Structured matrix width before padding with zeros.
             num_channels: Number of structured channels to read from
                 ``phy_data``.
             aux_indices: One-dimensional sequence of auxiliary column indices
                 to return, in output order.
             num_tips_aux_index: Column index in raw ``aux_data`` containing
-                ``num_taxa``. Used to build the output mask.
+                ``num_taxa``. This unnormalized value is returned with each
+                sample.
 
         Returns:
             None.
@@ -347,7 +352,7 @@ class TreeDataSet(Dataset):
         self.aux_normalizer = aux_normalizer
         self.max_tips = int(max_tips)
         self.num_channels = int(num_channels)
-        self.aux_indices = np.asarray(aux_indices, dtype=np.int64)
+        self.aux_col_indices = np.asarray(aux_indices, dtype=np.int64)
         self.num_tips_aux_index = int(num_tips_aux_index)
         self._h5 = None
         self._h5_pid = None
@@ -367,25 +372,34 @@ class TreeDataSet(Dataset):
             index: Integer dataset-relative index in ``[0, len(self))``.
 
         Returns:
-            Tuple ``(phy, aux, mask)``:
+            Tuple ``(phy, aux, num_tips)``:
                 - ``phy``: ``torch.float32`` tensor with shape
                   ``(num_channels, max_tips)``.
                 - ``aux``: ``torch.float32`` tensor with shape
                   ``(aux_width,)``.
-                - ``mask``: ``torch.bool`` tensor with shape
-                  ``(num_channels, max_tips)``. Entries before ``num_taxa`` are
-                  ``True`` and padded positions are ``False``.
+                - ``num_tips``: Scalar ``torch.int64`` tensor containing the
+                  unnormalized number of tips for this sample.
         """
         return self.__getitems__([index])[0]
 
     def __getitems__(self, indices):
-        """Read and normalize a batch while preserving its requested order."""
+        """Read and normalize samples in one batch-oriented HDF5 operation.
+
+        Args:
+            indices: Dataset-relative indices to read.
+
+        Returns:
+            List of ``(phy, aux, num_tips)`` sample tuples in the requested
+            order. ``DataLoader`` collates this list into three batched
+            tensors.
+        """
         indices = np.asarray(indices, dtype=np.int64)
         rows = self.indices[indices]
         h5 = self._file()
-        phy = _read_phy(h5, rows, self.num_channels, self.max_tips)
+
+        phy     = _read_phy(h5, rows, self.num_channels, self.max_tips)
         aux_raw = _as_2d(_read_rows(h5["aux_data"], rows))
-        aux = aux_raw[:, self.aux_indices].astype(np.float32, copy=False)
+        aux     = aux_raw[:, self.aux_col_indices].astype(np.float32, copy=False)
 
         phy = self.phy_normalizer.transform(phy)
         aux = self.aux_normalizer.transform(aux)
@@ -394,15 +408,17 @@ class TreeDataSet(Dataset):
         )
 
         num_tips = aux_raw[:, self.num_tips_aux_index].astype(np.int64)
-        mask = np.arange(self.max_tips)[None, None, :] < num_tips[:, None, None]
-        mask = np.broadcast_to(
-            mask, (len(indices), self.num_channels, self.max_tips)
-        ).copy()
+        # mask = np.arange(self.max_tips)[None, None, :] < num_tips[:, None, None]
+        # mask = np.broadcast_to(
+        #     mask, (len(indices), self.num_channels, self.max_tips)
+        # ).copy()
 
         phy = torch.as_tensor(phy, dtype=torch.float32)
         aux = torch.as_tensor(aux, dtype=torch.float32)
-        mask = torch.as_tensor(mask, dtype=torch.bool)
-        return list(zip(phy, aux, mask))
+        # mask = torch.as_tensor(mask, dtype=torch.bool)
+        num_tips = torch.as_tensor(num_tips, dtype=torch.int64)
+        # return list(zip(phy, aux, mask))
+        return list(zip(phy, aux, num_tips))
 
     def _file(self):
         pid = os.getpid()

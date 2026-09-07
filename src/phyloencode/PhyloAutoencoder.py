@@ -30,15 +30,17 @@ class AETrainer(object):
     - Tracking and reporting detached training and validation loss metrics.
 
     Notes:
-        The data loaders are expected to yield either ``(phy, aux)`` or ``(phy, aux, mask)``:
+        Data loaders must yield ``(phy, aux, num_tips)``:
 
         - ``phy`` is a ``torch.Tensor`` shaped ``(batch, channels, width)``.
         - ``aux`` is a ``torch.Tensor`` shaped ``(batch, aux_dim)``.
-        - ``mask`` (optional) is a ``torch.bool`` tensor with the same shape as ``phy``.
+        - ``num_tips`` is an unnormalized ``torch.int64`` tensor shaped
+          ``(batch,)``.
 
-        If ``model.num_chars > 0``, the last ``num_chars`` channels of ``phy`` (and ``mask``, if
-        present) are treated as character channels and are separated from the tree channels
-        before loss computation.
+        If ``model.num_chars > 0``, the last ``num_chars`` channels of ``phy``
+        are treated as character channels and separated from the tree channels
+        before loss computation. The loss constructs padding masks from
+        ``num_tips`` on the compute device.
 
     Attributes:
         device (str): ``"cuda"`` or ``"cpu"``.
@@ -74,9 +76,8 @@ class AETrainer(object):
             lr_scheduler: Optional learning-rate scheduler with a ``.step()`` method.
                 If provided, it is stepped once per training batch (not per epoch).
             loss: Objective used during training and validation. It is called as
-                ``loss(pred, true, segmented_mask)`` and returns the scalar objective plus
-                a component-metric mapping. ``segmented_mask`` is a ``(tree_mask,
-                char_mask)`` tuple (each element may be None).
+                ``loss(pred, true, num_tips)`` and returns the scalar objective
+                plus a component-metric mapping.
             seed (int, optional): If provided, seeds Python, NumPy, and PyTorch RNGs and
                 enables deterministic cuDNN behavior for reproducibility. Defaults to None.
             device (str, optional): ``"auto"``, ``"cuda"``, or ``"cpu"``. If ``"auto"``, selects
@@ -137,7 +138,7 @@ class AETrainer(object):
         """
 
         if self.train_loader is None:
-            raise ValueError("Must load training data.")
+            raise ValueError("Must load training data fist.")
 
         # A loaded checkpoint has already restored the RNG state. Only an explicit seed
         # should replace that state here.
@@ -175,15 +176,18 @@ class AETrainer(object):
     def _mini_batch(self, validation = False):
         """Run one full pass over a data loader (train or validation).
 
-        Iterates through ``train_loader`` or ``val_loader`` and calls the appropriate step
-        function on each batch (``_train_step`` for training, ``evaluate`` for validation).
+        Iterates through ``train_loader`` or ``val_loader`` and
+        calls the appropriate step function on each batch
+        (``_train_step`` for training, ``evaluate`` for validation).
 
         Args:
             validation (bool, optional): If True, uses ``val_loader`` and ``evaluate()``.
-                If False, uses ``train_loader`` and ``_train_step()``. Defaults to False.
+                If False, uses ``train_loader`` and ``_train_step()``. Defaults
+                to False.
 
         Returns:
-            None: This method updates trainer-owned metric state as a side-effect.
+            None: This method updates trainer-owned metric state as a side
+                effect.
         """
         # 
 
@@ -198,21 +202,16 @@ class AETrainer(object):
         if data_loader == None:
             return None
 
-        # perform step and return loss
-        # loop through all batches of train or val data
+        # perform step with each batch
         for batch in data_loader:
-            if len(batch) == 3:
-                phy_batch, aux_batch, mask_batch = batch
-                mask_batch = mask_batch.to(self.device)
-            else:
-                phy_batch, aux_batch = batch
-                mask_batch = None
+            phy_batch, aux_batch, numtips_batch = batch
 
-            phy_batch = phy_batch.to(self.device)
-            aux_batch = aux_batch.to(self.device)
+            phy_batch     = phy_batch.to(self.device)
+            aux_batch     = aux_batch.to(self.device)
+            numtips_batch = numtips_batch.to(self.device)
                
             # perform SGD step for batch
-            step_function(phy_batch, aux_batch, mask_batch)
+            step_function(phy_batch, aux_batch, numtips_batch)
 
         # compute mean of batch grad norms per layer
         if self.track_grad and not validation:
@@ -222,27 +221,28 @@ class AETrainer(object):
 
     
     def _train_step(self, phy: torch.Tensor, aux: torch.Tensor, 
-                   mask: Optional[torch.Tensor] = None):
+                   num_tips: torch.Tensor):
         """Run a single gradient update on one batch.
 
         Args:
-            phy (torch.Tensor): Structured input tensor shaped ``(batch, channels, width)``.
-            aux (torch.Tensor): Unstructured/auxiliary input tensor shaped ``(batch, aux_dim)``.
-            mask (torch.Tensor, optional): Optional boolean mask shaped like ``phy``. Defaults
-                to None.
+            phy (torch.Tensor): Structured input with shape
+                ``(batch, channels, width)``.
+            aux (torch.Tensor): Auxiliary input with shape
+                ``(batch, aux_dim)``.
+            num_tips (torch.Tensor): Raw, unnormalized integer tip counts with
+                shape ``(batch,)``.
         """
         # batch train loss
         # set model to train mode
         self.model.train()
 
         # divide phy and mask into tree and character data
-        tree, char, tree_mask, char_mask = self._split_tree_char(phy, mask)
+        tree, char = self._split_tree_char(phy)
 
-        segmented_mask = (tree_mask, char_mask)          
         true = (tree, char, aux)
         pred = self.model((phy, aux))
 
-        objective, metrics = self.loss(pred, true, segmented_mask)
+        objective, metrics = self.loss(pred, true, num_tips)
         self.train_metrics.record_batch(metrics)
 
         # compute gradient
@@ -264,7 +264,7 @@ class AETrainer(object):
 
         
     def evaluate(self, phy: torch.Tensor, aux: torch.Tensor,
-                  mask: Optional[torch.Tensor] = None):
+                  num_tips: torch.Tensor):
         """Evaluate the model on one batch and record validation metrics.
 
         This method does not disable gradients by itself; call it under
@@ -273,21 +273,20 @@ class AETrainer(object):
         Args:
             phy (torch.Tensor): Structured input tensor shaped ``(batch, channels, width)``.
             aux (torch.Tensor): Unstructured/auxiliary input tensor shaped ``(batch, aux_dim)``.
-            mask (torch.Tensor, optional): Optional boolean mask shaped like ``phy``. Defaults
-                to None.
+            num_tips (torch.Tensor): Raw, unnormalized integer tip counts with
+                shape ``(batch,)``.
         """
         
         # batch val loss        
         self.model.eval()
 
         # divide phy into tree and character data
-        tree, char, tree_mask, char_mask = self._split_tree_char(phy, mask)
+        tree, char = self._split_tree_char(phy)
 
-        segmented_mask = (tree_mask, char_mask)
-        true = (tree, char, aux)
         pred = self.model((phy, aux))
+        true = (tree, char, aux)
 
-        _, metrics = self.loss(pred, true, segmented_mask)
+        _, metrics = self.loss(pred, true, num_tips)
         self.val_metrics.record_batch(metrics)
         
     def to_device(self, device):
@@ -299,6 +298,7 @@ class AETrainer(object):
         try:
             self.device = device
             self.model.to(self.device)
+            self.loss.to(self.device)
         except RuntimeError:
             print(f"Didn't work, sending to {self.device} instead.")
 
@@ -306,8 +306,8 @@ class AETrainer(object):
                                val_loader   : Optional[torch.utils.data.DataLoader] = None):
         """Set the training and validation data loaders.
 
-        The loaders must yield either ``(phy, aux)`` or ``(phy, aux, mask)`` as described in
-        the class-level docstring.
+        Each loader must yield ``(phy, aux, num_tips)`` as described in the
+        class-level docstring.
 
         Args:
             train_loader (torch.utils.data.DataLoader): Training data loader.
@@ -395,13 +395,14 @@ class AETrainer(object):
         """Set the objective used for training and validation.
 
         Args:
-            loss: ``PhyLoss`` object called as ``loss(pred, true, segmented_mask)``.
+            loss: ``PhyLoss`` object called as ``loss(pred, true, num_tips)``.
         """
         if not isinstance(loss, PhyLoss):
             raise TypeError(
                 f"loss must be a PhyLoss instance, got {type(loss).__name__}."
             )
         self.loss = loss
+        self.loss.to(self.device)
 
     def set_track_grad(self, track_grad: bool = False):
         """Enable or disable gradient-norm tracking for future training steps."""
@@ -676,35 +677,28 @@ class AETrainer(object):
                               out_prefix=out_prefix, log=log,
                               starting_epoch=starting_epoch)
 
-    def _split_tree_char(self, phy : torch.Tensor, mask : Optional[torch.Tensor]) -> Tuple[torch.Tensor, 
-                                                                                 torch.Tensor,
-                                                                                 torch.Tensor,       
-                                                                                 torch.Tensor, ]: 
-        """Split structured input and mask into tree and character channels.
+    def _split_tree_char(self, phy : torch.Tensor) \
+                            -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """Split structured input into tree and character channels.
 
         Args:
             phy (torch.Tensor): Structured input tensor shaped ``(batch, channels, width)``.
-            mask (torch.Tensor): Optional boolean mask shaped like ``phy``.
 
         Returns:
-            Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
-            ``(tree, char, tree_mask, char_mask)``. If ``model.num_chars == 0``, ``char`` and
-            ``char_mask`` are returned as None.
+            Tuple[torch.Tensor, Optional[torch.Tensor]]: ``(tree, char)``. If
+                ``model.num_chars == 0``, ``char`` is None.
         """
         # divide phy into tree and character data
         if self.model.num_chars > 0:
             char_start_idx = self.model.char_start_idx
             tree = phy[:, :char_start_idx, :]
             char = phy[:, char_start_idx:, :]
-            tree_mask = mask[:, :char_start_idx, :] if mask is not None else None
-            char_mask = mask[:, char_start_idx:, :] if mask is not None else None
+
         else:
             tree = phy
             char = None
-            tree_mask = mask
-            char_mask = None
 
-        return tree, char, tree_mask, char_mask
+        return tree, char
 
 
 # Backward compatibility for imports and checkpoints created before the rename.
@@ -789,7 +783,7 @@ class _LossMetricTracker:
         if hasattr(loss, "validation"):
             delattr(loss, "validation")
 
-
+# module functions
 def _print_latest_loss_metrics(metrics, label, elapsed_time, print_epoch=False):
     """Print the latest epoch summary from a loss metric tracker."""
     history = metrics.epoch_history
