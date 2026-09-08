@@ -11,13 +11,15 @@
 ---
 
 ## Features
+
 - Works with **phylogenies, tip data, and auxiliary datasets**.
-- Requires [Phyddle](https://phyddle.org) generated **HDF5-formatted** input data.
-- Provides tools for **training, encoding, and extracting feature representations** from phylogenetic data.
+- Trains from [Phyddle](https://phyddle.org)-generated **HDF5** data.
+- Provides tools for **training, encoding, reconstruction, decoding, and generation**.
 
 ---
 
 ## Installation
+
 Clone repository and from the **package root directory**, install via pip:
 
 ```bash
@@ -27,38 +29,48 @@ pip install .
 ---
 
 ## Training
-To train the autoencoder, ensure your **phylogenetic and auxiliary data** are in phyddle format which outputs the data in a **HDF5** file. I recommend using Phyddle -s SF to create the data and file. See example/phyddle_sim_data for phyddle scripts to generate a set of BISSE training trees. Data file will be in the format directory.
+
+Training expects **phylogenetic and auxiliary data** from the Phyddle format step in an **HDF5** file. The included `example/phyddle_sim_data` configuration runs Phyddle's simulation and format steps (`SF`) to generate example BiSSE data:
 
 ```bash
 cd example/phyddle_sim_data
 phyddle -c phyddle_config.py
 ```
 
-Once you have a training dataset, use the phytrain command. There is also an example phyloencode config file in the example dir for network settings.
+Once you have a training dataset, run `phytrain`. Copy and edit the included [`phytrain_config.py`](phytrain_config.py) template, then supply it with `--config`:
 
-- **Example command:** `phytrain --trn_data example_train_data.hdf5 --config example_config.py`  
-- Type `phytrain -h` for more info
+```bash
+phytrain --trn_data path/to/training.hdf5 --config phytrain_config.py
+```
 
-If `phytrain` warns that the HDF5 layout is inefficient, add `--optimize_data` once. This creates and trains from a reusable, uncompressed `example_train_data.phywae.hdf5` copy without changing the Phyddle file. The optimized copy uses more disk space in exchange for much faster shuffled reads.
+For faster shuffled reads, add `--optimize_data`. From `training.hdf5`, this creates or reuses an uncompressed `training.phywae.hdf5`, leaves the Phyddle source unchanged, and trains from the optimized copy. The copy requires additional disk space.
+
+```bash
+phytrain --trn_data path/to/training.hdf5 --optimize_data
+```
+
+Run `phytrain -h` for all training options.
 
 ---
 
 ## Encoding with a Trained Autoencoder
-To encode and decode a set of phylogenetic trees, use the **`phyencode`** and **`phydecode`** commands. To generate new trees from the approximate tree distribution use **`phygen`**. This tool draws samples from $N(0,\mathbb{I})$ and transforms these draws to a tree, tip data and tree-associated metadata via the trained decoder.
+
+Use `phyencode` to map trees and auxiliary data into latent coordinates, `phydecode` to decode saved latent coordinates, and `phypredict` to encode and reconstruct data in one step. Use `phygen` to draw latent samples from $N(0,\mathbb{I})$ and generate trees, tip data, and tree-associated metadata with the trained decoder.
 
 For more details on input formats and options, run:
 
 ```bash
 phyencode -h
 phydecode -h
+phypredict -h
 phygen -h
 ```
 
 ---
 
 ## Documentation & Support
+
 For detailed documentation of Phyddle tree formatting files, visit:  
 [**phyddle.org**](https://phyddle.org/pipeline.html#format) or check the provided example scripts.
 
 ---
-
