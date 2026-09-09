@@ -26,6 +26,15 @@ Clone repository and from the **package root directory**, install via pip:
 pip install .
 ```
 
+For development, install [uv](https://docs.astral.sh/uv/getting-started/installation/) and create the locked environment:
+
+```bash
+uv sync --dev
+uv run pytest -q
+```
+
+The project uses Python 3.12 by default. `uv` installs the project in editable mode and uses the exact dependency versions recorded in `uv.lock`.
+
 ---
 
 ## Training
