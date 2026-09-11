@@ -6,11 +6,11 @@ import pytest
 import torch
 from torch.optim import AdamW
 
-from phyloencode import utils
-from phyloencode.DataProcessors import AEData
-from phyloencode.PhyloAEModel import AECNN
-from phyloencode.PhyloAutoencoder import PhyloAutoencoder, _LossMetricTracker
-from phyloencode.PhyLoss import PhyLoss
+from phywae import utils
+from phywae.DataProcessors import AEData
+from phywae.PhyloAEModel import AECNN
+from phywae.PhyloAutoencoder import PhyloAutoencoder, _LossMetricTracker
+from phywae.PhyLoss import PhyLoss
 
 
 SEED = 731

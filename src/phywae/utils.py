@@ -28,7 +28,7 @@ class SoftClip(nn.Module):
 
 # these classes work with datasets output from the Format step in Phyddle
 # they are used to normalize the data before training
-# they are used to create a DataSet object. See phyloencode.TreeDataSet class
+# they are used to create a DataSet object. See phywae.TreeDataSet class
 class PositiveStandardScaler(BaseEstimator, TransformerMixin):
     # this does not use zero-padded values for standardization.
     def __init__(self):

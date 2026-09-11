@@ -18,8 +18,8 @@ def _repo_root() -> Path:
 # Test runner may not install the package; allow importing from src/.
 sys.path.insert(0, str(_repo_root() / "src"))
 
-from phyloencode import utils
-from phyloencode.PhyloAEModel import AECNN
+from phywae import utils
+from phywae.PhyloAEModel import AECNN
 
 
 def _make_model() -> AECNN:

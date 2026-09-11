@@ -1,13 +1,12 @@
 
-import argparse
 import torch
-from phyloencode.PhyloAEModel import AECNN
-import phyloencode.utils as utils
+from phywae.PhyloAEModel import AECNN
+import phywae.utils as utils
 import h5py
 from types import SimpleNamespace
 import pandas as pd
 import numpy as np
-from phyloencode.cli._output import print_output_files
+from phywae.cli._output import print_output_files
 
 # parse command line arguments
 # - should take in a h5py file that contains phy and aux data (either together in phyddle output, or separate csvs)
@@ -24,8 +23,8 @@ from phyloencode.cli._output import print_output_files
 # write to csv
 
 
-def main():
-    settings = _process_args()
+def main(args):
+    settings = _process_args(args)
     model = settings['model']
     data  = settings['data']
 
@@ -89,8 +88,7 @@ def main():
 
 
 
-def _process_args() -> dict:
-    parser = argparse.ArgumentParser(usage="Encode and reconstruct cblv trees.")
+def add_arguments(parser):
     parser.add_argument("-d", "--data", required=True,
                         help="hdf5 file. Contains cblv formated phylogenetic data from Phyddle.")
     parser.add_argument("-m", "--model", required=True,
@@ -99,7 +97,9 @@ def _process_args() -> dict:
                         help="Output files prefix.")
     parser.add_argument("-ofmt", "--out-format", required=False,
                         default="hdf5", choices=["hdf5","csv"],  help="File format for outputs.")
-    args = parser.parse_args()
+
+
+def _process_args(args) -> dict:
     model_fn = args.model
     data_fn  = args.data
     out_prefix = args.out_prefix
@@ -131,6 +131,3 @@ def _process_args() -> dict:
 
 def _validate_settings(settings) -> None:
     settings["model"].validate_num_tips(settings["data"].aux_data)
-
-if __name__ == "__main__":
-    main()

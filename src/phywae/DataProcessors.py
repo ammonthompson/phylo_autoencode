@@ -9,7 +9,7 @@ import torch
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset, RandomSampler
 
-import phyloencode.utils as utils
+import phywae.utils as utils
 
 
 _OPTIMIZED_SUFFIX = ".phywae.hdf5"
@@ -92,7 +92,7 @@ def prepare_training_hdf5(hdf5_file, optimize=False):
     if not optimize:
         print(
             f"Warning: slow HDF5 layout: {source_path}\n"
-            "Run phytrain with --optimize_data on the original Phyddle file "
+            "Run phywae train with --optimize_data on the original Phyddle file "
             "to create a faster training copy."
         )
         return source_path

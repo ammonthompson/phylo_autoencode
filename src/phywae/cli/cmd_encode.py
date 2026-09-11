@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
 # test a pretrained model
-from phyloencode.PhyloAEModel import AECNN
-from phyloencode import utils
+from phywae.PhyloAEModel import AECNN
+from phywae import utils
 import torch
 import joblib
 import h5py
 import pandas as pd
 import os
-import argparse
 import numpy as np
 import os
-from phyloencode.utils import get_num_tips
-from phyloencode.cli._output import print_output_files
+from phywae.utils import get_num_tips
+from phywae.cli._output import print_output_files
 
 
-def main ():
-    cmd = argparse.ArgumentParser(description="Encode phylogenetic trees and auxiliary data with trained autodencoder.")
+def add_arguments(cmd):
     cmd.add_argument("-m", "--model", required=True, help="Path to a trained model artifact or trainer checkpoint")
     cmd.add_argument("-t", "--tree-data", required=True, help="Path to the phyddle formated tree CBLV(S). If using a phyddle -s F output hdf5, " \
     "use the key 'phy_data' for the tree data and 'aux_data' for the auxiliary data. If using csv, for the cblv tree data, then" \
@@ -25,8 +23,8 @@ def main ():
     cmd.add_argument("-mt", "--max-tips", required=False, type=int,help="Max number of tips in the data. Default is 500.")
     cmd.add_argument("-o", "--out-prefix", required=False, help="Path to out file prefix")
 
-    args = cmd.parse_args()
 
+def main(args):
     ae_model_fn       = utils.file_exists(args.model)
     tree_data_fn      = utils.file_exists(args.tree_data)
     aux_data_fn       = utils.file_exists(args.aux_data) if args.aux_data is not None else None
@@ -132,6 +130,3 @@ def main ():
     output_files.append(encoded_out_file)
 
     print_output_files(output_files)
-
-if __name__ == "__main__":
-    main()

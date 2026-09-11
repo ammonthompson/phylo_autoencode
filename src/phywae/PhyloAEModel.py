@@ -3,8 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Union
-from phyloencode import utils
-from phyloencode.ResNet import ResCnnEncoder, ResCnnDecoder
+from phywae import utils
+from phywae.ResNet import ResCnnEncoder, ResCnnDecoder
 import random
 import sklearn
 
@@ -692,7 +692,7 @@ class AECNN(nn.Module):
                 Common values are ``"cpu"``, ``"cuda"``, ``"cuda:0"``, or ``None``.
                 Use ``None`` to keep original device placement from the artifact.
         """
-        model_obj = torch.load(trained_model_fn, map_location = map_location, weights_only=False)
+        model_obj = torch.load(trained_model_fn, map_location=map_location, weights_only=False)
         if isinstance(model_obj, dict) and isinstance(model_obj.get("model"), cls):
             model_obj = model_obj["model"]
 

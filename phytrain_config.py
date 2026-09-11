@@ -1,4 +1,4 @@
-"""Configuration template for ``phytrain --config phytrain_config.py``."""
+"""Configuration template for ``phywae train --config phytrain_config.py``."""
 
 settings = {
     # Output and runtime

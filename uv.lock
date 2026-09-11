@@ -902,8 +902,8 @@ wheels = [
 ]
 
 [[package]]
-name = "phyloencode"
-version = "0.1"
+name = "phywae"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "dendropy" },

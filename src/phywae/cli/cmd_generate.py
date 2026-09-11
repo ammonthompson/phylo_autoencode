@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-import argparse
 import pandas as pd
 import numpy as np
 import torch
-import phyloencode
-import phyloencode.utils as utils
-from phyloencode.PhyloAEModel import AECNN
-from phyloencode.cli._output import print_output_files
+import phywae
+import phywae.utils as utils
+from phywae.PhyloAEModel import AECNN
+from phywae.cli._output import print_output_files
 import random
 import h5py
 import sys
@@ -18,9 +17,7 @@ import sys
 # I think the refactor this implies is change "aux" to unstructured, and only use "aux"
 # for input and output labels. What is currently called aux should be a combination of
 # aux and label values extracted from the phyddle training data file.
-def main():
-    cmd = argparse.ArgumentParser(prog = "", usage = "")
-
+def add_arguments(cmd):
     cmd.add_argument("-m", "--model", type=str, required=True, 
                     help="Path to a trained model artifact or trainer checkpoint used for generating new samples.")
     cmd.add_argument("-n", "--num-samples", required=True, type=int, 
@@ -36,7 +33,7 @@ def main():
                      help="A comma separated list of label names found in the aux data.")
 
 
-    args = cmd.parse_args()
+def main(args):
     # model = torch.load(utils.file_exists(args.model), weights_only=False)
     model = AECNN.load_pretrained_from_file(utils.file_exists(args.model), map_location="cpu")
     N = args.num_samples
@@ -135,6 +132,3 @@ def main():
 
     print_output_files([cblv_out_file, aux_out_file, tree_out_file, hdf5_out_file])
 
-
-if __name__ == "__main__":
-    main()

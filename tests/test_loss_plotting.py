@@ -3,7 +3,7 @@ import warnings
 
 import numpy as np
 
-from phyloencode.utils import make_loss_plots
+from phywae.utils import make_loss_plots
 
 
 def test_loss_plots_handle_zero_components_without_runtime_warning(tmp_path):

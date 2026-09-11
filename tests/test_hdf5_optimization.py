@@ -1,16 +1,15 @@
-import sys
-
 import h5py
 import numpy as np
 import pytest
 
-from phyloencode.DataProcessors import (
+from phywae.DataProcessors import (
     AEData,
     is_hdf5_optimized,
     optimize_hdf5,
     optimized_hdf5_path,
 )
-from phyloencode.cli.cmd_train import _get_default_settings, _parse_arguments
+from phywae.cli import build_parser
+from phywae.cli.cmd_train import _get_default_settings
 
 
 def _write_training_file(path):
@@ -105,8 +104,7 @@ def test_optimization_refuses_to_overwrite_an_existing_file(tmp_path):
         optimize_hdf5(source)
 
 
-def test_phytrain_exposes_optimization_flag(monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["phytrain", "-d", "train.hdf5", "--optimize_data"])
-
-    assert _parse_arguments().optimize_data is True
+def test_phywae_train_exposes_optimization_flag():
+    args = build_parser().parse_args(["train", "-d", "train.hdf5", "--optimize_data"])
+    assert args.optimize_data is True
     assert _get_default_settings()["optimize_data"] is False

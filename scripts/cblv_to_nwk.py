@@ -6,7 +6,7 @@ import pandas as pd
 import h5py
 import argparse
 import re
-import phyloencode.utils as utils
+import phywae.utils as utils
 
 # from phyddle.format import Formatter as fmt
 from string import ascii_lowercase, ascii_uppercase

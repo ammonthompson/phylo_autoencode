@@ -3,9 +3,9 @@ requires = ["hatchling>=1.27,<2.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "phyloencode"
-version = "0.1"
-description = "A Python package for phylogenetic data encoding. Designed to work with Phyddle format step output."
+name = "phywae"
+version = "0.2.0"
+description = "PhyWAE: a phylogenetic Wasserstein autoencoder for Phyddle-formatted data."
 readme = "README.md"
 authors = [
     {name = "Ammon Thompson", email = "ammonthompson@gmail.com"},
@@ -32,14 +32,13 @@ dev = [
 ]
 
 [project.scripts]
-phyencode = "phyloencode.cli.cmd_encode:main"
-phydecode = "phyloencode.cli.cmd_decode:main"
-phytrain  = "phyloencode.cli.cmd_train:main"
-phygen    = "phyloencode.cli.cmd_generate:main"
-phypredict = "phyloencode.cli.cmd_predict:main"
+phywae = "phywae.cli:main"
 
 [tool.hatch.build]
-exclude = ["sandbox/**", "phyloencode.egg-info/**", "__pycache__/**", "*.pyc", "*.pyo", "*.log", ".git/**", "tests/**", "dev/**", ".vscode/**"]
+exclude = ["sandbox/**", "*.egg-info/**", "__pycache__/**", "*.pyc", "*.pyo", "*.log", ".git/**", "tests/**", "dev/**", ".vscode/**"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/phyloencode"]
+packages = ["src/phywae"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["src", "docs", "example", "README.md", "pyproject.toml", "phytrain_config.py", ".python-version", "uv.lock"]

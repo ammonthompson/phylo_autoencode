@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from phyloencode.PhyLoss import MMDLoss
+from phywae.PhyLoss import MMDLoss
 
 
 def _squared_distances(x):

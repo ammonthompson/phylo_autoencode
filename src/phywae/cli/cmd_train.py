@@ -2,7 +2,7 @@
 """Train a phylogenetic Wasserstein autoencoder (PhyWAE).
 
 Training uses four main objects; AEData, AECNN, PhyLoss and AETrainer.
-The ``phytrain`` CLI tool creates or restores these objects and starts
+The ``phywae train`` command creates or restores these objects and starts
 training.
 
 `API:`
@@ -21,19 +21,16 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import OneCycleLR
 import numpy  as np
 import pandas as pd
-import argparse
 
-from phyloencode.PhyloAutoencoder   import AETrainer
-from phyloencode.PhyloAEModel       import AECNN
-from phyloencode.DataProcessors     import AEData
-from phyloencode.PhyLoss            import PhyLoss
-from phyloencode.cli._output        import print_output_files
-import phyloencode.utils as utils
+from phywae.PhyloAutoencoder   import AETrainer
+from phywae.PhyloAEModel       import AECNN
+from phywae.DataProcessors     import AEData
+from phywae.PhyLoss            import PhyLoss
+from phywae.cli._output        import print_output_files
+import phywae.utils as utils
 
 
-def main():
-
-    args = _parse_arguments()
+def main(args):
     settings, checkpoint_overrides = _process_settings(args)
 
     ###################################
@@ -193,7 +190,7 @@ def main():
     print_output_files(output_files)
 
 
-
+# Helpers
 def _process_settings(args):
     # Training settings: Architecture, num epochs, batch size, etc.
     # Override settings provided in config file if provided
@@ -228,8 +225,7 @@ def _process_settings(args):
     }
     return settings, checkpoint_overrides
 
-def _parse_arguments():
-    parser = argparse.ArgumentParser()
+def add_arguments(parser):
     parser.add_argument("-d", "--trn_data",         required = True,  help = "Training data in hdf5 format.")
     parser.add_argument("-o", "--out_prefix",       required = False,  help = "Output prefix.")
     parser.add_argument("-cfg", "--config",         required = False, help = "Configuration file. Settings dictionary. Default None.")
@@ -263,7 +259,6 @@ def _parse_arguments():
     parser.add_argument("-ckpt", "--checkpoints", required = False, help = "Comma separated list of epochs to save training checkpoints. Default: None")
     parser.add_argument("--resume_from_checkpoint", required = False, help = "Resume training from a provided checkpoint file produced by save_checkpoint.")
     parser.add_argument("--pretrained_model", required = False, help = "Initialize model weights from a model artifact or trainer checkpoint and start a fresh training run.")
-    return parser.parse_args()
 
 def _get_loss_weights(settings):
     return {k : v for k, v in settings.items() if "_loss_weight" in k}
@@ -407,6 +402,3 @@ def _save_settings(settings, out_file):
     df = pd.DataFrame(df_val, index=df_index, columns=None)
     df.to_csv(out_file, sep="\t", header = False)
     print("Settings saved to", out_file)
-
-if __name__ == "__main__":
-    main()

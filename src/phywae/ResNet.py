@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Union
-from phyloencode import utils
+from phywae import utils
 import random
 import sklearn
 

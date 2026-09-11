@@ -6,10 +6,10 @@ import torch
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, TensorDataset
 
-from phyloencode import utils
-from phyloencode.PhyloAEModel import AECNN
-from phyloencode.PhyloAutoencoder import AETrainer
-from phyloencode.PhyLoss import PhyLoss
+from phywae import utils
+from phywae.PhyloAEModel import AECNN
+from phywae.PhyloAutoencoder import AETrainer
+from phywae.PhyLoss import PhyLoss
 
 
 NUM_CHANNELS = 7

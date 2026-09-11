@@ -1,29 +1,27 @@
 #!/usr/bin/env python3
 # test a pretrained model
-import phyloencode.utils as utils
-from phyloencode.PhyloAEModel import AECNN
+import phywae.utils as utils
+from phywae.PhyloAEModel import AECNN
 import torch
 # import joblib
 # import h5py
 import numpy as np
 import pandas as pd
 # import os
-import argparse
-from phyloencode.cli._output import print_output_files
+from phywae.cli._output import print_output_files
 
 # takes in an encoded tree (encoded by the same trained model as the decoder)
 # outputs a cblv file
 
 # TODO: Output a nwk string too?
 
-def main ():
-    cmd = argparse.ArgumentParser(description="Encode phylogenetic trees and auxiliary data with trained autodencoder.")
+def add_arguments(cmd):
     cmd.add_argument("-m", "--model", required=True, help="Path to a trained model artifact or trainer checkpoint")
     cmd.add_argument("-e", "--encoded-data", required=True, help="Path to the model encoded data file")
     cmd.add_argument("-o", "--out-prefix", required=False, help="Path to out file prefix")
 
-    args = cmd.parse_args()
 
+def main(args):
     ae_model_fn       = utils.file_exists(args.model)
     encoded_data_fn   = utils.file_exists(args.encoded_data)
     
@@ -53,6 +51,3 @@ def main ():
     aux_df.to_csv(aux_out_file, header = None, index = None)
 
     print_output_files([cblv_out_file, aux_out_file])
-
-if __name__ == "__main__":
-    main()

@@ -1,7 +1,7 @@
 import h5py
 import numpy as np
 
-from phyloencode.DataProcessors import AEData
+from phywae.DataProcessors import AEData
 
 
 def test_dataloaders_keep_workers_alive_when_multiprocessing(tmp_path):

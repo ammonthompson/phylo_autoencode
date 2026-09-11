@@ -5,14 +5,14 @@ import torch
 import numpy as np
 import pandas as pd
 # import sklearn as sk
-import phyloencode as ph
+import phywae as ph
 # import sys
 import h5py
 import argparse
 
-import phyloencode as ph
-from phyloencode import utils
-from phyloencode.PhyloAutoencoder import AETrainer
+import phywae as ph
+from phywae import utils
+from phywae.PhyloAutoencoder import AETrainer
 import cProfile
 import pstats
 def main():

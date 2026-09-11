@@ -5,10 +5,10 @@ from matplotlib.backends.backend_pdf import PdfPages
 import numpy as np
 import torch
 from torch.optim.lr_scheduler import LRScheduler
-from phyloencode.PhyLoss import PhyLoss
-from phyloencode.DataProcessors import AEData
-from phyloencode.PhyloAEModel import AECNN
-import phyloencode.utils as utils
+from phywae.PhyLoss import PhyLoss
+from phywae.DataProcessors import AEData
+from phywae.PhyloAEModel import AECNN
+import phywae.utils as utils
 import time
 import random
 from pathlib import Path
@@ -22,7 +22,7 @@ _LOSS_METRIC_NAMES = ("total", "phy", "char", "aux", "mmd")
 class AETrainer(object):
     """Train and evaluate a phylogenetic autoencoder.
 
-    This class is a lightweight training loop around an ``phyloencode.PhyloAEModel.AECNN``
+    This class is a lightweight training loop around an ``phywae.PhyloAEModel.AECNN``
     (or compatible) autoencoder. It handles:
 
     - Device placement and optional global seeding for reproducibility.

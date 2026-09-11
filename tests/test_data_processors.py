@@ -2,7 +2,7 @@ import h5py
 import numpy as np
 import torch
 
-from phyloencode.DataProcessors import AEData
+from phywae.DataProcessors import AEData
 
 
 def test_ae_data_partitions_all_selected_rows_between_train_and_validation(tmp_path):
