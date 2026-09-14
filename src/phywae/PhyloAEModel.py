@@ -53,7 +53,6 @@ class AECNN(nn.Module):
                  kernel = [3,3],
                  out_channels = [16, 32],
                  latent_output_dim = None, # if None, then controled by structured latent channels
-                 out_prefix = "out",
                  device = "auto",
                  seed = None,
                  phy_normalizer = None,
@@ -87,8 +86,6 @@ class AECNN(nn.Module):
                 ``[16, 32]``.
             latent_output_dim (Optional[int]): Size of the shared Gaussian latent vector. If
                 None, defaults to the flattened structured embedding width.
-            out_prefix (str): Prefix for output files written during initialization (currently the
-                ``.network.txt`` architecture dump). Defaults to ``"out"``.
             device (str): ``"auto"``, ``"cpu"``, or ``"cuda"``. If ``"auto"``, selects CUDA when
                 available. Defaults to ``"auto"``.
             seed (Optional[int]): Random seed for Python, NumPy, and PyTorch. Defaults to None.
@@ -103,8 +100,6 @@ class AECNN(nn.Module):
 
         super().__init__()
 
-        # Keep a record of init-time settings so we can recreate an equivalent model later.
-        self.out_prefix = out_prefix
         self.seed = seed
         self.device_setting = device
 
@@ -481,7 +476,6 @@ class AECNN(nn.Module):
             "kernel": list(self.layer_params["kernel"]),
             "out_channels": list(self.layer_params["out_channels"]),
             "latent_output_dim": self.layer_params.get("latent_dim"),
-            "out_prefix": getattr(self, "out_prefix", "out"),
             "device": getattr(self, "device_setting", self.device),
             "seed": getattr(self, "seed", None),
             "phy_normalizer": self.phy_normalizer,

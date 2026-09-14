@@ -51,7 +51,6 @@ def _make_model() -> AECNN:
         kernel=[3, 3],
         out_channels=[4, 4],
         latent_output_dim=4,
-        out_prefix="test",
         device="cpu",
         phy_normalizer=phy_normalizer,
         aux_normalizer=aux_normalizer,

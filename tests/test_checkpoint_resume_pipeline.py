@@ -79,7 +79,6 @@ def _make_trainer(data, loaders, checkpoint_prefix=None):
         latent_output_dim=4,
         num_chars=0,
         char_type="continuous",
-        out_prefix="integration-test",
         device="cpu",
         phy_normalizer=phy_normalizer,
         aux_normalizer=aux_normalizer,
@@ -171,12 +170,15 @@ def test_checkpoint_resume_matches_uninterrupted_training(tmp_path):
     )
     assert not checkpoint_model.training
     assert "latent_layer_type" not in checkpoint_model.get_config_dict()
+    assert "out_prefix" not in checkpoint_model.get_config_dict()
+    assert not hasattr(checkpoint_model, "out_prefix")
 
     legacy_model_file = tmp_path / "legacy_gaussian.ae_trained.pt"
     checkpoint_model.save_model(legacy_model_file)
     legacy_artifact = torch.load(
         legacy_model_file, map_location="cpu", weights_only=False
     )
+    assert "out_prefix" not in legacy_artifact["model_config"]
     legacy_artifact["model_config"]["latent_layer_type"] = "GAUSS"
     torch.save(legacy_artifact, legacy_model_file)
     legacy_model = AECNN.load_pretrained_from_file(

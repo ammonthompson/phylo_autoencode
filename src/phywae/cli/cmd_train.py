@@ -95,7 +95,6 @@ def main(args):
                             latent_output_dim             = settings["latent_output_dim"],
                             num_chars                     = settings["num_chars"],
                             char_type                     = settings["char_type"],
-                            out_prefix                    = settings["out_prefix"],
                             device                        = settings["device"],
                             phy_normalizer                = phy_normalizer,
                             aux_normalizer                = aux_normalizer
